@@ -327,9 +327,23 @@ def first_link_back_loops(start: Vec3, end: Vec3) -> tuple[list[Vec3], list[Vec3
     return main, accent
 
 
-def idle_motion_waypoint(rng: random.Random) -> tuple[float, float]:
-    """Choose a restrained endpoint offset for autonomous idle motion."""
+def exploration_waypoint(rng: random.Random) -> tuple[float, float]:
+    """Choose a restrained interest point for the autonomous virtual pointer."""
     return rng.uniform(-52.0, 52.0), rng.uniform(-24.0, 22.0)
+
+
+def eased_exploration_point(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    progress: float,
+) -> tuple[float, float]:
+    """Travel between interest points with zero velocity at both ends."""
+    progress = min(max(progress, 0.0), 1.0)
+    eased = progress**3 * (progress * (progress * 6.0 - 15.0) + 10.0)
+    return (
+        start[0] + (end[0] - start[0]) * eased,
+        start[1] + (end[1] - start[1]) * eased,
+    )
 
 
 class RobotArm3DView:
@@ -384,8 +398,14 @@ class RobotArm3DView:
         now = time.monotonic()
         self.next_expression_at = now + self.rng.uniform(3.0, 5.5)
         self.idle_motion = (0.0, 0.0)
-        self.idle_motion_target = (0.0, 0.0)
-        self.next_idle_motion_at = now + self.rng.uniform(1.5, 3.0)
+        self.explore_from = (0.0, 0.0)
+        self.explore_to = (0.0, 0.0)
+        self.explore_started_at = now
+        self.explore_duration = 1.0
+        self.explore_hold_until = now + 1.6
+        self.explorer_active = False
+        self.last_pointer: tuple[float, float] | None = None
+        self.last_pointer_motion_at = now
 
     def mount(self, canvas: tk.Canvas) -> None:
         self.canvas = canvas
@@ -403,25 +423,37 @@ class RobotArm3DView:
         if expression is None:
             self.random_expressions_enabled = True
             self.next_expression_at = now
-            self.next_idle_motion_at = now
+            self.explore_hold_until = now + 1.6
             return
         self.random_expressions_enabled = False
-        self.idle_motion_target = (0.0, 0.0)
+        self.explorer_active = False
         self._set_expression(expression, now)
 
     def tick(self, pointer_x: int, pointer_y: int, window_x: int, window_y: int) -> None:
         local_pointer = (pointer_x - window_x, pointer_y - window_y)
         now = time.monotonic()
-        if self.random_expressions_enabled and now >= self.next_idle_motion_at:
-            self.idle_motion_target = idle_motion_waypoint(self.rng)
-            self.next_idle_motion_at = now + self.rng.uniform(2.2, 4.5)
-        elif not self.random_expressions_enabled:
-            self.idle_motion_target = (0.0, 0.0)
-        idle_smoothing = 0.025
-        self.idle_motion = (
-            self.idle_motion[0] + (self.idle_motion_target[0] - self.idle_motion[0]) * idle_smoothing,
-            self.idle_motion[1] + (self.idle_motion_target[1] - self.idle_motion[1]) * idle_smoothing,
-        )
+        if self.last_pointer is None or math.hypot(
+            local_pointer[0] - self.last_pointer[0],
+            local_pointer[1] - self.last_pointer[1],
+        ) > 1.5:
+            self.last_pointer = local_pointer
+            self.last_pointer_motion_at = now
+
+        can_explore = self.random_expressions_enabled and now - self.last_pointer_motion_at >= 1.6
+        if can_explore:
+            self.explorer_active = True
+            route_finished = now >= self.explore_started_at + self.explore_duration
+            if route_finished and now >= self.explore_hold_until:
+                self.explore_from = self.idle_motion
+                self.explore_to = exploration_waypoint(self.rng)
+                self.explore_started_at = now
+                self.explore_duration = self.rng.uniform(3.0, 5.8)
+                self.explore_hold_until = now + self.explore_duration + self.rng.uniform(0.5, 1.3)
+            progress = (now - self.explore_started_at) / max(self.explore_duration, 1e-6)
+            self.idle_motion = eased_exploration_point(self.explore_from, self.explore_to, progress)
+        else:
+            self.explorer_active = False
+            self.idle_motion = (self.idle_motion[0] * 0.82, self.idle_motion[1] * 0.82)
         motion_pointer = (
             local_pointer[0] + self.idle_motion[0],
             local_pointer[1] + self.idle_motion[1],
@@ -454,7 +486,8 @@ class RobotArm3DView:
         )
 
         projected_eye = self.camera.project(self.joints[-1])
-        desired_mouse_gaze = tracked_gaze(local_pointer, (projected_eye.x, projected_eye.y), max_x=7.0, max_y=5.0)
+        gaze_pointer = motion_pointer if self.explorer_active else local_pointer
+        desired_mouse_gaze = tracked_gaze(gaze_pointer, (projected_eye.x, projected_eye.y), max_x=7.0, max_y=5.0)
         gaze_smoothing = 0.16
         self.mouse_gaze = (
             self.mouse_gaze[0] + (desired_mouse_gaze[0] - self.mouse_gaze[0]) * gaze_smoothing,

@@ -11,11 +11,12 @@ from engram_overlay.overlays.robot_arm_3d import (
     continuous_posture_hints,
     depth_at_phase,
     eye_shading_from_link,
+    eased_exploration_point,
+    exploration_waypoint,
     first_link_accessory_faces,
     first_link_back_loops,
     first_link_hub_center,
     first_link_service_path,
-    idle_motion_waypoint,
     quadratic_curve,
     solve_three_link_3d,
     solve_z_posture_3d,
@@ -220,23 +221,29 @@ class RobotArm3DTests(unittest.TestCase):
         self.assertGreater((hub - start).length, 20.0)
         self.assertTrue(any(face.color == "#64748b" for face in faces))
 
-    def test_idle_motion_waypoint_stays_restrained(self) -> None:
-        waypoint = idle_motion_waypoint(random.Random(7))
+    def test_exploration_waypoint_stays_restrained(self) -> None:
+        waypoint = exploration_waypoint(random.Random(7))
         self.assertGreaterEqual(waypoint[0], -52.0)
         self.assertLessEqual(waypoint[0], 52.0)
         self.assertGreaterEqual(waypoint[1], -24.0)
         self.assertLessEqual(waypoint[1], 22.0)
 
+    def test_idle_explorer_uses_a_smooth_virtual_pointer_and_yields_to_mouse(self) -> None:
+        self.assertEqual(eased_exploration_point((0.0, 0.0), (10.0, -4.0), 0.0), (0.0, 0.0))
+        self.assertEqual(eased_exploration_point((0.0, 0.0), (10.0, -4.0), 1.0), (10.0, -4.0))
+        midpoint = eased_exploration_point((0.0, 0.0), (10.0, -4.0), 0.5)
+        self.assertEqual(midpoint, (5.0, -2.0))
+
         view = RobotArm3DView(rng=random.Random(7))
-        view.next_idle_motion_at = 0.0
+        view.last_pointer = (180.0, 310.0)
+        view.last_pointer_motion_at = 0.0
+        view.explore_started_at = 0.0
+        view.explore_hold_until = 0.0
         view.tick(180, 310, 0, 0)
-        self.assertNotEqual(view.idle_motion_target, (0.0, 0.0))
-        self.assertNotEqual(view.idle_motion, (0.0, 0.0))
-        previous_distance = math.hypot(*view.idle_motion_target)
-        view.apply_state(OverlayState(display_hint="generating"))
-        view.tick(180, 310, 0, 0)
-        self.assertEqual(view.idle_motion_target, (0.0, 0.0))
-        self.assertLess(math.hypot(*view.idle_motion), previous_distance)
+        self.assertTrue(view.explorer_active)
+        self.assertNotEqual(view.explore_to, (0.0, 0.0))
+        view.tick(230, 310, 0, 0)
+        self.assertFalse(view.explorer_active)
 
 if __name__ == "__main__":
     unittest.main()
