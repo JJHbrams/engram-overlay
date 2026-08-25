@@ -225,18 +225,18 @@ class RobotArm3DTests(unittest.TestCase):
 
     def test_exploration_waypoint_stays_restrained(self) -> None:
         waypoint = exploration_waypoint(random.Random(7))
-        self.assertGreaterEqual(waypoint[0], -92.0)
-        self.assertLessEqual(waypoint[0], 92.0)
-        self.assertGreaterEqual(waypoint[1], -50.0)
-        self.assertLessEqual(waypoint[1], 50.0)
-        elliptical_radius = math.hypot(waypoint[0] / 92.0, waypoint[1] / 50.0)
+        self.assertGreaterEqual(waypoint[0], -122.0)
+        self.assertLessEqual(waypoint[0], 122.0)
+        self.assertGreaterEqual(waypoint[1], -38.0)
+        self.assertLessEqual(waypoint[1], 38.0)
+        elliptical_radius = math.hypot(waypoint[0] / 122.0, waypoint[1] / 38.0)
         self.assertGreaterEqual(elliptical_radius, 0.65)
         self.assertLessEqual(elliptical_radius, 1.0)
         target = exploration_target(random.Random(7), 360.0)
-        self.assertGreaterEqual(target[0], 88.0)
-        self.assertLessEqual(target[0], 272.0)
-        self.assertGreaterEqual(target[1], 250.0)
-        self.assertLessEqual(target[1], 350.0)
+        self.assertGreaterEqual(target[0], 58.0)
+        self.assertLessEqual(target[0], 302.0)
+        self.assertGreaterEqual(target[1], 238.0)
+        self.assertLessEqual(target[1], 314.0)
         duration = exploration_duration((55.0, 250.0), target, random.Random(7))
         self.assertGreaterEqual(duration, 0.99)
         self.assertLessEqual(duration, 2.7)
@@ -254,10 +254,10 @@ class RobotArm3DTests(unittest.TestCase):
         view.explore_hold_until = 0.0
         view.tick(180, 310, 0, 0)
         self.assertTrue(view.explorer_active)
-        self.assertGreaterEqual(view.explore_to[0], 88.0)
-        self.assertLessEqual(view.explore_to[0], 272.0)
-        self.assertGreaterEqual(view.explore_to[1], 250.0)
-        self.assertLessEqual(view.explore_to[1], 350.0)
+        self.assertGreaterEqual(view.explore_to[0], 58.0)
+        self.assertLessEqual(view.explore_to[0], 302.0)
+        self.assertGreaterEqual(view.explore_to[1], 238.0)
+        self.assertLessEqual(view.explore_to[1], 314.0)
         look_ahead = (
             view.explore_to[0] - view.explorer_pointer[0],
             view.explore_to[1] - view.explorer_pointer[1],

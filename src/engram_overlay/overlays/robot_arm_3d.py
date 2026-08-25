@@ -331,13 +331,13 @@ def exploration_waypoint(rng: random.Random) -> tuple[float, float]:
     """Choose a large-radius interest point for saccade-like exploration."""
     angle = rng.uniform(0.0, math.tau)
     radius = rng.uniform(0.65, 1.0)
-    return math.cos(angle) * 92.0 * radius, math.sin(angle) * 50.0 * radius
+    return math.cos(angle) * 122.0 * radius, math.sin(angle) * 38.0 * radius
 
 
 def exploration_target(rng: random.Random, width: float) -> tuple[float, float]:
     """Place an autonomous interest point inside the overlay workspace."""
     offset_x, offset_y = exploration_waypoint(rng)
-    return width * 0.5 + offset_x, 300.0 + offset_y
+    return width * 0.5 + offset_x, 276.0 + offset_y
 
 
 def exploration_duration(
