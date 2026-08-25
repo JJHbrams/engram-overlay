@@ -97,8 +97,10 @@ def target_from_pointer(
 
 
 def depth_at_phase(phase: float) -> float:
-    """Return the arm's autonomous camera-space depth trajectory."""
-    return math.sin(phase) * 75.0
+    """Return a subtle non-rhythmic camera-depth drift rather than a scale pulse."""
+    primary = math.sin(phase) * 0.72
+    secondary = math.sin(phase * 0.43 + 1.1) * 0.28
+    return (primary + secondary) * 30.0
 
 
 def quadratic_curve(start: Vec3, control: Vec3, end: Vec3, *, steps: int = 6) -> list[Vec3]:
@@ -120,22 +122,23 @@ def _link_surface_frame(start: Vec3, end: Vec3) -> tuple[Vec3, Vec3]:
     return surface, lateral
 
 
-def cable_decoration_paths(start: Vec3, end: Vec3, *, index: int) -> tuple[list[Vec3], list[Vec3]]:
+def cable_decoration_paths(start: Vec3, end: Vec3, *, index: int) -> tuple[list[Vec3], list[Vec3], list[Vec3]]:
     """Build camera-projectable cable paths with a small service loop."""
     surface, lateral = _link_surface_frame(start, end)
     anchor_start = point_along(start, end, 15.0) + surface * 18.0
     anchor_end = point_along(end, start, 17.0) + surface * 17.0
     midpoint = (anchor_start + anchor_end) * 0.5
-    control = midpoint + surface * (12.0 + index * 2.0) + lateral * (5.0 if index % 2 == 0 else -5.0)
+    control = midpoint + surface * (25.0 + index * 3.0) + lateral * (9.0 if index % 2 == 0 else -9.0)
     main_path = quadratic_curve(anchor_start, control, anchor_end, steps=6)
-    signal_offset = lateral * 5.5
-    signal_path = quadratic_curve(anchor_start + signal_offset, control + signal_offset, anchor_end + signal_offset, steps=6)
-    return main_path, signal_path
+    signal_offset = lateral * 6.5
+    warm_path = quadratic_curve(anchor_start + signal_offset, control + signal_offset, anchor_end + signal_offset, steps=6)
+    cool_path = quadratic_curve(anchor_start - signal_offset, control - signal_offset, anchor_end - signal_offset, steps=6)
+    return main_path, warm_path, cool_path
 
 
 def cable_hardware_faces(start: Vec3, end: Vec3, *, index: int) -> list[Face3D]:
     """Build low-poly clamps and connectors for a projected cable bundle."""
-    main_path, _ = cable_decoration_paths(start, end, index=index)
+    main_path, _, _ = cable_decoration_paths(start, end, index=index)
     faces: list[Face3D] = []
     for fraction in (0.22, 0.78):
         clamp_center = start + (end - start) * fraction
@@ -218,7 +221,7 @@ class RobotArm3DView:
 
     def tick(self, pointer_x: int, pointer_y: int, window_x: int, window_y: int) -> None:
         local_pointer = (pointer_x - window_x, pointer_y - window_y)
-        self.depth_phase = (self.depth_phase + 0.014) % math.tau
+        self.depth_phase = (self.depth_phase + 0.009) % math.tau
         desired_depth = depth_at_phase(self.depth_phase)
         self.target_depth += (desired_depth - self.target_depth) * 0.08
         desired_target = target_from_pointer(
@@ -326,10 +329,12 @@ class RobotArm3DView:
             )
 
         for index, (start, end) in enumerate(zip(self.joints[:-1], self.joints[1:], strict=True)):
-            main_path, signal_path = cable_decoration_paths(start, end, index=index)
+            main_path, warm_path, cool_path = cable_decoration_paths(start, end, index=index)
             for path, color, base_width in (
-                (main_path, "#111827", 5.2),
-                (signal_path, "#d97706", 2.3),
+                (main_path, "#020617", 9.0),
+                (main_path, "#475569", 5.4),
+                (warm_path, "#f59e0b", 2.8),
+                (cool_path, "#22d3ee", 2.4),
             ):
                 projected_path = tuple(self.camera.project(point) for point in path)
                 coordinates = tuple(coordinate for point in projected_path for coordinate in (point.x, point.y))
@@ -344,6 +349,20 @@ class RobotArm3DView:
                     joinstyle=tk.ROUND,
                     tags=("scene3d",),
                 )
+            for path, color in ((warm_path, "#f59e0b"), (cool_path, "#22d3ee")):
+                for endpoint in (path[0], path[-1]):
+                    projected_endpoint = self.camera.project(endpoint)
+                    radius = max(2.0, 2.6 * projected_endpoint.scale)
+                    self.canvas.create_oval(
+                        projected_endpoint.x - radius,
+                        projected_endpoint.y - radius,
+                        projected_endpoint.x + radius,
+                        projected_endpoint.y + radius,
+                        fill=color,
+                        outline="#0f172a",
+                        width=1,
+                        tags=("scene3d",),
+                    )
 
         eye = self.camera.project(self.joints[-1])
         center = (eye.x, eye.y)

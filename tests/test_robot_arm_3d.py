@@ -60,7 +60,11 @@ class RobotArm3DTests(unittest.TestCase):
         right = camera.project(target_from_pointer(500.0, 300.0, 360.0, 430.0, camera=camera, depth=0.0))
         self.assertAlmostEqual(left.x, 70.0)
         self.assertAlmostEqual(right.x, 290.0)
-        self.assertAlmostEqual(depth_at_phase(math.pi * 0.5), 75.0)
+        sampled_depths = [depth_at_phase(index * math.tau / 100.0) for index in range(100)]
+        self.assertLessEqual(max(abs(depth) for depth in sampled_depths), 30.0)
+        near_scale = camera.project(camera.unproject(180.0, 300.0, -30.0)).scale
+        far_scale = camera.project(camera.unproject(180.0, 300.0, 30.0)).scale
+        self.assertLess(near_scale / far_scale, 1.11)
 
     def test_3d_view_reuses_event_expression_mapping(self) -> None:
         view = RobotArm3DView()
@@ -83,10 +87,11 @@ class RobotArm3DTests(unittest.TestCase):
         self.assertEqual(curve[0], start)
         self.assertEqual(curve[-1], end)
         self.assertGreater((curve[3] - (start + end) * 0.5).length, 5.0)
-        main_path, signal_path = cable_decoration_paths(start, end, index=0)
+        main_path, warm_path, cool_path = cable_decoration_paths(start, end, index=0)
         self.assertEqual(len(main_path), 7)
-        self.assertEqual(len(signal_path), 7)
-        self.assertTrue(all((signal - main).length > 5.0 for main, signal in zip(main_path, signal_path, strict=True)))
+        self.assertEqual(len(warm_path), 7)
+        self.assertEqual(len(cool_path), 7)
+        self.assertTrue(all((warm - cool).length > 12.0 for warm, cool in zip(warm_path, cool_path, strict=True)))
         faces = cable_hardware_faces(start, end, index=0)
         self.assertEqual(len(faces), 24)
         self.assertTrue(any(face.color == "#475569" for face in faces))
