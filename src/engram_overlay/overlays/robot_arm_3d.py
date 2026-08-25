@@ -93,7 +93,7 @@ def solve_z_posture_3d(
     lengths: Sequence[float],
     *,
     pole_hint: Vec3 = Vec3(1.0, 0.0, 0.0),
-    tool_angle: float = math.radians(30.0),
+    tool_angle: float = math.radians(24.0),
 ) -> list[Vec3]:
     """Solve an exact 3D chain whose projected link bends alternate as a Z."""
     if len(lengths) != 3 or any(length <= 0.0 for length in lengths):
@@ -142,6 +142,20 @@ def continuous_pole_hint(pointer_x: float, width: float, camera: Camera) -> Vec3
     return (camera_right * horizontal + camera_depth * depth).normalized(camera_depth)
 
 
+def eye_shading_from_link(camera_link: Vec3, *, base_offset: float = 3.2) -> tuple[float, float, float, float]:
+    """Return projected shadow offset, rim angle, and strength from a 3D incoming link."""
+    direction = camera_link.normalized(Vec3(0.0, -1.0, 0.0))
+    projected_length = math.hypot(direction.x, direction.y)
+    if projected_length <= 1e-6:
+        screen_x, screen_y = 0.0, -1.0
+    else:
+        screen_x = direction.x / projected_length
+        screen_y = direction.y / projected_length
+    strength = base_offset + abs(direction.z) * 2.2
+    angle = math.degrees(math.atan2(-screen_y, screen_x))
+    return screen_x * strength, screen_y * strength, angle, strength
+
+
 def depth_at_phase(phase: float) -> float:
     """Return a subtle non-rhythmic camera-depth drift rather than a scale pulse."""
     primary = math.sin(phase) * 0.72
@@ -149,7 +163,7 @@ def depth_at_phase(phase: float) -> float:
     return (primary + secondary) * 30.0
 
 
-def constrain_target_reach(base: Vec3, target: Vec3, lengths: Sequence[float], *, ratio: float = 0.90) -> Vec3:
+def constrain_target_reach(base: Vec3, target: Vec3, lengths: Sequence[float], *, ratio: float = 0.95) -> Vec3:
     """Keep enough reach in reserve to avoid a fully extended singular chain."""
     if not 0.0 < ratio <= 1.0:
         raise ValueError("reach ratio must be in (0, 1]")
@@ -446,6 +460,18 @@ class RobotArm3DView:
         center = (eye.x, eye.y)
         scale = eye.scale
         radius = 30.0 * scale
+        camera_link = self.camera.camera_space(self.joints[-2] - self.joints[-1])
+        shade_x, shade_y, shade_angle, shade_strength = eye_shading_from_link(camera_link)
+        shadow_radius = radius + max(1.0, shade_strength * 0.35 * scale)
+        self.canvas.create_oval(
+            center[0] + shade_x * scale - shadow_radius,
+            center[1] + shade_y * scale - shadow_radius,
+            center[0] + shade_x * scale + shadow_radius,
+            center[1] + shade_y * scale + shadow_radius,
+            fill="#334155",
+            outline="",
+            tags=("scene3d",),
+        )
         self.canvas.create_oval(
             center[0] - radius,
             center[1] - radius,
@@ -454,6 +480,31 @@ class RobotArm3DView:
             fill="#f8fafc",
             outline="#0f172a",
             width=max(2.0, 4.0 * scale),
+            tags=("scene3d",),
+        )
+        rim_inset = max(2.0, 3.0 * scale)
+        rim_box = (
+            center[0] - radius + rim_inset,
+            center[1] - radius + rim_inset,
+            center[0] + radius - rim_inset,
+            center[1] + radius - rim_inset,
+        )
+        self.canvas.create_arc(
+            *rim_box,
+            start=shade_angle - 48.0,
+            extent=96.0,
+            style=tk.ARC,
+            outline="#94a3b8",
+            width=max(3.0, 6.0 * scale),
+            tags=("scene3d",),
+        )
+        self.canvas.create_arc(
+            *rim_box,
+            start=shade_angle + 145.0,
+            extent=70.0,
+            style=tk.ARC,
+            outline="#ffffff",
+            width=max(2.0, 2.5 * scale),
             tags=("scene3d",),
         )
         pupil = (

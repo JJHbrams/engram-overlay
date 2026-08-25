@@ -8,6 +8,7 @@ from engram_overlay.overlays.robot_arm_3d import (
     constrain_target_reach,
     continuous_pole_hint,
     depth_at_phase,
+    eye_shading_from_link,
     quadratic_curve,
     solve_three_link_3d,
     solve_z_posture_3d,
@@ -73,8 +74,13 @@ class RobotArm3DTests(unittest.TestCase):
         view = RobotArm3DView()
         requested = target_from_pointer(500.0, 500.0, 360.0, 430.0, camera=view.camera, depth=30.0)
         constrained = constrain_target_reach(view.base, requested, view.lengths)
-        self.assertAlmostEqual((constrained - view.base).length, sum(view.lengths) * 0.90)
-        points = solve_three_link_3d(view.base, constrained, view.lengths)
+        self.assertAlmostEqual((constrained - view.base).length, sum(view.lengths) * 0.95)
+        points = solve_z_posture_3d(
+            view.base,
+            constrained,
+            view.lengths,
+            pole_hint=continuous_pole_hint(500.0, 360.0, view.camera),
+        )
         turns = []
         for index in (1, 2):
             parent = (points[index] - points[index - 1]).normalized()
@@ -128,6 +134,15 @@ class RobotArm3DTests(unittest.TestCase):
             )
             previous = view.joints
         self.assertLess(maximum_step, 2.5)
+
+    def test_eye_shading_tracks_projected_link_direction_and_depth(self) -> None:
+        shade_x, shade_y, angle, strength = eye_shading_from_link(Vec3(4.0, -3.0, 0.0))
+        self.assertGreater(shade_x, 0.0)
+        self.assertLess(shade_y, 0.0)
+        self.assertAlmostEqual(strength, 3.2)
+        self.assertAlmostEqual(angle, math.degrees(math.atan2(3.0, 4.0)))
+        _, _, _, depth_strength = eye_shading_from_link(Vec3(1.0, 0.0, 4.0))
+        self.assertGreater(depth_strength, strength)
 
     def test_3d_view_reuses_event_expression_mapping(self) -> None:
         view = RobotArm3DView()
