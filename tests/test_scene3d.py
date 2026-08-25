@@ -18,6 +18,15 @@ class Scene3DTests(unittest.TestCase):
         self.assertGreater(near.x - 100.0, far.x - 100.0)
         self.assertGreater(near.scale, far.scale)
 
+    def test_unproject_round_trips_screen_position_and_depth(self) -> None:
+        camera = Camera(180.0, 190.0, yaw=-0.38, pitch=-0.10, focal_length=650.0)
+        world = camera.unproject(246.0, 318.0, 57.0)
+        projected = camera.project(world)
+        self.assertAlmostEqual(projected.x, 246.0)
+        self.assertAlmostEqual(projected.y, 318.0)
+        self.assertAlmostEqual(projected.depth, 57.0)
+        self.assertLess((camera.world_space(camera.camera_space(world)) - world).length, 1e-9)
+
     def test_procedural_meshes_have_expected_faces(self) -> None:
         prism = tapered_prism_faces(
             Vec3(0.0, 0.0, 0.0),

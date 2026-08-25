@@ -1,8 +1,14 @@
+import math
 import unittest
 
-from engram_overlay.overlays.robot_arm_3d import RobotArm3DView, solve_three_link_3d, target_from_pointer
+from engram_overlay.overlays.robot_arm_3d import (
+    RobotArm3DView,
+    depth_at_phase,
+    solve_three_link_3d,
+    target_from_pointer,
+)
 from engram_overlay.registry import OVERLAYS, overlay_ids
-from engram_overlay.scene3d import Vec3
+from engram_overlay.scene3d import Camera, Vec3
 from engram_overlay.state import OverlayState
 
 
@@ -23,13 +29,27 @@ class RobotArm3DTests(unittest.TestCase):
         points = solve_three_link_3d(Vec3(0.0, 0.0, 0.0), Vec3(1000.0, 1000.0, 1000.0), (10.0, 20.0, 30.0))
         self.assertAlmostEqual((points[-1] - points[0]).length, 60.0)
 
-    def test_pointer_mapping_adds_real_depth(self) -> None:
-        left = target_from_pointer(95.0, 330.0, 360.0, 430.0)
-        right = target_from_pointer(265.0, 330.0, 360.0, 430.0)
-        self.assertLess(left.x, 0.0)
-        self.assertLess(left.z, 0.0)
-        self.assertAlmostEqual(left.x, -right.x)
-        self.assertAlmostEqual(left.z, -right.z)
+    def test_pointer_mapping_preserves_screen_position_at_independent_depths(self) -> None:
+        camera = Camera(180.0, 190.0, yaw=-0.38, pitch=-0.10, focal_length=650.0)
+        near = target_from_pointer(240.0, 325.0, 360.0, 430.0, camera=camera, depth=-55.0)
+        far = target_from_pointer(240.0, 325.0, 360.0, 430.0, camera=camera, depth=55.0)
+        projected_near = camera.project(near)
+        projected_far = camera.project(far)
+        self.assertAlmostEqual(projected_near.x, projected_far.x)
+        self.assertAlmostEqual(projected_near.y, projected_far.y)
+        self.assertAlmostEqual(projected_near.depth, -55.0)
+        self.assertAlmostEqual(projected_far.depth, 55.0)
+        self.assertGreater((far - near).length, 100.0)
+        self.assertGreater(projected_near.scale, projected_far.scale)
+
+    def test_camera_stays_fixed_while_arm_moves_in_xyz(self) -> None:
+        view = RobotArm3DView()
+        camera = view.camera
+        view.tick(110, 310, 0, 0)
+        view.tick(250, 330, 0, 0)
+        self.assertEqual(view.camera, camera)
+        self.assertNotEqual(view.target_depth, 0.0)
+        self.assertNotEqual(depth_at_phase(math.pi * 0.5), depth_at_phase(math.pi * 1.5))
 
     def test_3d_view_reuses_event_expression_mapping(self) -> None:
         view = RobotArm3DView()

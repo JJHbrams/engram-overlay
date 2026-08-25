@@ -81,16 +81,24 @@ def solve_three_link_3d(
     return points
 
 
-def target_from_pointer(pointer_x: float, pointer_y: float, width: float, height: float) -> Vec3:
-    """Map a screen pointer into the arm's lower 3D workspace."""
+def target_from_pointer(
+    pointer_x: float,
+    pointer_y: float,
+    width: float,
+    height: float,
+    *,
+    camera: Camera,
+    depth: float,
+) -> Vec3:
+    """Unproject a pointer onto an independently selected camera-depth plane."""
     clamped_x = min(max(pointer_x, 95.0), width - 95.0)
-    clamped_y = min(max(pointer_y, 285.0), min(height - 55.0, 375.0))
-    normalized_y = (clamped_y - 285.0) / 90.0
-    return Vec3(
-        (clamped_x - width * 0.5) * 0.70,
-        100.0 + normalized_y * 55.0,
-        (clamped_x - width * 0.5) * 0.40,
-    )
+    clamped_y = min(max(pointer_y, 280.0), min(height - 90.0, 340.0))
+    return camera.unproject(clamped_x, clamped_y, depth)
+
+
+def depth_at_phase(phase: float) -> float:
+    """Return the arm's autonomous camera-space depth trajectory."""
+    return math.sin(phase) * 65.0
 
 
 class RobotArm3DView:
@@ -104,9 +112,18 @@ class RobotArm3DView:
     def __init__(self, *, rng: random.Random | None = None) -> None:
         self.canvas: tk.Canvas | None = None
         self.rng = rng or random.Random()
-        self.target = Vec3(0.0, 135.0, 0.0)
+        self.camera = Camera(self.width * 0.5, 190.0, yaw=-0.38, pitch=-0.10, focal_length=650.0)
+        self.depth_phase = 0.0
+        self.target_depth = depth_at_phase(self.depth_phase)
+        self.target = target_from_pointer(
+            self.width * 0.5,
+            320.0,
+            self.width,
+            self.height,
+            camera=self.camera,
+            depth=self.target_depth,
+        )
         self.joints = solve_three_link_3d(self.base, self.target, self.lengths)
-        self.camera = Camera(self.width * 0.5, 190.0)
         self.status_id: int | None = None
         self.expression = EXPRESSIONS[0]
         self.active_hint = "idle"
@@ -146,15 +163,19 @@ class RobotArm3DView:
 
     def tick(self, pointer_x: int, pointer_y: int, window_x: int, window_y: int) -> None:
         local_pointer = (pointer_x - window_x, pointer_y - window_y)
-        desired_target = target_from_pointer(*local_pointer, self.width, self.height)
+        self.depth_phase = (self.depth_phase + 0.014) % math.tau
+        desired_depth = depth_at_phase(self.depth_phase)
+        self.target_depth += (desired_depth - self.target_depth) * 0.08
+        desired_target = target_from_pointer(
+            *local_pointer,
+            self.width,
+            self.height,
+            camera=self.camera,
+            depth=self.target_depth,
+        )
         target_smoothing = 0.11
         self.target = self.target + (desired_target - self.target) * target_smoothing
         self.joints = solve_three_link_3d(self.base, self.target, self.lengths, seed=self.joints)
-
-        normalized_pointer_x = min(max(local_pointer[0] / self.width, 0.0), 1.0) - 0.5
-        desired_yaw = -0.32 + normalized_pointer_x * 0.28
-        camera_yaw = self.camera.yaw + (desired_yaw - self.camera.yaw) * 0.06
-        self.camera = Camera(self.width * 0.5, 190.0, yaw=camera_yaw, pitch=-0.08, focal_length=650.0)
 
         projected_eye = self.camera.project(self.joints[-1])
         desired_mouse_gaze = tracked_gaze(local_pointer, (projected_eye.x, projected_eye.y), max_x=7.0, max_y=5.0)

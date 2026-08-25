@@ -82,6 +82,29 @@ class Camera:
         pitch_z = point.y * pitch_sin + yaw_z * pitch_cos
         return Vec3(yaw_x, pitch_y, pitch_z)
 
+    def world_space(self, point: Vec3) -> Vec3:
+        """Transform a camera-space point back into world space."""
+        pitch_cos = math.cos(self.pitch)
+        pitch_sin = math.sin(self.pitch)
+        world_y = point.y * pitch_cos + point.z * pitch_sin
+        yaw_z = -point.y * pitch_sin + point.z * pitch_cos
+        yaw_cos = math.cos(self.yaw)
+        yaw_sin = math.sin(self.yaw)
+        world_x = point.x * yaw_cos + yaw_z * yaw_sin
+        world_z = -point.x * yaw_sin + yaw_z * yaw_cos
+        return Vec3(world_x, world_y, world_z)
+
+    def unproject(self, screen_x: float, screen_y: float, depth: float) -> Vec3:
+        """Place a screen coordinate on a camera-space depth plane."""
+        denominator = max(self.focal_length + depth, self.focal_length * 0.2)
+        scale = self.focal_length / denominator
+        camera_point = Vec3(
+            (screen_x - self.center_x) / scale,
+            (screen_y - self.center_y) / scale,
+            depth,
+        )
+        return self.world_space(camera_point)
+
     def project(self, point: Vec3) -> ProjectedPoint:
         camera_point = self.camera_space(point)
         denominator = max(self.focal_length + camera_point.z, self.focal_length * 0.2)
