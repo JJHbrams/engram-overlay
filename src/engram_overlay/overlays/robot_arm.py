@@ -176,7 +176,7 @@ class RobotArmView:
     def _draw(self) -> None:
         if self.canvas is None:
             return
-        for link_id, start, end in zip(self.link_ids, self.joints, self.joints[1:], strict=True):
+        for link_id, start, end in zip(self.link_ids, self.joints[:-1], self.joints[1:], strict=True):
             self.canvas.coords(link_id, *start, *end)
         for index, (joint_id, point) in enumerate(zip(self.joint_ids, self.joints, strict=True)):
             radius = 13 if index in (0, 3) else 11

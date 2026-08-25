@@ -1,6 +1,7 @@
 import unittest
+from unittest.mock import Mock
 
-from engram_overlay.overlays.robot_arm import solve_three_link_z, upper_workspace_target
+from engram_overlay.overlays.robot_arm import RobotArmView, solve_three_link_z, upper_workspace_target
 from engram_overlay.registry import OVERLAYS, overlay_ids
 
 
@@ -43,6 +44,18 @@ class RobotArmTests(unittest.TestCase):
     def test_endpoint_is_clamped_to_upper_workspace(self) -> None:
         self.assertEqual(upper_workspace_target(-100, 999, 360), (95.0, 145.0))
         self.assertEqual(upper_workspace_target(200, -5, 360), (200, 65.0))
+
+    def test_draw_maps_three_links_to_four_joint_points(self) -> None:
+        view = RobotArmView()
+        view.canvas = Mock()
+        view.link_ids = [1, 2, 3]
+        view.joint_ids = [4, 5, 6, 7]
+        view.target_id = 8
+        view.gripper_ids = [9, 10]
+
+        view._draw()
+
+        self.assertEqual(view.canvas.coords.call_count, 10)
 
 
 if __name__ == "__main__":

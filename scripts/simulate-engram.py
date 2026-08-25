@@ -40,7 +40,13 @@ def main() -> int:
         for message in messages:
             child.stdin.write(json.dumps(message, separators=(",", ":")) + "\n")
         child.stdin.flush()
-        time.sleep(args.seconds)
+        deadline = time.monotonic() + args.seconds
+        while time.monotonic() < deadline:
+            return_code = child.poll()
+            if return_code is not None:
+                assert child.stderr is not None
+                raise RuntimeError(f"overlay exited early ({return_code}): {child.stderr.read().strip()}")
+            time.sleep(0.05)
     finally:
         child.terminate()
         try:
