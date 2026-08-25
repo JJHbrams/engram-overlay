@@ -225,20 +225,6 @@ def tracked_gaze(
     return gaze_x, gaze_y
 
 
-def oriented_polygon_points(center: Point, direction: Point, local_points: Sequence[Point]) -> tuple[float, ...]:
-    """Transform side/forward local coordinates into a link-oriented polygon."""
-    forward = _unit((0.0, 0.0), direction, fallback=(0.0, 1.0))
-    side = (-forward[1], forward[0])
-    points = (
-        (
-            center[0] + side[0] * local_side + forward[0] * local_forward,
-            center[1] + side[1] * local_side + forward[1] * local_forward,
-        )
-        for local_side, local_forward in local_points
-    )
-    return tuple(coordinate for point in points for coordinate in point)
-
-
 def link_shell_points(
     start: Point,
     end: Point,
@@ -278,19 +264,6 @@ def offset_link_points(start: Point, end: Point, *, side_offset: float, inset: f
     return *cable_start, *cable_end
 
 
-EYE_POD_PROFILE: tuple[Point, ...] = (
-    (-38.0, 12.0),
-    (-43.0, -8.0),
-    (-29.0, -33.0),
-    (-7.0, -43.0),
-    (22.0, -38.0),
-    (39.0, -18.0),
-    (42.0, 8.0),
-    (27.0, 33.0),
-    (-15.0, 38.0),
-)
-
-
 class RobotArmView:
     width = 360
     height = 430
@@ -309,7 +282,6 @@ class RobotArmView:
         self.link_shell_ids: list[int] = []
         self.link_highlight_ids: list[int] = []
         self.cable_ids: list[int] = []
-        self.pod_shell_ids: list[int] = []
         self.joint_ids: list[int] = []
         self.iris_ring_ids: list[int] = []
         self.eyelid_ids: list[int] = []
@@ -370,12 +342,6 @@ class RobotArmView:
         for index in range(3):
             cable_color = "#d97706" if index == 2 else "#111827"
             self.cable_ids.append(canvas.create_line(0, 0, 0, 0, fill=cable_color, width=3, capstyle=tk.ROUND))
-        self.pod_shell_ids.append(
-            canvas.create_polygon(0, 0, 0, 0, fill="#334155", outline="#0f172a", width=3, joinstyle=tk.ROUND)
-        )
-        self.pod_shell_ids.append(
-            canvas.create_polygon(0, 0, 0, 0, fill="#e7e5df", outline="#263442", width=3, joinstyle=tk.ROUND)
-        )
         for _ in range(4):
             self.joint_ids.append(canvas.create_oval(0, 0, 0, 0, fill="#e2e8f0", outline=color, width=4))
         self.led_halo_id = canvas.create_oval(0, 0, 0, 0, fill=color, outline="", stipple="gray50")
@@ -394,7 +360,8 @@ class RobotArmView:
             self._set_expression(ALARM_EXPRESSION, time.monotonic())
 
     def tick(self, pointer_x: int, pointer_y: int, window_x: int, window_y: int) -> None:
-        local_target = lower_workspace_target(pointer_x - window_x, pointer_y - window_y, self.width)
+        local_pointer = (pointer_x - window_x, pointer_y - window_y)
+        local_target = lower_workspace_target(*local_pointer, self.width)
         smoothing = 0.14
         self.target = (
             self.target[0] + (local_target[0] - self.target[0]) * smoothing,
@@ -409,7 +376,7 @@ class RobotArmView:
             bend_side=self.bend_side,
         )
         desired_mouse_gaze = tracked_gaze(
-            (pointer_x - window_x, pointer_y - window_y),
+            local_pointer,
             self.joints[-1],
         )
         gaze_smoothing = 0.16
@@ -495,19 +462,7 @@ class RobotArmView:
                 self.cable_ids[index],
                 *offset_link_points(start, end, side_offset=cable_offsets[index], inset=10.0),
             )
-        wrist = self.joints[-2]
         end = self.joints[-1]
-        pod_direction = (end[0] - wrist[0], end[1] - wrist[1])
-        if len(self.pod_shell_ids) == 2:
-            shadow_profile = tuple((side + 4.0, forward + 4.0) for side, forward in EYE_POD_PROFILE)
-            self.canvas.coords(
-                self.pod_shell_ids[0],
-                *oriented_polygon_points(end, pod_direction, shadow_profile),
-            )
-            self.canvas.coords(
-                self.pod_shell_ids[1],
-                *oriented_polygon_points(end, pod_direction, EYE_POD_PROFILE),
-            )
         for index, (joint_id, point) in enumerate(zip(self.joint_ids, self.joints, strict=True)):
             radius = 31 if index == 3 else (14 if index == 0 else 11)
             self.canvas.coords(joint_id, point[0] - radius, point[1] - radius, point[0] + radius, point[1] + radius)

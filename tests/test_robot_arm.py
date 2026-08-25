@@ -8,7 +8,6 @@ from engram_overlay.overlays.robot_arm import (
     eyelid_polygon_points,
     link_shell_points,
     lower_workspace_target,
-    oriented_polygon_points,
     solve_three_link_z,
     tracked_gaze,
 )
@@ -114,8 +113,6 @@ class RobotArmTests(unittest.TestCase):
             side_offset=2.0,
         )
         self.assertEqual(shell, (20.0, 12.0, 70.0, 8.0, 70.0, -4.0, 20.0, -8.0))
-        oriented = oriented_polygon_points((10.0, 20.0), (0.0, 1.0), ((-2.0, -3.0), (4.0, 5.0)))
-        self.assertEqual(oriented, (12.0, 17.0, 6.0, 25.0))
 
     def test_draw_maps_three_links_to_four_joint_points(self) -> None:
         view = RobotArmView()
@@ -125,17 +122,16 @@ class RobotArmTests(unittest.TestCase):
         view.link_shell_ids = [7, 8, 9]
         view.link_highlight_ids = [10, 11, 12]
         view.cable_ids = [13, 14, 15]
-        view.pod_shell_ids = [16, 17]
-        view.joint_ids = [18, 19, 20, 21]
-        view.iris_ring_ids = [22, 23, 24]
-        view.led_halo_id = 25
-        view.led_core_id = 26
-        view.eyelid_ids = [27, 28]
-        view.eye_rim_id = 29
+        view.joint_ids = [16, 17, 18, 19]
+        view.iris_ring_ids = [20, 21, 22]
+        view.led_halo_id = 23
+        view.led_core_id = 24
+        view.eyelid_ids = [25, 26]
+        view.eye_rim_id = 27
 
         view._draw()
 
-        self.assertEqual(view.canvas.coords.call_count, 29)
+        self.assertEqual(view.canvas.coords.call_count, 27)
 
 
 if __name__ == "__main__":
