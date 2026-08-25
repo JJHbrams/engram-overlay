@@ -9,6 +9,9 @@ description = "Minimal custom renderer for Engram External Overlay Event API v1"
 requires-python = ">=3.11"
 dependencies = []
 
+[project.optional-dependencies]
+tools = ["PyYAML>=6.0"]
+
 [project.scripts]
 engram-custom-overlay = "engram_overlay.__main__:main"
 

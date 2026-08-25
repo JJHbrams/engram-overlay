@@ -25,14 +25,17 @@ master (문서 기준선)
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\python.exe -m pip install -e ".[tools]"
 .\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py" -v
-.\.venv\Scripts\engram-custom-overlay.exe --mode replace
+.\.venv\Scripts\engram-custom-overlay.exe --overlay xeyes --mode replace
 ```
 
-Engram에 설치할 때는 `examples/manifest.yaml`을
-`%USERPROFILE%/.engram/overlays/engram-custom/manifest.yaml`로 복사하고,
-`command`의 첫 항목을 위 virtual environment에 생성된 console executable의 절대 경로로 바꾼다.
+개발 설치와 manifest 생성을 한 번에 하려면 `scripts/install-dev.ps1`을 실행한다.
+생성 위치는 `%USERPROFILE%/.engram/overlays/xeyes/manifest.yaml`이다.
+선택을 자동화할 때는 `scripts/select-overlay.py`의 dry-run을 먼저 확인하고 `--apply`를 사용한다.
+이 스크립트는 기존 top-level 설정 키를 검증하고 백업 뒤 원자적으로 `overlay.external_renderer`만 바꾼다.
+
+프로젝트 계층과 새 renderer 추가 규칙은 [Overlay 구현 계층](architecture.md)을 따른다.
 
 ## 완료 기준
 

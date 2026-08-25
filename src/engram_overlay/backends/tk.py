@@ -1,36 +1,79 @@
-"""Small Tk renderer that demonstrates observer and replace mode wiring."""
+"""Shared Tk window lifecycle and Engram input/geometry wiring."""
 
 from __future__ import annotations
 
 import queue
 import threading
 import tkinter as tk
-from typing import Any
+from typing import Any, Protocol
 
-from .protocol import JsonlTransport, geometry_message, pointer_message
-from .state import OverlayState
+from ..protocol import JsonlTransport, geometry_message, pointer_message
+from ..state import OverlayState
 
 
-class OverlayApp:
-    WIDTH = 180
-    HEIGHT = 180
+class TkOverlayView(Protocol):
+    """Visual behavior supplied by one Tk-based overlay implementation."""
 
-    def __init__(self, transport: JsonlTransport, *, mode: str = "observer") -> None:
+    width: int
+    height: int
+    background: str
+    transparent_color: str | None
+
+    def mount(self, canvas: tk.Canvas) -> None: ...
+
+    def apply_state(self, state: OverlayState) -> None: ...
+
+    def tick(self, pointer_x: int, pointer_y: int, window_x: int, window_y: int) -> None: ...
+
+
+class TkOverlayHost:
+    """Own the Tk window while a view owns only drawing and animation."""
+
+    FRAME_MS = 16
+
+    def __init__(
+        self,
+        transport: JsonlTransport,
+        view: TkOverlayView,
+        *,
+        mode: str = "observer",
+        title: str = "Engram Custom Overlay",
+    ) -> None:
         self.transport = transport
+        self.view = view
         self.mode = mode
         self.state = OverlayState()
         self.inbox: queue.Queue[dict[str, Any] | None] = queue.Queue()
         self.root = tk.Tk()
-        self.root.title("Engram Custom Overlay")
+        self.root.title(title)
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
-        self.root.geometry(f"{self.WIDTH}x{self.HEIGHT}+100+100")
-        self.canvas = tk.Canvas(self.root, width=self.WIDTH, height=self.HEIGHT, highlightthickness=0, bg="#111827")
+        if view.transparent_color:
+            try:
+                self.root.attributes("-transparentcolor", view.transparent_color)
+            except tk.TclError:
+                pass
+        self.root.geometry(f"{view.width}x{view.height}+100+100")
+        self.canvas = tk.Canvas(
+            self.root,
+            width=view.width,
+            height=view.height,
+            highlightthickness=0,
+            borderwidth=0,
+            bg=view.background,
+        )
         self.canvas.pack(fill="both", expand=True)
-        self.body = self.canvas.create_oval(20, 20, 160, 160, fill="#86a8e7", outline="#e5e7eb", width=3)
-        self.label = self.canvas.create_text(90, 90, text="IDLE", fill="#111827", font=("Segoe UI", 15, "bold"))
+        self.view.mount(self.canvas)
         self._drag_origin: tuple[int, int, int, int] | None = None
         self._bind_pointer_events()
+
+    def run(self) -> None:
+        threading.Thread(target=self._read_messages, name="engram-jsonl-reader", daemon=True).start()
+        if self.mode == "replace":
+            self.root.after_idle(self._send_geometry)
+        self.root.after(20, self._drain_messages)
+        self.root.after(self.FRAME_MS, self._tick)
+        self.root.mainloop()
 
     def _bind_pointer_events(self) -> None:
         self.canvas.bind("<Enter>", lambda event: self._send_pointer("pointer_enter"))
@@ -39,13 +82,6 @@ class OverlayApp:
         self.canvas.bind("<B1-Motion>", self._drag_move)
         self.canvas.bind("<ButtonRelease-1>", self._drag_end)
         self.canvas.bind("<Button-3>", self._right_click)
-
-    def run(self) -> None:
-        threading.Thread(target=self._read_messages, name="engram-jsonl-reader", daemon=True).start()
-        if self.mode == "replace":
-            self.root.after_idle(self._send_geometry)
-        self.root.after(20, self._drain_messages)
-        self.root.mainloop()
 
     def _read_messages(self) -> None:
         for message in self.transport.messages():
@@ -65,10 +101,13 @@ class OverlayApp:
             if self.state.x is not None and self.state.y is not None:
                 self.root.geometry(f"+{self.state.x}+{self.state.y}")
                 self.state.x = self.state.y = None
-            color, label = self.state.appearance
-            self.canvas.itemconfigure(self.body, fill=color)
-            self.canvas.itemconfigure(self.label, text=label)
+            self.view.apply_state(self.state)
         self.root.after(20, self._drain_messages)
+
+    def _tick(self) -> None:
+        pointer_x, pointer_y = self.root.winfo_pointerxy()
+        self.view.tick(pointer_x, pointer_y, self.root.winfo_x(), self.root.winfo_y())
+        self.root.after(self.FRAME_MS, self._tick)
 
     def _send_pointer(self, action: str, *, x: int | None = None, y: int | None = None) -> None:
         if self.mode == "replace":
@@ -92,6 +131,7 @@ class OverlayApp:
 
     def _drag_end(self, event: tk.Event) -> None:
         if self.mode != "replace":
+            self._drag_origin = None
             return
         if self._drag_origin is None:
             self._send_pointer("left_click")
@@ -107,3 +147,4 @@ class OverlayApp:
 
     def _right_click(self, event: tk.Event) -> None:
         self._send_pointer("right_click", x=event.x_root, y=event.y_root)
+
