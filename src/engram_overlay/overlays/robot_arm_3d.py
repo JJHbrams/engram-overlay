@@ -91,8 +91,8 @@ def target_from_pointer(
     depth: float,
 ) -> Vec3:
     """Unproject a pointer onto an independently selected camera-depth plane."""
-    clamped_x = min(max(pointer_x, 70.0), width - 70.0)
-    clamped_y = min(max(pointer_y, 265.0), min(height - 90.0, 340.0))
+    clamped_x = min(max(pointer_x, 55.0), width - 55.0)
+    clamped_y = min(max(pointer_y, 250.0), min(height - 80.0, 350.0))
     return camera.unproject(clamped_x, clamped_y, depth)
 
 
@@ -114,11 +114,11 @@ def constrain_target_reach(base: Vec3, target: Vec3, lengths: Sequence[float], *
     return base + offset.normalized() * maximum_distance
 
 
-def root_biased_seed(current: Sequence[Vec3], preferred: Sequence[Vec3]) -> list[Vec3]:
-    """Refresh the pole posture most strongly at root-side joints 0 and 1."""
+def distributed_joint_seed(current: Sequence[Vec3], preferred: Sequence[Vec3]) -> list[Vec3]:
+    """Refresh the pole posture through joints 0-2 while joint 3 remains the tracked target."""
     if len(current) != 4 or len(preferred) != 4:
         raise ValueError("a three-link chain requires four seed points")
-    weights = (0.0, 0.34, 0.26, 0.0)
+    weights = (0.0, 0.36, 0.42, 0.0)
     return [point + (goal - point) * weight for point, goal, weight in zip(current, preferred, weights, strict=True)]
 
 
@@ -261,7 +261,7 @@ class RobotArm3DView:
         target_smoothing = 0.11
         self.target = self.target + (desired_target - self.target) * target_smoothing
         preferred_seed = z_seed_3d(self.base, self.target, self.lengths)
-        solver_seed = root_biased_seed(self.joints, preferred_seed)
+        solver_seed = distributed_joint_seed(self.joints, preferred_seed)
         self.joints = solve_three_link_3d(self.base, self.target, self.lengths, seed=solver_seed)
 
         projected_eye = self.camera.project(self.joints[-1])

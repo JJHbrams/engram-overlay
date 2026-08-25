@@ -7,8 +7,8 @@ from engram_overlay.overlays.robot_arm_3d import (
     cable_hardware_faces,
     constrain_target_reach,
     depth_at_phase,
+    distributed_joint_seed,
     quadratic_curve,
-    root_biased_seed,
     solve_three_link_3d,
     target_from_pointer,
 )
@@ -60,8 +60,8 @@ class RobotArm3DTests(unittest.TestCase):
         camera = Camera(180.0, 190.0, yaw=-0.38, pitch=-0.10, focal_length=650.0)
         left = camera.project(target_from_pointer(-100.0, 300.0, 360.0, 430.0, camera=camera, depth=0.0))
         right = camera.project(target_from_pointer(500.0, 300.0, 360.0, 430.0, camera=camera, depth=0.0))
-        self.assertAlmostEqual(left.x, 70.0)
-        self.assertAlmostEqual(right.x, 290.0)
+        self.assertAlmostEqual(left.x, 55.0)
+        self.assertAlmostEqual(right.x, 305.0)
         sampled_depths = [depth_at_phase(index * math.tau / 100.0) for index in range(100)]
         self.assertLessEqual(max(abs(depth) for depth in sampled_depths), 30.0)
         near_scale = camera.project(camera.unproject(180.0, 300.0, -30.0)).scale
@@ -81,13 +81,14 @@ class RobotArm3DTests(unittest.TestCase):
             turns.append(math.degrees(math.acos(max(-1.0, min(1.0, parent.dot(child))))))
         self.assertGreater(min(turns), 15.0)
 
-    def test_pole_refresh_is_weighted_toward_root_side_joints(self) -> None:
+    def test_pole_refresh_reaches_the_lower_joint_while_endpoint_stays_tracked(self) -> None:
         current = [Vec3(float(index), 0.0, 0.0) for index in range(4)]
         preferred = [Vec3(float(index), 10.0, 0.0) for index in range(4)]
-        seed = root_biased_seed(current, preferred)
+        seed = distributed_joint_seed(current, preferred)
         self.assertEqual(seed[0], current[0])
         self.assertEqual(seed[3], current[3])
-        self.assertGreater(seed[1].y, seed[2].y)
+        self.assertGreater(seed[1].y, 0.0)
+        self.assertGreater(seed[2].y, seed[1].y)
 
     def test_3d_view_reuses_event_expression_mapping(self) -> None:
         view = RobotArm3DView()
