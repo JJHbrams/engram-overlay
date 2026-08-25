@@ -7,9 +7,9 @@ from engram_overlay.overlays.robot_arm_3d import (
     cable_hardware_faces,
     constrain_target_reach,
     depth_at_phase,
-    distributed_joint_seed,
     quadratic_curve,
     solve_three_link_3d,
+    solve_z_posture_3d,
     target_from_pointer,
 )
 from engram_overlay.registry import OVERLAYS, overlay_ids
@@ -81,14 +81,20 @@ class RobotArm3DTests(unittest.TestCase):
             turns.append(math.degrees(math.acos(max(-1.0, min(1.0, parent.dot(child))))))
         self.assertGreater(min(turns), 15.0)
 
-    def test_pole_refresh_reaches_the_lower_joint_while_endpoint_stays_tracked(self) -> None:
-        current = [Vec3(float(index), 0.0, 0.0) for index in range(4)]
-        preferred = [Vec3(float(index), 10.0, 0.0) for index in range(4)]
-        seed = distributed_joint_seed(current, preferred)
-        self.assertEqual(seed[0], current[0])
-        self.assertEqual(seed[3], current[3])
-        self.assertGreater(seed[1].y, 0.0)
-        self.assertGreater(seed[2].y, seed[1].y)
+    def test_z_posture_solver_alternates_bends_and_preserves_chain(self) -> None:
+        base = Vec3(0.0, -145.0, 0.0)
+        target = Vec3(0.0, 135.0, 20.0)
+        lengths = (120.0, 105.0, 95.0)
+        points = solve_z_posture_3d(base, target, lengths, bend_side=1)
+        self.assertGreater(points[1].x, 0.0)
+        self.assertLess(points[2].x, 0.0)
+        self.assertEqual(points[-1], target)
+        for start, end, expected in zip(points[:-1], points[1:], lengths, strict=True):
+            self.assertAlmostEqual((end - start).length, expected, places=6)
+
+        mirrored = solve_z_posture_3d(base, target, lengths, bend_side=-1)
+        self.assertLess(mirrored[1].x, 0.0)
+        self.assertGreater(mirrored[2].x, 0.0)
 
     def test_3d_view_reuses_event_expression_mapping(self) -> None:
         view = RobotArm3DView()

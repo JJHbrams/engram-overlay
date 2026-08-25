@@ -21,7 +21,14 @@ from ..scene3d import (
     tapered_prism_faces,
 )
 from ..state import OverlayState
-from .robot_arm import EXPRESSIONS, EyeExpression, eyelid_polygon_points, expression_for_hint, tracked_gaze
+from .robot_arm import (
+    EXPRESSIONS,
+    EyeExpression,
+    bend_side_for_target,
+    eyelid_polygon_points,
+    expression_for_hint,
+    tracked_gaze,
+)
 
 TRANSPARENT = "#010203"
 
@@ -81,6 +88,38 @@ def solve_three_link_3d(
     return points
 
 
+def solve_z_posture_3d(
+    base: Vec3,
+    target: Vec3,
+    lengths: Sequence[float],
+    *,
+    bend_side: int = 1,
+    side_hint: Vec3 = Vec3(1.0, 0.0, 0.0),
+    tool_angle: float = math.radians(30.0),
+) -> list[Vec3]:
+    """Solve an exact 3D chain whose projected link bends alternate as a Z."""
+    if len(lengths) != 3 or any(length <= 0.0 for length in lengths):
+        raise ValueError("three positive link lengths are required")
+    branch = 1 if bend_side >= 0 else -1
+    forward = (target - base).normalized()
+    side = (side_hint - forward * side_hint.dot(forward)).normalized(Vec3(1.0, 0.0, 0.0))
+    tool_direction = (forward * math.cos(tool_angle) + side * (branch * math.sin(tool_angle))).normalized()
+    wrist = target - tool_direction * lengths[2]
+    wrist_offset = wrist - base
+    wrist_distance = wrist_offset.length
+    minimum = abs(lengths[0] - lengths[1])
+    maximum = lengths[0] + lengths[1]
+    if not minimum < wrist_distance < maximum:
+        return solve_three_link_3d(base, target, lengths)
+
+    wrist_axis = wrist_offset.normalized()
+    along = (lengths[0] ** 2 - lengths[1] ** 2 + wrist_distance**2) / (2.0 * wrist_distance)
+    height = math.sqrt(max(lengths[0] ** 2 - along**2, 0.0))
+    elbow_axis = (side - wrist_axis * side.dot(wrist_axis)).normalized(Vec3(0.0, 0.0, 1.0))
+    elbow = base + wrist_axis * along + elbow_axis * (branch * height)
+    return [base, elbow, wrist, target]
+
+
 def target_from_pointer(
     pointer_x: float,
     pointer_y: float,
@@ -112,14 +151,6 @@ def constrain_target_reach(base: Vec3, target: Vec3, lengths: Sequence[float], *
     if offset.length <= maximum_distance:
         return target
     return base + offset.normalized() * maximum_distance
-
-
-def distributed_joint_seed(current: Sequence[Vec3], preferred: Sequence[Vec3]) -> list[Vec3]:
-    """Refresh the pole posture through joints 0-2 while joint 3 remains the tracked target."""
-    if len(current) != 4 or len(preferred) != 4:
-        raise ValueError("a three-link chain requires four seed points")
-    weights = (0.0, 0.36, 0.42, 0.0)
-    return [point + (goal - point) * weight for point, goal, weight in zip(current, preferred, weights, strict=True)]
 
 
 def quadratic_curve(start: Vec3, control: Vec3, end: Vec3, *, steps: int = 6) -> list[Vec3]:
@@ -204,7 +235,14 @@ class RobotArm3DView:
             ),
             self.lengths,
         )
-        self.joints = solve_three_link_3d(self.base, self.target, self.lengths)
+        self.bend_side = 1
+        self.joints = solve_z_posture_3d(
+            self.base,
+            self.target,
+            self.lengths,
+            bend_side=self.bend_side,
+            side_hint=self.camera.world_space(Vec3(1.0, 0.0, 0.0)),
+        )
         self.status_id: int | None = None
         self.expression = EXPRESSIONS[0]
         self.active_hint = "idle"
@@ -260,9 +298,14 @@ class RobotArm3DView:
         )
         target_smoothing = 0.11
         self.target = self.target + (desired_target - self.target) * target_smoothing
-        preferred_seed = z_seed_3d(self.base, self.target, self.lengths)
-        solver_seed = distributed_joint_seed(self.joints, preferred_seed)
-        self.joints = solve_three_link_3d(self.base, self.target, self.lengths, seed=solver_seed)
+        self.bend_side = bend_side_for_target(self.bend_side, local_pointer[0], self.width * 0.5, deadband=24.0)
+        self.joints = solve_z_posture_3d(
+            self.base,
+            self.target,
+            self.lengths,
+            bend_side=self.bend_side,
+            side_hint=self.camera.world_space(Vec3(1.0, 0.0, 0.0)),
+        )
 
         projected_eye = self.camera.project(self.joints[-1])
         desired_mouse_gaze = tracked_gaze(local_pointer, (projected_eye.x, projected_eye.y), max_x=7.0, max_y=5.0)
