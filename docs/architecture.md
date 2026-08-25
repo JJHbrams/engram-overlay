@@ -17,6 +17,7 @@ Engram child process / JSONL
          ├─ xeyes.py               # asset 없는 작은 mouse tracking 예제
          ├─ robot_arm.py           # ceiling 3-link Z-IK + single-eye expression VFX
          ├─ robot_arm_3d.py        # XYZ FABRIK + perspective/shaded procedural meshes
+         ├─ robot_arm_3d_v2.py     # textured quad subdivision + layered industrial shell
          ├─ image-character/       # 향후 기능형 2D 이미지 + assets/
          ├─ object-3d/             # 향후 3D object + model/texture
          └─ live2d-character/      # 향후 Live2D model + runtime assets

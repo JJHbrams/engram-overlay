@@ -18,6 +18,9 @@ engram-custom-overlay = "engram_overlay.__main__:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"engram_overlay.overlays" = ["assets/robot_arm_3d_v2/*.png"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]

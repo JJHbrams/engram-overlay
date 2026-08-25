@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("xeyes", "robot-arm", "robot-arm-3d")]
+    [ValidateSet("xeyes", "robot-arm", "robot-arm-3d", "robot-arm-3d-v2")]
     [string]$Overlay = "xeyes",
     [ValidateSet("observer", "replace")]
     [string]$Mode = "replace"
@@ -32,6 +32,7 @@ $launcherYaml = $launcher.Replace("\", "/").Replace('"', '\"')
 $overlayName = switch ($Overlay) {
     "robot-arm" { "Engram 3-Link Robot Arm" }
     "robot-arm-3d" { "Engram 3D Robot Arm" }
+    "robot-arm-3d-v2" { "Engram Textured 3D Robot Arm V2" }
     default { "Engram XEyes" }
 }
 $manifest = @"

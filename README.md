@@ -32,6 +32,7 @@ Engram의 External Overlay Event API v1을 사용하는 독립 커스텀 오버�
 | `xeyes` | Tk | 화면 전체의 mouse pointer를 따라보는 두 눈. 첫 API/입력 smoke 구현 |
 | `robot-arm` | Tk | 천장 root에서 Z 자세로 내려오며 iris·LED·ambient 표정을 재생하는 단안 3-link arm |
 | `robot-arm-3d` | Tk software 3D | 고정 카메라에서 독립적인 XYZ 운동을 원근 투영·depth sort·면 조명으로 렌더링하는 단안 3-link arm |
+| `robot-arm-3d-v2` | Tk textured software 3D | 생성형 material atlas를 quad 세분 면에 샘플링하고 적층 외장·케이블 레일을 확장한 산업형 단안 arm |
 
 ## 문서 기준
 

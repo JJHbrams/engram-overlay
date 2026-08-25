@@ -583,6 +583,18 @@ class RobotArm3DView:
         faces.extend(sphere_faces(self.joints[-1], 34.0, color="#d8d6cf", rings=5, segments=10, z_scale=0.72))
         return faces
 
+    def _draw_projected_face(self, face: Face3D, coordinates: tuple[float, ...]) -> None:
+        """Draw one projected face; renderer variants may override its surface treatment."""
+        if self.canvas is None:
+            return
+        self.canvas.create_polygon(
+            *coordinates,
+            fill=lit_face_color(face),
+            outline=face.outline,
+            width=1,
+            tags=("scene3d",),
+        )
+
     @staticmethod
     def _scaled_polygon(points: Sequence[float], center: tuple[float, float], scale: float) -> tuple[float, ...]:
         scaled: list[float] = []
@@ -619,13 +631,7 @@ class RobotArm3DView:
             depth = sum(point.depth for point in projected) / len(projected)
             projected_faces.append((depth, face, coordinates))
         for _, face, coordinates in sorted(projected_faces, key=lambda item: item[0], reverse=True):
-            self.canvas.create_polygon(
-                *coordinates,
-                fill=lit_face_color(face),
-                outline=face.outline,
-                width=1,
-                tags=("scene3d",),
-            )
+            self._draw_projected_face(face, coordinates)
 
         hub = self.camera.project(first_link_hub_center(self.joints[0], self.joints[1]))
         hub_radius = 14.0 * hub.scale
