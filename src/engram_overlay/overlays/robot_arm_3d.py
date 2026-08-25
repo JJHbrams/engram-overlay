@@ -166,24 +166,27 @@ def aperture_segments(
     radius_x: float,
     radius_y: float,
     angle_degrees: float,
-    *,
-    count: int = 3,
 ) -> tuple[tuple[float, float, float, float], ...]:
-    """Build rotating radial seams for a mechanical iris."""
+    """Build three subtle rotating seams for a mechanical iris."""
     segments: list[tuple[float, float, float, float]] = []
-    for index in range(count):
-        angle = math.radians(angle_degrees + index * 360.0 / count)
+    for index in range(3):
+        angle = math.radians(angle_degrees + index * 120.0)
         cosine = math.cos(angle)
         sine = math.sin(angle)
         segments.append(
             (
-                center[0] + cosine * radius_x * 0.48,
-                center[1] - sine * radius_y * 0.48,
-                center[0] + cosine * radius_x * 0.92,
-                center[1] - sine * radius_y * 0.92,
+                center[0] + cosine * radius_x * 0.52,
+                center[1] - sine * radius_y * 0.52,
+                center[0] + cosine * radius_x * 0.88,
+                center[1] - sine * radius_y * 0.88,
             )
         )
     return tuple(segments)
+
+
+def visible_eyelid_offsets(upper_y: float, lower_y: float) -> tuple[float, float]:
+    """Keep a minimum mechanical lid frame around an otherwise fully open eye."""
+    return max(upper_y, -22.0), min(lower_y, 22.0)
 
 
 def depth_at_phase(phase: float) -> float:
@@ -260,6 +263,75 @@ def cable_hardware_faces(start: Vec3, end: Vec3, *, index: int) -> list[Face3D]:
     return faces
 
 
+def first_link_accessory_faces(start: Vec3, end: Vec3) -> list[Face3D]:
+    """Add a compact service module and mounting struts to the root-side link."""
+    surface, lateral = _link_surface_frame(start, end)
+    module_start = point_along(start, end, 34.0) + surface * 25.0 - lateral * 8.0
+    module_end = point_along(start, end, 62.0) + surface * 25.0 - lateral * 8.0
+    faces = tapered_prism_faces(
+        module_start,
+        module_end,
+        start_radius=7.5,
+        end_radius=6.5,
+        color="#64748b",
+        outline="#0f172a",
+    )
+    for distance, module_point in ((36.0, module_start), (60.0, module_end)):
+        link_point = point_along(start, end, distance) + surface * 14.0
+        faces.extend(
+            tapered_prism_faces(
+                link_point,
+                module_point,
+                start_radius=2.4,
+                end_radius=2.4,
+                color="#334155",
+                outline="#0f172a",
+            )
+        )
+    faces.extend(
+        sphere_faces(
+            first_link_hub_center(start, end),
+            15.0,
+            color="#1e293b",
+            rings=4,
+            segments=8,
+            z_scale=0.55,
+            outline="#020617",
+        )
+    )
+    return faces
+
+
+def first_link_hub_center(start: Vec3, end: Vec3) -> Vec3:
+    surface, lateral = _link_surface_frame(start, end)
+    return point_along(start, end, 50.0) + surface * 24.0 + lateral * 10.0
+
+
+def first_link_service_path(start: Vec3, end: Vec3) -> list[Vec3]:
+    surface, lateral = _link_surface_frame(start, end)
+    anchor_start = point_along(start, end, 24.0) + surface * 24.0 - lateral * 12.0
+    anchor_end = point_along(end, start, 28.0) + surface * 22.0 - lateral * 10.0
+    control = (anchor_start + anchor_end) * 0.5 + surface * 19.0 - lateral * 8.0
+    return quadratic_curve(anchor_start, control, anchor_end, steps=7)
+
+
+def first_link_back_loops(start: Vec3, end: Vec3) -> tuple[list[Vec3], list[Vec3]]:
+    """Build a heavy cable loop behind the root-side mechanism."""
+    surface, lateral = _link_surface_frame(start, end)
+    anchor_start = point_along(start, end, 6.0) + surface * 13.0
+    anchor_end = point_along(start, end, 76.0) + surface * 22.0
+    control = (anchor_start + anchor_end) * 0.5 + lateral * 58.0 + surface * 34.0
+    main = quadratic_curve(anchor_start, control, anchor_end, steps=9)
+    accent_offset = surface * 3.5 - lateral * 3.0
+    accent = [point + accent_offset for point in main]
+    return main, accent
+
+
+def idle_motion_waypoint(rng: random.Random) -> tuple[float, float]:
+    """Choose a restrained endpoint offset for autonomous idle motion."""
+    return rng.uniform(-52.0, 52.0), rng.uniform(-24.0, 22.0)
+
+
 class RobotArm3DView:
     width = 360
     height = 430
@@ -309,7 +381,11 @@ class RobotArm3DView:
         self.pupil_size = self.expression.pupil_size
         self.pupil_outline_width = self.expression.pupil_outline_width
         self.pulse_phase = 0.0
-        self.next_expression_at = time.monotonic() + self.rng.uniform(3.0, 5.5)
+        now = time.monotonic()
+        self.next_expression_at = now + self.rng.uniform(3.0, 5.5)
+        self.idle_motion = (0.0, 0.0)
+        self.idle_motion_target = (0.0, 0.0)
+        self.next_idle_motion_at = now + self.rng.uniform(1.5, 3.0)
 
     def mount(self, canvas: tk.Canvas) -> None:
         self.canvas = canvas
@@ -327,19 +403,36 @@ class RobotArm3DView:
         if expression is None:
             self.random_expressions_enabled = True
             self.next_expression_at = now
+            self.next_idle_motion_at = now
             return
         self.random_expressions_enabled = False
+        self.idle_motion_target = (0.0, 0.0)
         self._set_expression(expression, now)
 
     def tick(self, pointer_x: int, pointer_y: int, window_x: int, window_y: int) -> None:
         local_pointer = (pointer_x - window_x, pointer_y - window_y)
+        now = time.monotonic()
+        if self.random_expressions_enabled and now >= self.next_idle_motion_at:
+            self.idle_motion_target = idle_motion_waypoint(self.rng)
+            self.next_idle_motion_at = now + self.rng.uniform(2.2, 4.5)
+        elif not self.random_expressions_enabled:
+            self.idle_motion_target = (0.0, 0.0)
+        idle_smoothing = 0.025
+        self.idle_motion = (
+            self.idle_motion[0] + (self.idle_motion_target[0] - self.idle_motion[0]) * idle_smoothing,
+            self.idle_motion[1] + (self.idle_motion_target[1] - self.idle_motion[1]) * idle_smoothing,
+        )
+        motion_pointer = (
+            local_pointer[0] + self.idle_motion[0],
+            local_pointer[1] + self.idle_motion[1],
+        )
         self.depth_phase = (self.depth_phase + 0.009) % math.tau
         desired_depth = depth_at_phase(self.depth_phase)
         self.target_depth += (desired_depth - self.target_depth) * 0.08
         desired_target = constrain_target_reach(
             self.base,
             target_from_pointer(
-                *local_pointer,
+                *motion_pointer,
                 self.width,
                 self.height,
                 camera=self.camera,
@@ -349,7 +442,7 @@ class RobotArm3DView:
         )
         target_smoothing = 0.11
         self.target = self.target + (desired_target - self.target) * target_smoothing
-        desired_elbow, desired_wrist = continuous_posture_hints(local_pointer[0], self.width, self.camera)
+        desired_elbow, desired_wrist = continuous_posture_hints(motion_pointer[0], self.width, self.camera)
         self.elbow_hint = (self.elbow_hint * 0.89 + desired_elbow * 0.11).normalized(desired_elbow)
         self.wrist_hint = (self.wrist_hint * 0.89 + desired_wrist * 0.11).normalized(desired_wrist)
         self.joints = solve_z_posture_3d(
@@ -368,7 +461,6 @@ class RobotArm3DView:
             self.mouse_gaze[1] + (desired_mouse_gaze[1] - self.mouse_gaze[1]) * gaze_smoothing,
         )
 
-        now = time.monotonic()
         if self.random_expressions_enabled and now >= self.next_expression_at:
             choices = tuple(expression for expression in EXPRESSIONS if expression.name != self.expression.name)
             self._set_expression(self.rng.choice(choices), now)
@@ -422,6 +514,8 @@ class RobotArm3DView:
                 )
             )
             faces.extend(cable_hardware_faces(start, end, index=index))
+            if index == 0:
+                faces.extend(first_link_accessory_faces(start, end))
         for joint in self.joints[:-1]:
             faces.extend(sphere_faces(joint, 13.0, color="#64748b", rings=4, segments=8, z_scale=0.88))
         faces.extend(sphere_faces(self.joints[-1], 34.0, color="#d8d6cf", rings=5, segments=10, z_scale=0.72))
@@ -438,6 +532,24 @@ class RobotArm3DView:
         if self.canvas is None:
             return
         self.canvas.delete("scene3d")
+        back_loop, back_accent = first_link_back_loops(self.joints[0], self.joints[1])
+        for path, color, base_width in (
+            (back_loop, "#020617", 14.0),
+            (back_loop, "#111827", 9.0),
+            (back_accent, "#f59e0b", 2.4),
+        ):
+            projected_path = tuple(self.camera.project(point) for point in path)
+            coordinates = tuple(coordinate for point in projected_path for coordinate in (point.x, point.y))
+            average_scale = sum(point.scale for point in projected_path) / len(projected_path)
+            self.canvas.create_line(
+                *coordinates,
+                fill=color,
+                width=max(1.5, base_width * average_scale),
+                smooth=True,
+                splinesteps=14,
+                capstyle=tk.ROUND,
+                tags=("scene3d",),
+            )
         projected_faces: list[tuple[float, Face3D, tuple[float, ...]]] = []
         for face in self._scene_faces():
             projected = tuple(self.camera.project(vertex) for vertex in face.vertices)
@@ -452,6 +564,42 @@ class RobotArm3DView:
                 width=1,
                 tags=("scene3d",),
             )
+
+        hub = self.camera.project(first_link_hub_center(self.joints[0], self.joints[1]))
+        hub_radius = 14.0 * hub.scale
+        self.canvas.create_oval(
+            hub.x - hub_radius,
+            hub.y - hub_radius,
+            hub.x + hub_radius,
+            hub.y + hub_radius,
+            fill="#111827",
+            outline="#94a3b8",
+            width=max(2.0, 3.0 * hub.scale),
+            tags=("scene3d",),
+        )
+        self.canvas.create_arc(
+            hub.x - hub_radius * 0.72,
+            hub.y - hub_radius * 0.72,
+            hub.x + hub_radius * 0.72,
+            hub.y + hub_radius * 0.72,
+            start=28.0,
+            extent=265.0,
+            style=tk.ARC,
+            outline="#475569",
+            width=max(2.0, 2.5 * hub.scale),
+            tags=("scene3d",),
+        )
+        indicator_radius = max(2.0, 3.2 * hub.scale)
+        self.canvas.create_oval(
+            hub.x - indicator_radius,
+            hub.y - indicator_radius,
+            hub.x + indicator_radius,
+            hub.y + indicator_radius,
+            fill="#f97316",
+            outline="#431407",
+            width=1,
+            tags=("scene3d",),
+        )
 
         for index, (start, end) in enumerate(zip(self.joints[:-1], self.joints[1:], strict=True)):
             main_path, warm_path, cool_path = cable_decoration_paths(start, end, index=index)
@@ -488,6 +636,31 @@ class RobotArm3DView:
                         width=1,
                         tags=("scene3d",),
                     )
+            if index == 0:
+                service_path = first_link_service_path(start, end)
+                projected_service = tuple(self.camera.project(point) for point in service_path)
+                service_coordinates = tuple(
+                    coordinate for point in projected_service for coordinate in (point.x, point.y)
+                )
+                service_scale = sum(point.scale for point in projected_service) / len(projected_service)
+                self.canvas.create_line(
+                    *service_coordinates,
+                    fill="#0f172a",
+                    width=max(2.0, 5.5 * service_scale),
+                    smooth=True,
+                    splinesteps=12,
+                    capstyle=tk.ROUND,
+                    tags=("scene3d",),
+                )
+                self.canvas.create_line(
+                    *service_coordinates,
+                    fill="#f97316",
+                    width=max(1.0, 2.2 * service_scale),
+                    smooth=True,
+                    splinesteps=12,
+                    capstyle=tk.ROUND,
+                    tags=("scene3d",),
+                )
 
         eye = self.camera.project(self.joints[-1])
         center = (eye.x, eye.y)
@@ -595,21 +768,11 @@ class RobotArm3DView:
             width=max(1.0, 1.8 * scale),
             tags=("scene3d",),
         )
-        for index, segment in enumerate(aperture_segments(pupil, pupil_x, pupil_y, shade_angle + 12.0)):
+        for segment in aperture_segments(pupil, pupil_x, pupil_y, shade_angle + 12.0):
             self.canvas.create_line(
                 *segment,
                 fill=iris_shadow,
-                width=max(1.0, 1.4 * scale),
-                tags=("scene3d",),
-            )
-            point_radius = max(1.0, (1.5 if index == 0 else 1.1) * scale)
-            self.canvas.create_oval(
-                segment[2] - point_radius,
-                segment[3] - point_radius,
-                segment[2] + point_radius,
-                segment[3] + point_radius,
-                fill=iris_highlight if index == 0 else iris_shadow,
-                outline="",
+                width=max(1.0, 1.15 * scale),
                 tags=("scene3d",),
             )
         iris_base = max(pupil_x, pupil_y)
@@ -625,8 +788,9 @@ class RobotArm3DView:
                 dash=dash,
                 tags=("scene3d",),
             )
-        upper = eyelid_polygon_points((0.0, 0.0), self.upper_y, self.upper_tilt, self.upper_peak, upper=True)
-        lower = eyelid_polygon_points((0.0, 0.0), self.lower_y, self.lower_tilt, self.lower_peak, upper=False)
+        visible_upper_y, visible_lower_y = visible_eyelid_offsets(self.upper_y, self.lower_y)
+        upper = eyelid_polygon_points((0.0, 0.0), visible_upper_y, self.upper_tilt, self.upper_peak, upper=True)
+        lower = eyelid_polygon_points((0.0, 0.0), visible_lower_y, self.lower_tilt, self.lower_peak, upper=False)
         for points in (upper, lower):
             self.canvas.create_polygon(
                 *self._scaled_polygon(points, center, scale),

@@ -1,4 +1,5 @@
 import math
+import random
 import unittest
 
 from engram_overlay.overlays.robot_arm_3d import (
@@ -10,10 +11,16 @@ from engram_overlay.overlays.robot_arm_3d import (
     continuous_posture_hints,
     depth_at_phase,
     eye_shading_from_link,
+    first_link_accessory_faces,
+    first_link_back_loops,
+    first_link_hub_center,
+    first_link_service_path,
+    idle_motion_waypoint,
     quadratic_curve,
     solve_three_link_3d,
     solve_z_posture_3d,
     target_from_pointer,
+    visible_eyelid_offsets,
 )
 from engram_overlay.registry import OVERLAYS, overlay_ids
 from engram_overlay.scene3d import Camera, Vec3
@@ -161,12 +168,13 @@ class RobotArm3DTests(unittest.TestCase):
         _, _, _, depth_strength = eye_shading_from_link(Vec3(1.0, 0.0, 4.0))
         self.assertGreater(depth_strength, strength)
 
-    def test_aperture_segments_rotate_with_the_eye_shading(self) -> None:
-        horizontal = aperture_segments((10.0, 20.0), 8.0, 6.0, 0.0)
-        vertical = aperture_segments((10.0, 20.0), 8.0, 6.0, 90.0)
-        self.assertEqual(len(horizontal), 3)
-        self.assertGreater(horizontal[0][2], horizontal[0][0])
-        self.assertLess(vertical[0][3], vertical[0][1])
+    def test_mechanical_iris_seams_are_subtle_and_three_way(self) -> None:
+        segments = aperture_segments((10.0, 20.0), 8.0, 6.0, 0.0)
+        self.assertEqual(len(segments), 3)
+        self.assertGreater(segments[0][0], 10.0)
+        self.assertGreater(segments[0][2], segments[0][0])
+        self.assertEqual(visible_eyelid_offsets(-27.0, 27.0), (-22.0, 22.0))
+        self.assertEqual(visible_eyelid_offsets(-8.0, 10.0), (-8.0, 10.0))
 
     def test_3d_view_reuses_event_expression_mapping(self) -> None:
         view = RobotArm3DView()
@@ -198,6 +206,37 @@ class RobotArm3DTests(unittest.TestCase):
         self.assertEqual(len(faces), 24)
         self.assertTrue(any(face.color == "#475569" for face in faces))
         self.assertTrue(any(face.color == "#334155" for face in faces))
+
+    def test_first_link_accessories_add_module_hardware_and_service_line(self) -> None:
+        start = Vec3(0.0, -145.0, 0.0)
+        end = Vec3(55.0, -45.0, 25.0)
+        faces = first_link_accessory_faces(start, end)
+        path = first_link_service_path(start, end)
+        loops = first_link_back_loops(start, end)
+        hub = first_link_hub_center(start, end)
+        self.assertGreater(len(faces), 45)
+        self.assertEqual(len(path), 8)
+        self.assertTrue(all(len(loop) == 10 for loop in loops))
+        self.assertGreater((hub - start).length, 20.0)
+        self.assertTrue(any(face.color == "#64748b" for face in faces))
+
+    def test_idle_motion_waypoint_stays_restrained(self) -> None:
+        waypoint = idle_motion_waypoint(random.Random(7))
+        self.assertGreaterEqual(waypoint[0], -52.0)
+        self.assertLessEqual(waypoint[0], 52.0)
+        self.assertGreaterEqual(waypoint[1], -24.0)
+        self.assertLessEqual(waypoint[1], 22.0)
+
+        view = RobotArm3DView(rng=random.Random(7))
+        view.next_idle_motion_at = 0.0
+        view.tick(180, 310, 0, 0)
+        self.assertNotEqual(view.idle_motion_target, (0.0, 0.0))
+        self.assertNotEqual(view.idle_motion, (0.0, 0.0))
+        previous_distance = math.hypot(*view.idle_motion_target)
+        view.apply_state(OverlayState(display_hint="generating"))
+        view.tick(180, 310, 0, 0)
+        self.assertEqual(view.idle_motion_target, (0.0, 0.0))
+        self.assertLess(math.hypot(*view.idle_motion), previous_distance)
 
 if __name__ == "__main__":
     unittest.main()
