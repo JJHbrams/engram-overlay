@@ -48,6 +48,24 @@ EXPRESSIONS = (
 ALARM_EXPRESSION = EyeExpression(
     "alarm", "#ef4444", -12.0, 8.0, 0.0, 0.0, 16.0, 0.0, (0.0, 1.0), 3.4, (17.0, 15.0), 6.0
 )
+EXPRESSION_BY_NAME = {expression.name: expression for expression in EXPRESSIONS}
+DISPLAY_HINT_EXPRESSIONS: dict[str, EyeExpression] = {
+    "hover": EXPRESSION_BY_NAME["curious"],
+    "click": EXPRESSION_BY_NAME["giggle"],
+    "input": EXPRESSION_BY_NAME["hesitant"],
+    "generating": EXPRESSION_BY_NAME["skeptical"],
+    "search": EXPRESSION_BY_NAME["curious"],
+    "thought": EXPRESSION_BY_NAME["skeptical"],
+    "memory": EXPRESSION_BY_NAME["hesitant"],
+    "success": EXPRESSION_BY_NAME["giggle"],
+    "provider_error": EXPRESSION_BY_NAME["tempered"],
+    "error": ALARM_EXPRESSION,
+}
+
+
+def expression_for_hint(display_hint: str) -> EyeExpression | None:
+    """Map non-idle public Event API hints to deterministic eye expressions."""
+    return DISPLAY_HINT_EXPRESSIONS.get(display_hint)
 
 
 def _distance(a: Point, b: Point) -> float:
@@ -291,6 +309,8 @@ class RobotArmView:
         self.status_id: int | None = None
         self.rng = rng or random.Random()
         self.expression = EXPRESSIONS[0]
+        self.active_hint = "idle"
+        self.random_expressions_enabled = True
         self.upper_y = self.expression.upper_y
         self.lower_y = self.expression.lower_y
         self.upper_tilt = self.expression.upper_tilt
@@ -356,8 +376,18 @@ class RobotArmView:
         self._draw()
 
     def apply_state(self, state: OverlayState) -> None:
-        if state.display_hint in {"error", "provider_error"}:
-            self._set_expression(ALARM_EXPRESSION, time.monotonic())
+        hint = state.display_hint
+        if hint == self.active_hint:
+            return
+        self.active_hint = hint
+        expression = expression_for_hint(hint)
+        now = time.monotonic()
+        if expression is None:
+            self.random_expressions_enabled = True
+            self.next_expression_at = now
+            return
+        self.random_expressions_enabled = False
+        self._set_expression(expression, now)
 
     def tick(self, pointer_x: int, pointer_y: int, window_x: int, window_y: int) -> None:
         local_pointer = (pointer_x - window_x, pointer_y - window_y)
@@ -385,7 +415,7 @@ class RobotArmView:
             self.mouse_gaze[1] + (desired_mouse_gaze[1] - self.mouse_gaze[1]) * gaze_smoothing,
         )
         now = time.monotonic()
-        if now >= self.next_expression_at:
+        if self.random_expressions_enabled and now >= self.next_expression_at:
             choices = tuple(expression for expression in EXPRESSIONS if expression.name != self.expression.name)
             self._set_expression(self.rng.choice(choices), now)
         expression_smoothing = 0.1

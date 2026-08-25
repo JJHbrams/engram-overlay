@@ -1,3 +1,5 @@
+import random
+import time
 import unittest
 from unittest.mock import Mock
 
@@ -6,12 +8,14 @@ from engram_overlay.overlays.robot_arm import (
     RobotArmView,
     bend_side_for_target,
     eyelid_polygon_points,
+    expression_for_hint,
     link_shell_points,
     lower_workspace_target,
     solve_three_link_z,
     tracked_gaze,
 )
 from engram_overlay.registry import OVERLAYS, overlay_ids
+from engram_overlay.state import OverlayState
 
 
 def distance(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -96,6 +100,36 @@ class RobotArmTests(unittest.TestCase):
         lower = eyelid_polygon_points((10.0, 20.0), 5.0, 2.0, 3.0, upper=False)
         self.assertEqual(upper[:6], (-18.0, 13.0, 10.0, 18.0, 38.0, 17.0))
         self.assertEqual(lower[:6], (-18.0, 23.0, 10.0, 28.0, 38.0, 27.0))
+
+    def test_display_hints_map_to_deterministic_expressions(self) -> None:
+        expected = {
+            "hover": "curious",
+            "click": "giggle",
+            "input": "hesitant",
+            "generating": "skeptical",
+            "search": "curious",
+            "thought": "skeptical",
+            "memory": "hesitant",
+            "success": "giggle",
+            "provider_error": "tempered",
+            "error": "alarm",
+        }
+        self.assertEqual(
+            {hint: expression_for_hint(hint).name for hint in expected},
+            expected,
+        )
+        self.assertIsNone(expression_for_hint("idle"))
+        self.assertIsNone(expression_for_hint("default"))
+
+    def test_idle_resumes_all_expression_randomization(self) -> None:
+        view = RobotArmView(rng=random.Random(0))
+        view.apply_state(OverlayState(display_hint="generating"))
+        self.assertFalse(view.random_expressions_enabled)
+        self.assertEqual(view.expression.name, "skeptical")
+
+        view.apply_state(OverlayState(display_hint="idle"))
+        self.assertTrue(view.random_expressions_enabled)
+        self.assertLessEqual(view.next_expression_at, time.monotonic())
 
     def test_mouse_gaze_is_soft_and_elliptically_bounded(self) -> None:
         self.assertEqual(tracked_gaze((10.0, 0.0), (0.0, 0.0)), (2.0 / 3.0, 0.0))
