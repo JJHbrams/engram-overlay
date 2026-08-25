@@ -7,14 +7,16 @@
 ```text
 Engram child process / JSONL
 └─ protocol.py + state.py          # 공통 Event API와 metadata-only 상태
+   ├─ scene3d.py                   # 무의존 Vec3·camera·projection·procedural mesh
    └─ registry.py                  # overlay id → 실행 factory
       ├─ backends/                 # 창·입력·렌더 loop 기술
       │  ├─ tk.py                  # 2D/Tk 공통 host
-      │  ├─ opengl.py              # 향후 3D backend
+      │  ├─ opengl.py              # 향후 GPU 3D backend
       │  └─ webview.py             # 향후 Live2D/Web renderer
       └─ overlays/<id>/            # 개별 작품의 behavior, scene, packaged assets
          ├─ xeyes.py               # asset 없는 작은 mouse tracking 예제
          ├─ robot_arm.py           # ceiling 3-link Z-IK + single-eye expression VFX
+         ├─ robot_arm_3d.py        # XYZ FABRIK + perspective/shaded procedural meshes
          ├─ image-character/       # 향후 기능형 2D 이미지 + assets/
          ├─ object-3d/             # 향후 3D object + model/texture
          └─ live2d-character/      # 향후 Live2D model + runtime assets

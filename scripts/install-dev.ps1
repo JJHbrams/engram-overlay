@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("xeyes", "robot-arm")]
+    [ValidateSet("xeyes", "robot-arm", "robot-arm-3d")]
     [string]$Overlay = "xeyes",
     [ValidateSet("observer", "replace")]
     [string]$Mode = "replace"
@@ -29,7 +29,11 @@ $installDir = Join-Path $userProfilePath ".engram\overlays\$Overlay"
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 $manifestPath = Join-Path $installDir "manifest.yaml"
 $launcherYaml = $launcher.Replace("\", "/").Replace('"', '\"')
-$overlayName = if ($Overlay -eq "robot-arm") { "Engram 3-Link Robot Arm" } else { "Engram XEyes" }
+$overlayName = switch ($Overlay) {
+    "robot-arm" { "Engram 3-Link Robot Arm" }
+    "robot-arm-3d" { "Engram 3D Robot Arm" }
+    default { "Engram XEyes" }
+}
 $manifest = @"
 schema_version: 1
 id: $Overlay
