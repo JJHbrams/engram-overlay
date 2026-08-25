@@ -17,6 +17,7 @@ from ..scene3d import (
     box_faces,
     lit_face_color,
     point_along,
+    shade_color,
     sphere_faces,
     tapered_prism_faces,
 )
@@ -92,15 +93,17 @@ def solve_z_posture_3d(
     target: Vec3,
     lengths: Sequence[float],
     *,
-    pole_hint: Vec3 = Vec3(1.0, 0.0, 0.0),
+    elbow_hint: Vec3 = Vec3(1.0, 0.0, 0.0),
+    wrist_hint: Vec3 | None = None,
     tool_angle: float = math.radians(24.0),
 ) -> list[Vec3]:
     """Solve an exact 3D chain whose projected link bends alternate as a Z."""
     if len(lengths) != 3 or any(length <= 0.0 for length in lengths):
         raise ValueError("three positive link lengths are required")
     forward = (target - base).normalized()
-    pole_axis = (pole_hint - forward * pole_hint.dot(forward)).normalized(Vec3(1.0, 0.0, 0.0))
-    tool_direction = (forward * math.cos(tool_angle) + pole_axis * math.sin(tool_angle)).normalized()
+    wrist_hint = wrist_hint or elbow_hint * -1.0
+    wrist_pole = (wrist_hint - forward * wrist_hint.dot(forward)).normalized(Vec3(-1.0, 0.0, 0.0))
+    tool_direction = (forward * math.cos(tool_angle) - wrist_pole * math.sin(tool_angle)).normalized()
     wrist = target - tool_direction * lengths[2]
     wrist_offset = wrist - base
     wrist_distance = wrist_offset.length
@@ -112,7 +115,7 @@ def solve_z_posture_3d(
     wrist_axis = wrist_offset.normalized()
     along = (lengths[0] ** 2 - lengths[1] ** 2 + wrist_distance**2) / (2.0 * wrist_distance)
     height = math.sqrt(max(lengths[0] ** 2 - along**2, 0.0))
-    elbow_axis = (pole_axis - wrist_axis * pole_axis.dot(wrist_axis)).normalized(Vec3(0.0, 0.0, 1.0))
+    elbow_axis = (elbow_hint - wrist_axis * elbow_hint.dot(wrist_axis)).normalized(Vec3(0.0, 0.0, 1.0))
     elbow = base + wrist_axis * along + elbow_axis * height
     return [base, elbow, wrist, target]
 
@@ -132,14 +135,16 @@ def target_from_pointer(
     return camera.unproject(clamped_x, clamped_y, depth)
 
 
-def continuous_pole_hint(pointer_x: float, width: float, camera: Camera) -> Vec3:
-    """Move the Z-posture pole through depth when crossing the screen center."""
+def continuous_posture_hints(pointer_x: float, width: float, camera: Camera) -> tuple[Vec3, Vec3]:
+    """Keep a Z at the sides, then move both internal joints forward at center."""
     half_span = max(width * 0.5 - 55.0, 1.0)
     horizontal = min(max((pointer_x - width * 0.5) / half_span, -1.0), 1.0)
     depth = math.sqrt(max(1.0 - horizontal * horizontal, 0.0))
     camera_right = camera.world_space(Vec3(1.0, 0.0, 0.0)).normalized()
-    camera_depth = camera.world_space(Vec3(0.0, 0.0, 1.0)).normalized()
-    return (camera_right * horizontal + camera_depth * depth).normalized(camera_depth)
+    camera_forward = camera.world_space(Vec3(0.0, 0.0, -1.0)).normalized()
+    elbow_hint = (camera_right * horizontal + camera_forward * depth).normalized(camera_forward)
+    wrist_hint = (camera_right * -horizontal + camera_forward * depth).normalized(camera_forward)
+    return elbow_hint, wrist_hint
 
 
 def eye_shading_from_link(camera_link: Vec3, *, base_offset: float = 3.2) -> tuple[float, float, float, float]:
@@ -154,6 +159,31 @@ def eye_shading_from_link(camera_link: Vec3, *, base_offset: float = 3.2) -> tup
     strength = base_offset + abs(direction.z) * 2.2
     angle = math.degrees(math.atan2(-screen_y, screen_x))
     return screen_x * strength, screen_y * strength, angle, strength
+
+
+def aperture_segments(
+    center: tuple[float, float],
+    radius_x: float,
+    radius_y: float,
+    angle_degrees: float,
+    *,
+    count: int = 3,
+) -> tuple[tuple[float, float, float, float], ...]:
+    """Build rotating radial seams for a mechanical iris."""
+    segments: list[tuple[float, float, float, float]] = []
+    for index in range(count):
+        angle = math.radians(angle_degrees + index * 360.0 / count)
+        cosine = math.cos(angle)
+        sine = math.sin(angle)
+        segments.append(
+            (
+                center[0] + cosine * radius_x * 0.48,
+                center[1] - sine * radius_y * 0.48,
+                center[0] + cosine * radius_x * 0.92,
+                center[1] - sine * radius_y * 0.92,
+            )
+        )
+    return tuple(segments)
 
 
 def depth_at_phase(phase: float) -> float:
@@ -256,12 +286,13 @@ class RobotArm3DView:
             ),
             self.lengths,
         )
-        self.posture_pole = continuous_pole_hint(self.width * 0.5, self.width, self.camera)
+        self.elbow_hint, self.wrist_hint = continuous_posture_hints(self.width * 0.5, self.width, self.camera)
         self.joints = solve_z_posture_3d(
             self.base,
             self.target,
             self.lengths,
-            pole_hint=self.posture_pole,
+            elbow_hint=self.elbow_hint,
+            wrist_hint=self.wrist_hint,
         )
         self.status_id: int | None = None
         self.expression = EXPRESSIONS[0]
@@ -318,13 +349,15 @@ class RobotArm3DView:
         )
         target_smoothing = 0.11
         self.target = self.target + (desired_target - self.target) * target_smoothing
-        desired_pole = continuous_pole_hint(local_pointer[0], self.width, self.camera)
-        self.posture_pole = (self.posture_pole * 0.86 + desired_pole * 0.14).normalized(desired_pole)
+        desired_elbow, desired_wrist = continuous_posture_hints(local_pointer[0], self.width, self.camera)
+        self.elbow_hint = (self.elbow_hint * 0.89 + desired_elbow * 0.11).normalized(desired_elbow)
+        self.wrist_hint = (self.wrist_hint * 0.89 + desired_wrist * 0.11).normalized(desired_wrist)
         self.joints = solve_z_posture_3d(
             self.base,
             self.target,
             self.lengths,
-            pole_hint=self.posture_pole,
+            elbow_hint=self.elbow_hint,
+            wrist_hint=self.wrist_hint,
         )
 
         projected_eye = self.camera.project(self.joints[-1])
@@ -536,6 +569,49 @@ class RobotArm3DView:
             width=max(2.0, self.pupil_outline_width * scale),
             tags=("scene3d",),
         )
+        pupil_box = (
+            pupil[0] - pupil_x,
+            pupil[1] - pupil_y,
+            pupil[0] + pupil_x,
+            pupil[1] + pupil_y,
+        )
+        iris_shadow = shade_color(self.expression.color, 0.48)
+        iris_highlight = shade_color(self.expression.color, 1.32)
+        self.canvas.create_arc(
+            *pupil_box,
+            start=shade_angle - 52.0,
+            extent=104.0,
+            style=tk.ARC,
+            outline=iris_shadow,
+            width=max(2.0, 3.4 * scale),
+            tags=("scene3d",),
+        )
+        self.canvas.create_arc(
+            *pupil_box,
+            start=shade_angle + 150.0,
+            extent=60.0,
+            style=tk.ARC,
+            outline=iris_highlight,
+            width=max(1.0, 1.8 * scale),
+            tags=("scene3d",),
+        )
+        for index, segment in enumerate(aperture_segments(pupil, pupil_x, pupil_y, shade_angle + 12.0)):
+            self.canvas.create_line(
+                *segment,
+                fill=iris_shadow,
+                width=max(1.0, 1.4 * scale),
+                tags=("scene3d",),
+            )
+            point_radius = max(1.0, (1.5 if index == 0 else 1.1) * scale)
+            self.canvas.create_oval(
+                segment[2] - point_radius,
+                segment[3] - point_radius,
+                segment[2] + point_radius,
+                segment[3] + point_radius,
+                fill=iris_highlight if index == 0 else iris_shadow,
+                outline="",
+                tags=("scene3d",),
+            )
         iris_base = max(pupil_x, pupil_y)
         for index, dash in enumerate(((3, 3), (3, 6), (1, 8))):
             ring_radius = iris_base + (2.0 + index * 3.0 + pulse * (0.35 + index * 0.2)) * scale

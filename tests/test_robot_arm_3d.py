@@ -3,10 +3,11 @@ import unittest
 
 from engram_overlay.overlays.robot_arm_3d import (
     RobotArm3DView,
+    aperture_segments,
     cable_decoration_paths,
     cable_hardware_faces,
     constrain_target_reach,
-    continuous_pole_hint,
+    continuous_posture_hints,
     depth_at_phase,
     eye_shading_from_link,
     quadratic_curve,
@@ -79,7 +80,8 @@ class RobotArm3DTests(unittest.TestCase):
             view.base,
             constrained,
             view.lengths,
-            pole_hint=continuous_pole_hint(500.0, 360.0, view.camera),
+            elbow_hint=continuous_posture_hints(500.0, 360.0, view.camera)[0],
+            wrist_hint=continuous_posture_hints(500.0, 360.0, view.camera)[1],
         )
         turns = []
         for index in (1, 2):
@@ -92,33 +94,48 @@ class RobotArm3DTests(unittest.TestCase):
         base = Vec3(0.0, -145.0, 0.0)
         target = Vec3(0.0, 135.0, 20.0)
         lengths = (120.0, 105.0, 95.0)
-        points = solve_z_posture_3d(base, target, lengths, pole_hint=Vec3(1.0, 0.0, 0.0))
+        points = solve_z_posture_3d(base, target, lengths, elbow_hint=Vec3(1.0, 0.0, 0.0))
         self.assertGreater(points[1].x, 0.0)
         self.assertLess(points[2].x, 0.0)
         self.assertEqual(points[-1], target)
         for start, end, expected in zip(points[:-1], points[1:], lengths, strict=True):
             self.assertAlmostEqual((end - start).length, expected, places=6)
 
-        mirrored = solve_z_posture_3d(base, target, lengths, pole_hint=Vec3(-1.0, 0.0, 0.0))
+        mirrored = solve_z_posture_3d(base, target, lengths, elbow_hint=Vec3(-1.0, 0.0, 0.0))
         self.assertLess(mirrored[1].x, 0.0)
         self.assertGreater(mirrored[2].x, 0.0)
 
     def test_pole_crosses_center_through_depth_without_a_branch_jump(self) -> None:
         camera = Camera(180.0, 190.0, yaw=-0.38, pitch=-0.10, focal_length=650.0)
-        left_of_center = continuous_pole_hint(179.0, 360.0, camera)
-        center = continuous_pole_hint(180.0, 360.0, camera)
-        right_of_center = continuous_pole_hint(181.0, 360.0, camera)
-        self.assertGreater(left_of_center.dot(center), 0.999)
-        self.assertGreater(center.dot(right_of_center), 0.999)
-        self.assertGreater(center.dot(camera.world_space(Vec3(0.0, 0.0, 1.0)).normalized()), 0.999)
+        left_elbow, left_wrist = continuous_posture_hints(179.0, 360.0, camera)
+        center_elbow, center_wrist = continuous_posture_hints(180.0, 360.0, camera)
+        right_elbow, right_wrist = continuous_posture_hints(181.0, 360.0, camera)
+        self.assertGreater(left_elbow.dot(center_elbow), 0.999)
+        self.assertGreater(center_elbow.dot(right_elbow), 0.999)
+        self.assertGreater(left_wrist.dot(center_wrist), 0.999)
+        self.assertGreater(center_wrist.dot(right_wrist), 0.999)
+        camera_forward = camera.world_space(Vec3(0.0, 0.0, -1.0)).normalized()
+        self.assertGreater(center_elbow.dot(camera_forward), 0.999)
+        self.assertGreater(center_wrist.dot(camera_forward), 0.999)
 
         base = Vec3(0.0, -145.0, 0.0)
         target = Vec3(0.0, 135.0, 20.0)
         lengths = (120.0, 105.0, 95.0)
-        left_pose = solve_z_posture_3d(base, target, lengths, pole_hint=left_of_center)
-        right_pose = solve_z_posture_3d(base, target, lengths, pole_hint=right_of_center)
+        left_pose = solve_z_posture_3d(base, target, lengths, elbow_hint=left_elbow, wrist_hint=left_wrist)
+        right_pose = solve_z_posture_3d(base, target, lengths, elbow_hint=right_elbow, wrist_hint=right_wrist)
         self.assertLess((left_pose[1] - right_pose[1]).length, 2.0)
         self.assertLess((left_pose[2] - right_pose[2]).length, 2.0)
+
+        center_pose = solve_z_posture_3d(
+            base,
+            target,
+            lengths,
+            elbow_hint=center_elbow,
+            wrist_hint=center_wrist,
+        )
+        endpoint_depth = min(camera.camera_space(base).z, camera.camera_space(target).z)
+        self.assertLess(camera.camera_space(center_pose[1]).z, endpoint_depth)
+        self.assertLess(camera.camera_space(center_pose[2]).z, endpoint_depth)
 
     def test_full_pointer_sweep_keeps_joint_motion_continuous(self) -> None:
         view = RobotArm3DView()
@@ -143,6 +160,13 @@ class RobotArm3DTests(unittest.TestCase):
         self.assertAlmostEqual(angle, math.degrees(math.atan2(3.0, 4.0)))
         _, _, _, depth_strength = eye_shading_from_link(Vec3(1.0, 0.0, 4.0))
         self.assertGreater(depth_strength, strength)
+
+    def test_aperture_segments_rotate_with_the_eye_shading(self) -> None:
+        horizontal = aperture_segments((10.0, 20.0), 8.0, 6.0, 0.0)
+        vertical = aperture_segments((10.0, 20.0), 8.0, 6.0, 90.0)
+        self.assertEqual(len(horizontal), 3)
+        self.assertGreater(horizontal[0][2], horizontal[0][0])
+        self.assertLess(vertical[0][3], vertical[0][1])
 
     def test_3d_view_reuses_event_expression_mapping(self) -> None:
         view = RobotArm3DView()
