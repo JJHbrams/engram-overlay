@@ -223,10 +223,13 @@ class RobotArm3DTests(unittest.TestCase):
 
     def test_exploration_waypoint_stays_restrained(self) -> None:
         waypoint = exploration_waypoint(random.Random(7))
-        self.assertGreaterEqual(waypoint[0], -52.0)
-        self.assertLessEqual(waypoint[0], 52.0)
-        self.assertGreaterEqual(waypoint[1], -24.0)
-        self.assertLessEqual(waypoint[1], 22.0)
+        self.assertGreaterEqual(waypoint[0], -92.0)
+        self.assertLessEqual(waypoint[0], 92.0)
+        self.assertGreaterEqual(waypoint[1], -50.0)
+        self.assertLessEqual(waypoint[1], 50.0)
+        elliptical_radius = math.hypot(waypoint[0] / 92.0, waypoint[1] / 50.0)
+        self.assertGreaterEqual(elliptical_radius, 0.65)
+        self.assertLessEqual(elliptical_radius, 1.0)
 
     def test_idle_explorer_uses_a_smooth_virtual_pointer_and_yields_to_mouse(self) -> None:
         self.assertEqual(eased_exploration_point((0.0, 0.0), (10.0, -4.0), 0.0), (0.0, 0.0))

@@ -328,8 +328,10 @@ def first_link_back_loops(start: Vec3, end: Vec3) -> tuple[list[Vec3], list[Vec3
 
 
 def exploration_waypoint(rng: random.Random) -> tuple[float, float]:
-    """Choose a restrained interest point for the autonomous virtual pointer."""
-    return rng.uniform(-52.0, 52.0), rng.uniform(-24.0, 22.0)
+    """Choose a large-radius interest point for saccade-like exploration."""
+    angle = rng.uniform(0.0, math.tau)
+    radius = rng.uniform(0.65, 1.0)
+    return math.cos(angle) * 92.0 * radius, math.sin(angle) * 50.0 * radius
 
 
 def eased_exploration_point(
@@ -402,7 +404,7 @@ class RobotArm3DView:
         self.explore_to = (0.0, 0.0)
         self.explore_started_at = now
         self.explore_duration = 1.0
-        self.explore_hold_until = now + 1.6
+        self.explore_hold_until = now + 1.2
         self.explorer_active = False
         self.last_pointer: tuple[float, float] | None = None
         self.last_pointer_motion_at = now
@@ -423,7 +425,7 @@ class RobotArm3DView:
         if expression is None:
             self.random_expressions_enabled = True
             self.next_expression_at = now
-            self.explore_hold_until = now + 1.6
+            self.explore_hold_until = now + 1.2
             return
         self.random_expressions_enabled = False
         self.explorer_active = False
@@ -439,7 +441,7 @@ class RobotArm3DView:
             self.last_pointer = local_pointer
             self.last_pointer_motion_at = now
 
-        can_explore = self.random_expressions_enabled and now - self.last_pointer_motion_at >= 1.6
+        can_explore = self.random_expressions_enabled and now - self.last_pointer_motion_at >= 1.2
         if can_explore:
             self.explorer_active = True
             route_finished = now >= self.explore_started_at + self.explore_duration
@@ -447,8 +449,13 @@ class RobotArm3DView:
                 self.explore_from = self.idle_motion
                 self.explore_to = exploration_waypoint(self.rng)
                 self.explore_started_at = now
-                self.explore_duration = self.rng.uniform(3.0, 5.8)
-                self.explore_hold_until = now + self.explore_duration + self.rng.uniform(0.5, 1.3)
+                travel_distance = math.hypot(
+                    self.explore_to[0] - self.explore_from[0],
+                    self.explore_to[1] - self.explore_from[1],
+                )
+                base_duration = min(max(travel_distance / 55.0, 1.1), 2.5)
+                self.explore_duration = base_duration * self.rng.uniform(0.9, 1.08)
+                self.explore_hold_until = now + self.explore_duration + self.rng.uniform(0.25, 0.7)
             progress = (now - self.explore_started_at) / max(self.explore_duration, 1e-6)
             self.idle_motion = eased_exploration_point(self.explore_from, self.explore_to, progress)
         else:
