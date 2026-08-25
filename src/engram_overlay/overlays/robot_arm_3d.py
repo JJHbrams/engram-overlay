@@ -365,6 +365,8 @@ def eased_exploration_point(
 
 
 class RobotArm3DView:
+    EYE_VISUAL_SCALE = 1.0
+
     width = 360
     height = 430
     background = TRANSPARENT
@@ -732,7 +734,7 @@ class RobotArm3DView:
 
         eye = self.camera.project(self.joints[-1])
         center = (eye.x, eye.y)
-        scale = eye.scale
+        scale = eye.scale * self.EYE_VISUAL_SCALE
         radius = 30.0 * scale
         camera_link = self.camera.camera_space(self.joints[-2] - self.joints[-1])
         shade_x, shade_y, shade_angle, shade_strength = eye_shading_from_link(camera_link)
