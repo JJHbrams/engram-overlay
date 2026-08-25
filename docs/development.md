@@ -21,6 +21,19 @@ master (문서 기준선)
 6. 프로토콜 로그는 stderr로만 출력한다.
 7. parser와 outbound envelope을 UI 없이 테스트할 수 있게 분리한다.
 
+## 로컬 실행
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py" -v
+.\.venv\Scripts\engram-custom-overlay.exe --mode replace
+```
+
+Engram에 설치할 때는 `examples/manifest.yaml`을
+`%USERPROFILE%/.engram/overlays/engram-custom/manifest.yaml`로 복사하고,
+`command`의 첫 항목을 위 virtual environment에 생성된 console executable의 절대 경로로 바꾼다.
+
 ## 완료 기준
 
 - handshake가 stdout 첫 줄에 한 번 출력된다.
@@ -29,4 +42,3 @@ master (문서 기준선)
 - 모든 공개 `display_hint`가 안전한 기본 상태를 가진다.
 - protocol 단위 테스트와 실제 child-process JSONL smoke test가 통과한다.
 - Engram 설정용 manifest 예제가 제공된다.
-
