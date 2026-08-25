@@ -5,13 +5,14 @@ from __future__ import annotations
 import argparse
 import sys
 
-from .app import OverlayApp
 from .protocol import JsonlTransport, hello_message
+from .registry import create_overlay, overlay_ids
 from .state import OverlayState
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Engram custom overlay renderer")
+    parser.add_argument("--overlay", choices=overlay_ids(), default="xeyes")
     parser.add_argument("--mode", choices=("observer", "replace"), default="observer")
     parser.add_argument("--headless", action="store_true", help="exercise the JSONL contract without opening Tk")
     return parser
@@ -32,7 +33,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.headless:
         run_headless(transport)
     else:
-        OverlayApp(transport, mode=args.mode).run()
+        create_overlay(args.overlay, transport, args.mode).run()
     return 0
 
 

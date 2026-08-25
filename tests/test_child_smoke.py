@@ -12,7 +12,7 @@ class ChildSmokeTests(unittest.TestCase):
         environment = os.environ.copy()
         environment["PYTHONPATH"] = str(repository / "src")
         child = subprocess.run(
-            [sys.executable, "-m", "engram_overlay", "--headless"],
+            [sys.executable, "-m", "engram_overlay", "--overlay", "xeyes", "--headless"],
             input='{"schema_version":1,"type":"state.snapshot","display_hint":"idle","payload":{}}\n',
             capture_output=True,
             text=True,

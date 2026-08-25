@@ -1,8 +1,10 @@
 schema_version: 1
-id: engram-custom
-name: Engram Custom Overlay
+id: xeyes
+name: Engram XEyes
 command:
   - "C:/absolute/path/to/.venv/Scripts/engram-custom-overlay.exe"
+  - "--overlay"
+  - "xeyes"
   - "--mode"
   - "replace"
 supported_modes: [observer, replace]

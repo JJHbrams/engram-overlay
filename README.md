@@ -22,10 +22,16 @@ Engram의 External Overlay Event API v1을 사용하는 독립 커스텀 오버�
 | modes | 번들 캐릭터와 공존하는 `observer`, 번들을 대체하는 `replace` |
 | fallback | handshake·JSONL·child 오류 시 Engram 번들 renderer 복구 |
 
-세부 계약은 [Event API v1](docs/event-api-v1.md), 개발 순서는 [개발 가이드](docs/development.md)를 참고한다.
+세부 계약은 [Event API v1](docs/event-api-v1.md), 프로젝트 구조는
+[Overlay 구현 계층](docs/architecture.md), 개발 순서는 [개발 가이드](docs/development.md)를 참고한다.
+
+## 포함된 overlay
+
+| id | backend | 설명 |
+| --- | --- | --- |
+| `xeyes` | Tk | 화면 전체의 mouse pointer를 따라보는 두 눈. 첫 API/입력 smoke 구현 |
 
 ## 문서 기준
 
 이 문서는 2026-08-25 기준 Engram의 `커스텀 오버레이 Event API v1` 매뉴얼과
 `ProjectIntelContunuum/docs/overlay-event-api-v1.md`를 대조해 작성했다.
-
