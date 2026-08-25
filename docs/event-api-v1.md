@@ -49,7 +49,9 @@ Engram은 성공한 handshake 뒤 `engram.welcome`과 `state.snapshot`을 보낸
 
 ## Engram으로 보내는 메시지
 
-`observer`는 hello 외 메시지가 없어도 된다. `replace`는 실제 창 위치와 크기를 보고하고
+`observer`는 hello 외 메시지가 없어도 된다. interactive observer는 실제 창 위치/크기와
+`left_click`을 보내면 Engram의 기존 bubble session을 그 창에 앵커할 수 있다. 이 geometry는
+Engram의 번들 창 위치를 바꾸거나 저장하지 않는다. `replace`는 실제 창 위치와 크기를 보고하고
 포인터 입력을 Engram 공통 동작으로 전달해야 한다.
 
 ```json
@@ -63,7 +65,7 @@ Engram은 성공한 handshake 뒤 `engram.welcome`과 `state.snapshot`을 보낸
 | `left_click` | 없음 | Engram 채팅 열기/닫기 |
 | `right_click` | `screen_x`, `screen_y` | Engram 공통 메뉴 |
 | `pointer_enter` / `pointer_leave` | 없음 | hover 상태 |
-| `drag_move` / `drag_end` | `screen_x`, `screen_y` | Engram 소유 위치 갱신 |
+| `drag_move` / `drag_end` | `screen_x`, `screen_y` | replace에서 Engram 소유 위치 갱신; observer는 로컬 이동 후 geometry 재보고 |
 | `drag_begin` | 없음 | v1 예약/no-op |
 
 ## Manifest
