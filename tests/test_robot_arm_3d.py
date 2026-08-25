@@ -3,7 +3,10 @@ import unittest
 
 from engram_overlay.overlays.robot_arm_3d import (
     RobotArm3DView,
+    cable_decoration_paths,
+    cable_hardware_faces,
     depth_at_phase,
+    quadratic_curve,
     solve_three_link_3d,
     target_from_pointer,
 )
@@ -51,6 +54,14 @@ class RobotArm3DTests(unittest.TestCase):
         self.assertNotEqual(view.target_depth, 0.0)
         self.assertNotEqual(depth_at_phase(math.pi * 0.5), depth_at_phase(math.pi * 1.5))
 
+    def test_workspace_allows_wider_root_and_elbow_motion(self) -> None:
+        camera = Camera(180.0, 190.0, yaw=-0.38, pitch=-0.10, focal_length=650.0)
+        left = camera.project(target_from_pointer(-100.0, 300.0, 360.0, 430.0, camera=camera, depth=0.0))
+        right = camera.project(target_from_pointer(500.0, 300.0, 360.0, 430.0, camera=camera, depth=0.0))
+        self.assertAlmostEqual(left.x, 70.0)
+        self.assertAlmostEqual(right.x, 290.0)
+        self.assertAlmostEqual(depth_at_phase(math.pi * 0.5), 75.0)
+
     def test_3d_view_reuses_event_expression_mapping(self) -> None:
         view = RobotArm3DView()
         view.apply_state(OverlayState(display_hint="generating"))
@@ -65,6 +76,21 @@ class RobotArm3DTests(unittest.TestCase):
         self.assertGreater(len(faces), 100)
         self.assertTrue(all(len(face.vertices) >= 4 for face in faces))
 
+    def test_cable_bundle_has_curved_paths_and_low_poly_hardware(self) -> None:
+        start = Vec3(0.0, 0.0, 0.0)
+        end = Vec3(80.0, 70.0, 25.0)
+        curve = quadratic_curve(start, Vec3(35.0, 55.0, 30.0), end)
+        self.assertEqual(curve[0], start)
+        self.assertEqual(curve[-1], end)
+        self.assertGreater((curve[3] - (start + end) * 0.5).length, 5.0)
+        main_path, signal_path = cable_decoration_paths(start, end, index=0)
+        self.assertEqual(len(main_path), 7)
+        self.assertEqual(len(signal_path), 7)
+        self.assertTrue(all((signal - main).length > 5.0 for main, signal in zip(main_path, signal_path, strict=True)))
+        faces = cable_hardware_faces(start, end, index=0)
+        self.assertEqual(len(faces), 24)
+        self.assertTrue(any(face.color == "#475569" for face in faces))
+        self.assertTrue(any(face.color == "#334155" for face in faces))
 
 if __name__ == "__main__":
     unittest.main()

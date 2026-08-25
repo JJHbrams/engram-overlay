@@ -91,14 +91,69 @@ def target_from_pointer(
     depth: float,
 ) -> Vec3:
     """Unproject a pointer onto an independently selected camera-depth plane."""
-    clamped_x = min(max(pointer_x, 95.0), width - 95.0)
-    clamped_y = min(max(pointer_y, 280.0), min(height - 90.0, 340.0))
+    clamped_x = min(max(pointer_x, 70.0), width - 70.0)
+    clamped_y = min(max(pointer_y, 265.0), min(height - 90.0, 340.0))
     return camera.unproject(clamped_x, clamped_y, depth)
 
 
 def depth_at_phase(phase: float) -> float:
     """Return the arm's autonomous camera-space depth trajectory."""
-    return math.sin(phase) * 65.0
+    return math.sin(phase) * 75.0
+
+
+def quadratic_curve(start: Vec3, control: Vec3, end: Vec3, *, steps: int = 6) -> list[Vec3]:
+    """Sample a short service-loop curve for a cable section."""
+    if steps < 2:
+        raise ValueError("curve requires at least 2 steps")
+    points: list[Vec3] = []
+    for index in range(steps + 1):
+        t = index / steps
+        inverse = 1.0 - t
+        points.append(start * (inverse * inverse) + control * (2.0 * inverse * t) + end * (t * t))
+    return points
+
+
+def _link_surface_frame(start: Vec3, end: Vec3) -> tuple[Vec3, Vec3]:
+    axis = (end - start).normalized()
+    surface = (Vec3(0.0, 0.0, 1.0) - axis * axis.dot(Vec3(0.0, 0.0, 1.0))).normalized(Vec3(1.0, 0.0, 0.0))
+    lateral = axis.cross(surface).normalized(Vec3(1.0, 0.0, 0.0))
+    return surface, lateral
+
+
+def cable_decoration_paths(start: Vec3, end: Vec3, *, index: int) -> tuple[list[Vec3], list[Vec3]]:
+    """Build camera-projectable cable paths with a small service loop."""
+    surface, lateral = _link_surface_frame(start, end)
+    anchor_start = point_along(start, end, 15.0) + surface * 18.0
+    anchor_end = point_along(end, start, 17.0) + surface * 17.0
+    midpoint = (anchor_start + anchor_end) * 0.5
+    control = midpoint + surface * (12.0 + index * 2.0) + lateral * (5.0 if index % 2 == 0 else -5.0)
+    main_path = quadratic_curve(anchor_start, control, anchor_end, steps=6)
+    signal_offset = lateral * 5.5
+    signal_path = quadratic_curve(anchor_start + signal_offset, control + signal_offset, anchor_end + signal_offset, steps=6)
+    return main_path, signal_path
+
+
+def cable_hardware_faces(start: Vec3, end: Vec3, *, index: int) -> list[Face3D]:
+    """Build low-poly clamps and connectors for a projected cable bundle."""
+    main_path, _ = cable_decoration_paths(start, end, index=index)
+    faces: list[Face3D] = []
+    for fraction in (0.22, 0.78):
+        clamp_center = start + (end - start) * fraction
+        clamp_half_length = 3.2
+        axis = (end - start).normalized()
+        faces.extend(
+            tapered_prism_faces(
+                clamp_center - axis * clamp_half_length,
+                clamp_center + axis * clamp_half_length,
+                start_radius=18.5,
+                end_radius=18.5,
+                color="#475569",
+                outline="#0f172a",
+            )
+        )
+    for connector in (main_path[0], main_path[-1]):
+        faces.extend(box_faces(connector, Vec3(9.0, 8.0, 7.0), color="#334155", outline="#0f172a"))
+    return faces
 
 
 class RobotArm3DView:
@@ -238,17 +293,7 @@ class RobotArm3DView:
                     color="#e7e5df",
                 )
             )
-            cable_offset = Vec3(0.0, 0.0, 18.0 if index != 1 else -18.0)
-            faces.extend(
-                tapered_prism_faces(
-                    point_along(start, end, 8.0) + cable_offset,
-                    point_along(end, start, 8.0) + cable_offset,
-                    start_radius=2.2,
-                    end_radius=2.2,
-                    color="#d97706" if index == 2 else "#111827",
-                    outline="#111827",
-                )
-            )
+            faces.extend(cable_hardware_faces(start, end, index=index))
         for joint in self.joints[:-1]:
             faces.extend(sphere_faces(joint, 13.0, color="#64748b", rings=4, segments=8, z_scale=0.88))
         faces.extend(sphere_faces(self.joints[-1], 34.0, color="#d8d6cf", rings=5, segments=10, z_scale=0.72))
@@ -279,6 +324,26 @@ class RobotArm3DView:
                 width=1,
                 tags=("scene3d",),
             )
+
+        for index, (start, end) in enumerate(zip(self.joints[:-1], self.joints[1:], strict=True)):
+            main_path, signal_path = cable_decoration_paths(start, end, index=index)
+            for path, color, base_width in (
+                (main_path, "#111827", 5.2),
+                (signal_path, "#d97706", 2.3),
+            ):
+                projected_path = tuple(self.camera.project(point) for point in path)
+                coordinates = tuple(coordinate for point in projected_path for coordinate in (point.x, point.y))
+                average_scale = sum(point.scale for point in projected_path) / len(projected_path)
+                self.canvas.create_line(
+                    *coordinates,
+                    fill=color,
+                    width=max(1.5, base_width * average_scale),
+                    smooth=True,
+                    splinesteps=12,
+                    capstyle=tk.ROUND,
+                    joinstyle=tk.ROUND,
+                    tags=("scene3d",),
+                )
 
         eye = self.camera.project(self.joints[-1])
         center = (eye.x, eye.y)
@@ -357,6 +422,7 @@ class RobotArm3DView:
             width=max(2.0, 4.0 * scale),
             tags=("scene3d",),
         )
+
         self.canvas.tag_lower("scene3d")
 
 
