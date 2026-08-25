@@ -5,8 +5,8 @@ from engram_overlay.overlays.robot_arm import (
     EXPRESSIONS,
     RobotArmView,
     bend_side_for_target,
-    iris_blade_points,
     lower_workspace_target,
+    shutter_line_points,
     solve_three_link_z,
 )
 from engram_overlay.registry import OVERLAYS, overlay_ids
@@ -73,10 +73,13 @@ class RobotArmTests(unittest.TestCase):
         self.assertEqual(lower_workspace_target(-100, 999, 360), (95.0, 375.0))
         self.assertEqual(lower_workspace_target(200, -5, 360), (200, 285.0))
 
-    def test_iris_has_six_distinct_color_coded_expressions(self) -> None:
-        self.assertEqual(len({expression.name for expression in EXPRESSIONS}), 5)
-        self.assertEqual(len({expression.color for expression in EXPRESSIONS}), 5)
-        self.assertEqual(len(iris_blade_points((10.0, 20.0), 0, 12.0, 0.1)), 8)
+    def test_two_shutter_profiles_cover_reference_expressions(self) -> None:
+        names = {expression.name for expression in EXPRESSIONS}
+        self.assertEqual(
+            names,
+            {"idle", "boring", "giggle", "curious", "well", "hmm", "tempered", "angry", "depressed", "sad"},
+        )
+        self.assertEqual(shutter_line_points((10.0, 20.0), -5.0, 2.0, 3.0), (-15.0, 13.0, 10.0, 18.0, 35.0, 17.0))
 
     def test_draw_maps_three_links_to_four_joint_points(self) -> None:
         view = RobotArmView()
@@ -84,14 +87,14 @@ class RobotArmTests(unittest.TestCase):
         view.link_ids = [1, 2, 3]
         view.joint_ids = [4, 5, 6, 7]
         view.target_id = 8
-        view.ambient_ids = [9, 10, 11]
-        view.iris_ids = [12, 13, 14, 15, 16, 17]
-        view.led_halo_id = 18
-        view.led_core_id = 19
+        view.ambient_ids = [9, 10]
+        view.led_halo_id = 11
+        view.led_core_id = 12
+        view.shutter_ids = [13, 14]
 
         view._draw()
 
-        self.assertEqual(view.canvas.coords.call_count, 19)
+        self.assertEqual(view.canvas.coords.call_count, 14)
 
 
 if __name__ == "__main__":

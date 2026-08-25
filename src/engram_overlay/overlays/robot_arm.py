@@ -21,19 +21,29 @@ TRANSPARENT = "#010203"
 class EyeExpression:
     name: str
     color: str
-    aperture: float
+    upper_y: float
+    lower_y: float
+    upper_tilt: float
+    lower_tilt: float
+    upper_peak: float
+    lower_peak: float
     gaze: Point
     pulse_speed: float
 
 
 EXPRESSIONS = (
-    EyeExpression("calm", "#60a5fa", 15.0, (0.0, 0.0), 0.7),
-    EyeExpression("curious", "#22d3ee", 18.0, (-4.0, -3.0), 1.2),
-    EyeExpression("amused", "#f472b6", 13.0, (4.0, -2.0), 1.6),
-    EyeExpression("focused", "#fbbf24", 9.0, (3.0, 1.0), 2.0),
-    EyeExpression("wary", "#fb7185", 7.0, (-3.0, 3.0), 2.5),
+    EyeExpression("idle", "#fbbf24", -27.0, 27.0, 0.0, 0.0, 0.0, 0.0, (0.0, 0.0), 0.7),
+    EyeExpression("boring", "#fbbf24", -6.0, 27.0, 0.0, 0.0, 0.0, 0.0, (0.0, 2.0), 0.5),
+    EyeExpression("giggle", "#facc15", -27.0, 8.0, 0.0, 0.0, 0.0, 0.0, (0.0, -2.0), 1.5),
+    EyeExpression("curious", "#eaff00", -22.0, 16.0, 0.0, -9.0, 0.0, 0.0, (4.0, -2.0), 1.2),
+    EyeExpression("well", "#cbd5e1", -12.0, 20.0, 0.0, -9.0, 0.0, 0.0, (-3.0, 1.0), 0.8),
+    EyeExpression("hmm", "#cbd5e1", -7.0, 7.0, 0.0, 0.0, 0.0, 0.0, (2.0, 0.0), 0.6),
+    EyeExpression("tempered", "#ef4444", -11.0, 23.0, 0.0, -5.0, 12.0, 0.0, (0.0, 2.0), 2.3),
+    EyeExpression("angry", "#ef4444", -12.0, 9.0, 0.0, 0.0, 15.0, 0.0, (0.0, 2.0), 2.8),
+    EyeExpression("depressed", "#0ea5e9", -8.0, 27.0, 0.0, 0.0, -10.0, 0.0, (0.0, 4.0), 0.5),
+    EyeExpression("sad", "#0ea5e9", -8.0, 10.0, 0.0, 0.0, -11.0, 0.0, (0.0, 4.0), 0.45),
 )
-ALARM_EXPRESSION = EyeExpression("alarm", "#ef4444", 6.0, (0.0, 0.0), 3.4)
+ALARM_EXPRESSION = EyeExpression("alarm", "#ef4444", -12.0, 8.0, 0.0, 0.0, 16.0, 0.0, (0.0, 1.0), 3.4)
 
 
 def _distance(a: Point, b: Point) -> float:
@@ -147,14 +157,17 @@ def bend_side_for_target(current: int, target_x: float, center_x: float, *, dead
     return current
 
 
-def iris_blade_points(center: Point, index: int, aperture: float, twist: float) -> tuple[float, ...]:
-    """Return one of six radial shutter blades around the eye aperture."""
-    angle = index * math.tau / 6.0 + twist
-    radii_and_offsets = ((30.0, -0.45), (30.0, 0.45), (aperture, 0.18), (aperture, -0.18))
-    points: list[float] = []
-    for radius, offset in radii_and_offsets:
-        points.extend((center[0] + math.cos(angle + offset) * radius, center[1] + math.sin(angle + offset) * radius))
-    return tuple(points)
+def shutter_line_points(center: Point, y_offset: float, tilt: float, peak: float) -> tuple[float, ...]:
+    """Return a single three-point shutter line clipped visually by the eye rim."""
+    radius = 25.0
+    return (
+        center[0] - radius,
+        center[1] + y_offset - tilt,
+        center[0],
+        center[1] + y_offset + peak,
+        center[0] + radius,
+        center[1] + y_offset + tilt,
+    )
 
 
 class RobotArmView:
@@ -174,13 +187,18 @@ class RobotArmView:
         self.joint_ids: list[int] = []
         self.target_id: int | None = None
         self.ambient_ids: list[int] = []
-        self.iris_ids: list[int] = []
+        self.shutter_ids: list[int] = []
         self.led_halo_id: int | None = None
         self.led_core_id: int | None = None
         self.status_id: int | None = None
         self.rng = rng or random.Random()
         self.expression = EXPRESSIONS[0]
-        self.aperture = self.expression.aperture
+        self.upper_y = self.expression.upper_y
+        self.lower_y = self.expression.lower_y
+        self.upper_tilt = self.expression.upper_tilt
+        self.lower_tilt = self.expression.lower_tilt
+        self.upper_peak = self.expression.upper_peak
+        self.lower_peak = self.expression.lower_peak
         self.gaze: Point = self.expression.gaze
         self.pulse_phase = 0.0
         self.next_expression_at = time.monotonic() + self.rng.uniform(3.0, 5.5)
@@ -194,16 +212,18 @@ class RobotArmView:
         canvas.create_text(18, 22, text="CEILING LINK / IRIS", fill="#64748b", anchor="w", font=("Segoe UI", 9, "bold"))
         self.status_id = canvas.create_oval(326, 15, 340, 29, fill=color, outline="")
         self.target_id = canvas.create_oval(0, 0, 0, 0, outline=color, width=2, dash=(3, 3))
-        for dash in ((2, 5), (5, 5), (1, 7)):
+        for dash in ((3, 6), (1, 8)):
             self.ambient_ids.append(canvas.create_oval(0, 0, 0, 0, outline=color, width=1, dash=dash))
         for width in (18, 16, 14):
             self.link_ids.append(canvas.create_line(0, 0, 0, 0, fill="#334155", width=width, capstyle=tk.ROUND))
         for _ in range(4):
             self.joint_ids.append(canvas.create_oval(0, 0, 0, 0, fill="#e2e8f0", outline=color, width=4))
-        for _ in range(6):
-            self.iris_ids.append(canvas.create_polygon(0, 0, 0, 0, fill="#111827", outline=color, width=2))
         self.led_halo_id = canvas.create_oval(0, 0, 0, 0, fill=color, outline="", stipple="gray50")
-        self.led_core_id = canvas.create_oval(0, 0, 0, 0, fill="#f8fafc", outline=color, width=3)
+        self.led_core_id = canvas.create_oval(0, 0, 0, 0, fill=color, outline="#082f49", width=4)
+        for _ in range(2):
+            self.shutter_ids.append(
+                canvas.create_line(0, 0, 0, 0, fill="#475569", width=7, capstyle=tk.ROUND, joinstyle=tk.ROUND)
+            )
         self._draw()
 
     def apply_state(self, state: OverlayState) -> None:
@@ -230,7 +250,9 @@ class RobotArmView:
             choices = tuple(expression for expression in EXPRESSIONS if expression.name != self.expression.name)
             self._set_expression(self.rng.choice(choices), now)
         expression_smoothing = 0.1
-        self.aperture += (self.expression.aperture - self.aperture) * expression_smoothing
+        for attribute in ("upper_y", "lower_y", "upper_tilt", "lower_tilt", "upper_peak", "lower_peak"):
+            current = getattr(self, attribute)
+            setattr(self, attribute, current + (getattr(self.expression, attribute) - current) * expression_smoothing)
         self.gaze = (
             self.gaze[0] + (self.expression.gaze[0] - self.gaze[0]) * expression_smoothing,
             self.gaze[1] + (self.expression.gaze[1] - self.gaze[1]) * expression_smoothing,
@@ -248,12 +270,12 @@ class RobotArmView:
             self.canvas.itemconfigure(self.target_id, outline=color)
         if self.status_id is not None:
             self.canvas.itemconfigure(self.status_id, fill=color)
-        for item_id in (*self.joint_ids, *self.ambient_ids, *self.iris_ids):
+        for item_id in (*self.joint_ids, *self.ambient_ids):
             self.canvas.itemconfigure(item_id, outline=color)
         if self.led_halo_id is not None:
             self.canvas.itemconfigure(self.led_halo_id, fill=color)
         if self.led_core_id is not None:
-            self.canvas.itemconfigure(self.led_core_id, outline=color)
+            self.canvas.itemconfigure(self.led_core_id, fill=color)
 
     def _draw(self) -> None:
         if self.canvas is None:
@@ -270,9 +292,6 @@ class RobotArmView:
         for index, ambient_id in enumerate(self.ambient_ids):
             radius = 40.0 + index * 9.0 + pulse * (2.0 + index)
             self.canvas.coords(ambient_id, end[0] - radius, end[1] - radius, end[0] + radius, end[1] + radius)
-        twist = 0.12 + math.sin(self.pulse_phase * 0.6) * 0.06
-        for index, iris_id in enumerate(self.iris_ids):
-            self.canvas.coords(iris_id, *iris_blade_points(end, index, self.aperture, twist))
         pupil = (end[0] + self.gaze[0], end[1] + self.gaze[1])
         halo_radius = 12.0 + pulse * 3.0
         core_radius = 6.0 + pulse * 1.2
@@ -291,6 +310,15 @@ class RobotArmView:
                 pupil[1] - core_radius,
                 pupil[0] + core_radius,
                 pupil[1] + core_radius,
+            )
+        if len(self.shutter_ids) == 2:
+            self.canvas.coords(
+                self.shutter_ids[0],
+                *shutter_line_points(end, self.upper_y, self.upper_tilt, self.upper_peak),
+            )
+            self.canvas.coords(
+                self.shutter_ids[1],
+                *shutter_line_points(end, self.lower_y, self.lower_tilt, self.lower_peak),
             )
 
 
