@@ -5,8 +5,10 @@ from engram_overlay.overlays.robot_arm_3d import (
     RobotArm3DView,
     cable_decoration_paths,
     cable_hardware_faces,
+    constrain_target_reach,
     depth_at_phase,
     quadratic_curve,
+    root_biased_seed,
     solve_three_link_3d,
     target_from_pointer,
 )
@@ -65,6 +67,27 @@ class RobotArm3DTests(unittest.TestCase):
         near_scale = camera.project(camera.unproject(180.0, 300.0, -30.0)).scale
         far_scale = camera.project(camera.unproject(180.0, 300.0, 30.0)).scale
         self.assertLess(near_scale / far_scale, 1.11)
+
+    def test_reach_constraint_avoids_a_fully_straight_configuration(self) -> None:
+        view = RobotArm3DView()
+        requested = target_from_pointer(500.0, 500.0, 360.0, 430.0, camera=view.camera, depth=30.0)
+        constrained = constrain_target_reach(view.base, requested, view.lengths)
+        self.assertAlmostEqual((constrained - view.base).length, sum(view.lengths) * 0.90)
+        points = solve_three_link_3d(view.base, constrained, view.lengths)
+        turns = []
+        for index in (1, 2):
+            parent = (points[index] - points[index - 1]).normalized()
+            child = (points[index + 1] - points[index]).normalized()
+            turns.append(math.degrees(math.acos(max(-1.0, min(1.0, parent.dot(child))))))
+        self.assertGreater(min(turns), 15.0)
+
+    def test_pole_refresh_is_weighted_toward_root_side_joints(self) -> None:
+        current = [Vec3(float(index), 0.0, 0.0) for index in range(4)]
+        preferred = [Vec3(float(index), 10.0, 0.0) for index in range(4)]
+        seed = root_biased_seed(current, preferred)
+        self.assertEqual(seed[0], current[0])
+        self.assertEqual(seed[3], current[3])
+        self.assertGreater(seed[1].y, seed[2].y)
 
     def test_3d_view_reuses_event_expression_mapping(self) -> None:
         view = RobotArm3DView()

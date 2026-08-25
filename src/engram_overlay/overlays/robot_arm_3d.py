@@ -103,6 +103,25 @@ def depth_at_phase(phase: float) -> float:
     return (primary + secondary) * 30.0
 
 
+def constrain_target_reach(base: Vec3, target: Vec3, lengths: Sequence[float], *, ratio: float = 0.90) -> Vec3:
+    """Keep enough reach in reserve to avoid a fully extended singular chain."""
+    if not 0.0 < ratio <= 1.0:
+        raise ValueError("reach ratio must be in (0, 1]")
+    offset = target - base
+    maximum_distance = sum(lengths) * ratio
+    if offset.length <= maximum_distance:
+        return target
+    return base + offset.normalized() * maximum_distance
+
+
+def root_biased_seed(current: Sequence[Vec3], preferred: Sequence[Vec3]) -> list[Vec3]:
+    """Refresh the pole posture most strongly at root-side joints 0 and 1."""
+    if len(current) != 4 or len(preferred) != 4:
+        raise ValueError("a three-link chain requires four seed points")
+    weights = (0.0, 0.34, 0.26, 0.0)
+    return [point + (goal - point) * weight for point, goal, weight in zip(current, preferred, weights, strict=True)]
+
+
 def quadratic_curve(start: Vec3, control: Vec3, end: Vec3, *, steps: int = 6) -> list[Vec3]:
     """Sample a short service-loop curve for a cable section."""
     if steps < 2:
@@ -173,13 +192,17 @@ class RobotArm3DView:
         self.camera = Camera(self.width * 0.5, 190.0, yaw=-0.38, pitch=-0.10, focal_length=650.0)
         self.depth_phase = 0.0
         self.target_depth = depth_at_phase(self.depth_phase)
-        self.target = target_from_pointer(
-            self.width * 0.5,
-            320.0,
-            self.width,
-            self.height,
-            camera=self.camera,
-            depth=self.target_depth,
+        self.target = constrain_target_reach(
+            self.base,
+            target_from_pointer(
+                self.width * 0.5,
+                320.0,
+                self.width,
+                self.height,
+                camera=self.camera,
+                depth=self.target_depth,
+            ),
+            self.lengths,
         )
         self.joints = solve_three_link_3d(self.base, self.target, self.lengths)
         self.status_id: int | None = None
@@ -224,16 +247,22 @@ class RobotArm3DView:
         self.depth_phase = (self.depth_phase + 0.009) % math.tau
         desired_depth = depth_at_phase(self.depth_phase)
         self.target_depth += (desired_depth - self.target_depth) * 0.08
-        desired_target = target_from_pointer(
-            *local_pointer,
-            self.width,
-            self.height,
-            camera=self.camera,
-            depth=self.target_depth,
+        desired_target = constrain_target_reach(
+            self.base,
+            target_from_pointer(
+                *local_pointer,
+                self.width,
+                self.height,
+                camera=self.camera,
+                depth=self.target_depth,
+            ),
+            self.lengths,
         )
         target_smoothing = 0.11
         self.target = self.target + (desired_target - self.target) * target_smoothing
-        self.joints = solve_three_link_3d(self.base, self.target, self.lengths, seed=self.joints)
+        preferred_seed = z_seed_3d(self.base, self.target, self.lengths)
+        solver_seed = root_biased_seed(self.joints, preferred_seed)
+        self.joints = solve_three_link_3d(self.base, self.target, self.lengths, seed=solver_seed)
 
         projected_eye = self.camera.project(self.joints[-1])
         desired_mouse_gaze = tracked_gaze(local_pointer, (projected_eye.x, projected_eye.y), max_x=7.0, max_y=5.0)
