@@ -4,6 +4,7 @@ from unittest.mock import Mock
 from engram_overlay.overlays.robot_arm import (
     EXPRESSIONS,
     RobotArmView,
+    bend_side_for_target,
     iris_blade_points,
     lower_workspace_target,
     solve_three_link_z,
@@ -48,6 +49,20 @@ class RobotArmTests(unittest.TestCase):
         self.assertGreater(points[1][0], points[0][0])
         self.assertLess(points[2][0], points[3][0])
         self.assertLess(cross(points[0], points[1], points[2]) * cross(points[1], points[2], points[3]), 0.0)
+
+    def test_hanging_solution_mirrors_around_center(self) -> None:
+        lengths = (132.0, 122.0, 116.0)
+        right = solve_three_link_z((180.0, 48.0), (230.0, 350.0), lengths, bend_side=1)
+        left = solve_three_link_z((180.0, 48.0), (130.0, 350.0), lengths, bend_side=-1)
+        for right_point, left_point in zip(right, left, strict=True):
+            self.assertAlmostEqual(left_point[0], 360.0 - right_point[0], places=6)
+            self.assertAlmostEqual(left_point[1], right_point[1], places=6)
+
+    def test_bend_side_uses_center_deadband(self) -> None:
+        self.assertEqual(bend_side_for_target(1, 150.0, 180.0), -1)
+        self.assertEqual(bend_side_for_target(-1, 210.0, 180.0), 1)
+        self.assertEqual(bend_side_for_target(-1, 175.0, 180.0), -1)
+        self.assertEqual(bend_side_for_target(1, 185.0, 180.0), 1)
 
     def test_unreachable_target_extends_to_total_length(self) -> None:
         points = solve_three_link_z((0.0, 0.0), (0.0, -1000.0), (10.0, 20.0, 30.0))

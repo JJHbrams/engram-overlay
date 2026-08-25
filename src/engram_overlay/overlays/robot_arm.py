@@ -51,7 +51,7 @@ def _unit(a: Point, b: Point, fallback: Point = (0.0, -1.0)) -> Point:
     return (b[0] - a[0]) / distance, (b[1] - a[1]) / distance
 
 
-def z_seed(base: Point, target: Point, lengths: Sequence[float]) -> list[Point]:
+def z_seed(base: Point, target: Point, lengths: Sequence[float], *, bend_side: int = 1) -> list[Point]:
     """Build an alternating Z seed aligned with the base-to-target direction."""
     direction = _unit(base, target)
     perpendicular = (-direction[1], direction[0])
@@ -59,7 +59,7 @@ def z_seed(base: Point, target: Point, lengths: Sequence[float]) -> list[Point]:
     sideways = math.sqrt(1.0 - forward * forward)
     points = [base]
     for index, length in enumerate(lengths):
-        side = sideways if index % 2 == 0 else -sideways
+        side = (sideways if index % 2 == 0 else -sideways) * bend_side
         segment = (
             direction[0] * forward + perpendicular[0] * side,
             direction[1] * forward + perpendicular[1] * side,
@@ -74,12 +74,15 @@ def solve_three_link_z(
     lengths: Sequence[float],
     *,
     seed: Sequence[Point] | None = None,
+    bend_side: int = 1,
     iterations: int = 24,
     tolerance: float = 0.15,
 ) -> list[Point]:
     """Solve a fixed-base three-link chain while retaining its Z bend branch."""
     if len(lengths) != 3 or any(length <= 0 for length in lengths):
         raise ValueError("three positive link lengths are required")
+    if bend_side not in {-1, 1}:
+        raise ValueError("bend_side must be -1 or 1")
 
     total = sum(lengths)
     target_distance = _distance(base, target)
@@ -96,7 +99,7 @@ def solve_three_link_z(
     # the final link toward vertical.
     tool_angle = math.radians(28.0)
     vertical_sign = 1.0 if target[1] >= base[1] else -1.0
-    tool_direction = (math.sin(tool_angle), vertical_sign * math.cos(tool_angle))
+    tool_direction = (bend_side * math.sin(tool_angle), vertical_sign * math.cos(tool_angle))
     wrist = _point_at(target, tool_direction, -lengths[2])
     wrist_distance = _distance(base, wrist)
     if abs(lengths[0] - lengths[1]) <= wrist_distance <= lengths[0] + lengths[1]:
@@ -109,13 +112,10 @@ def solve_three_link_z(
             _point_at(center, normal, height),
             _point_at(center, normal, -height),
         )
-        if seed is not None and len(seed) == 4:
-            elbow = min(elbows, key=lambda point: _distance(point, seed[1]))
-        else:
-            elbow = max(elbows, key=lambda point: point[0])
+        elbow = max(elbows, key=lambda point: point[0]) if bend_side > 0 else min(elbows, key=lambda point: point[0])
         return [base, elbow, wrist, target]
 
-    points = list(seed) if seed is not None and len(seed) == 4 else z_seed(base, target, lengths)
+    points = z_seed(base, target, lengths, bend_side=bend_side)
     points[0] = base
     for _ in range(iterations):
         points[-1] = target
@@ -136,6 +136,15 @@ def solve_three_link_z(
 def lower_workspace_target(pointer_x: float, pointer_y: float, width: float) -> Point:
     """Keep the hanging eye below its ceiling root while tracking the pointer."""
     return min(max(pointer_x, 95.0), width - 95.0), min(max(pointer_y, 285.0), 375.0)
+
+
+def bend_side_for_target(current: int, target_x: float, center_x: float, *, deadband: float = 18.0) -> int:
+    """Mirror the Z branch only after the endpoint clears the center deadband."""
+    if target_x < center_x - deadband:
+        return -1
+    if target_x > center_x + deadband:
+        return 1
+    return current
 
 
 def iris_blade_points(center: Point, index: int, aperture: float, twist: float) -> tuple[float, ...]:
@@ -159,7 +168,8 @@ class RobotArmView:
     def __init__(self, *, rng: random.Random | None = None) -> None:
         self.canvas: tk.Canvas | None = None
         self.target: Point = (180.0, 350.0)
-        self.joints = solve_three_link_z(self.base, self.target, self.lengths)
+        self.bend_side = 1
+        self.joints = solve_three_link_z(self.base, self.target, self.lengths, bend_side=self.bend_side)
         self.link_ids: list[int] = []
         self.joint_ids: list[int] = []
         self.target_id: int | None = None
@@ -207,7 +217,14 @@ class RobotArmView:
             self.target[0] + (local_target[0] - self.target[0]) * smoothing,
             self.target[1] + (local_target[1] - self.target[1]) * smoothing,
         )
-        self.joints = solve_three_link_z(self.base, self.target, self.lengths, seed=self.joints)
+        self.bend_side = bend_side_for_target(self.bend_side, self.target[0], self.base[0])
+        self.joints = solve_three_link_z(
+            self.base,
+            self.target,
+            self.lengths,
+            seed=self.joints,
+            bend_side=self.bend_side,
+        )
         now = time.monotonic()
         if now >= self.next_expression_at:
             choices = tuple(expression for expression in EXPRESSIONS if expression.name != self.expression.name)
