@@ -24,7 +24,6 @@ from ..state import OverlayState
 from .robot_arm import (
     EXPRESSIONS,
     EyeExpression,
-    bend_side_for_target,
     eyelid_polygon_points,
     expression_for_hint,
     tracked_gaze,
@@ -93,17 +92,15 @@ def solve_z_posture_3d(
     target: Vec3,
     lengths: Sequence[float],
     *,
-    bend_side: int = 1,
-    side_hint: Vec3 = Vec3(1.0, 0.0, 0.0),
+    pole_hint: Vec3 = Vec3(1.0, 0.0, 0.0),
     tool_angle: float = math.radians(30.0),
 ) -> list[Vec3]:
     """Solve an exact 3D chain whose projected link bends alternate as a Z."""
     if len(lengths) != 3 or any(length <= 0.0 for length in lengths):
         raise ValueError("three positive link lengths are required")
-    branch = 1 if bend_side >= 0 else -1
     forward = (target - base).normalized()
-    side = (side_hint - forward * side_hint.dot(forward)).normalized(Vec3(1.0, 0.0, 0.0))
-    tool_direction = (forward * math.cos(tool_angle) + side * (branch * math.sin(tool_angle))).normalized()
+    pole_axis = (pole_hint - forward * pole_hint.dot(forward)).normalized(Vec3(1.0, 0.0, 0.0))
+    tool_direction = (forward * math.cos(tool_angle) + pole_axis * math.sin(tool_angle)).normalized()
     wrist = target - tool_direction * lengths[2]
     wrist_offset = wrist - base
     wrist_distance = wrist_offset.length
@@ -115,8 +112,8 @@ def solve_z_posture_3d(
     wrist_axis = wrist_offset.normalized()
     along = (lengths[0] ** 2 - lengths[1] ** 2 + wrist_distance**2) / (2.0 * wrist_distance)
     height = math.sqrt(max(lengths[0] ** 2 - along**2, 0.0))
-    elbow_axis = (side - wrist_axis * side.dot(wrist_axis)).normalized(Vec3(0.0, 0.0, 1.0))
-    elbow = base + wrist_axis * along + elbow_axis * (branch * height)
+    elbow_axis = (pole_axis - wrist_axis * pole_axis.dot(wrist_axis)).normalized(Vec3(0.0, 0.0, 1.0))
+    elbow = base + wrist_axis * along + elbow_axis * height
     return [base, elbow, wrist, target]
 
 
@@ -133,6 +130,16 @@ def target_from_pointer(
     clamped_x = min(max(pointer_x, 55.0), width - 55.0)
     clamped_y = min(max(pointer_y, 250.0), min(height - 80.0, 350.0))
     return camera.unproject(clamped_x, clamped_y, depth)
+
+
+def continuous_pole_hint(pointer_x: float, width: float, camera: Camera) -> Vec3:
+    """Move the Z-posture pole through depth when crossing the screen center."""
+    half_span = max(width * 0.5 - 55.0, 1.0)
+    horizontal = min(max((pointer_x - width * 0.5) / half_span, -1.0), 1.0)
+    depth = math.sqrt(max(1.0 - horizontal * horizontal, 0.0))
+    camera_right = camera.world_space(Vec3(1.0, 0.0, 0.0)).normalized()
+    camera_depth = camera.world_space(Vec3(0.0, 0.0, 1.0)).normalized()
+    return (camera_right * horizontal + camera_depth * depth).normalized(camera_depth)
 
 
 def depth_at_phase(phase: float) -> float:
@@ -235,13 +242,12 @@ class RobotArm3DView:
             ),
             self.lengths,
         )
-        self.bend_side = 1
+        self.posture_pole = continuous_pole_hint(self.width * 0.5, self.width, self.camera)
         self.joints = solve_z_posture_3d(
             self.base,
             self.target,
             self.lengths,
-            bend_side=self.bend_side,
-            side_hint=self.camera.world_space(Vec3(1.0, 0.0, 0.0)),
+            pole_hint=self.posture_pole,
         )
         self.status_id: int | None = None
         self.expression = EXPRESSIONS[0]
@@ -298,13 +304,13 @@ class RobotArm3DView:
         )
         target_smoothing = 0.11
         self.target = self.target + (desired_target - self.target) * target_smoothing
-        self.bend_side = bend_side_for_target(self.bend_side, local_pointer[0], self.width * 0.5, deadband=24.0)
+        desired_pole = continuous_pole_hint(local_pointer[0], self.width, self.camera)
+        self.posture_pole = (self.posture_pole * 0.86 + desired_pole * 0.14).normalized(desired_pole)
         self.joints = solve_z_posture_3d(
             self.base,
             self.target,
             self.lengths,
-            bend_side=self.bend_side,
-            side_hint=self.camera.world_space(Vec3(1.0, 0.0, 0.0)),
+            pole_hint=self.posture_pole,
         )
 
         projected_eye = self.camera.project(self.joints[-1])

@@ -6,6 +6,7 @@ from engram_overlay.overlays.robot_arm_3d import (
     cable_decoration_paths,
     cable_hardware_faces,
     constrain_target_reach,
+    continuous_pole_hint,
     depth_at_phase,
     quadratic_curve,
     solve_three_link_3d,
@@ -85,16 +86,48 @@ class RobotArm3DTests(unittest.TestCase):
         base = Vec3(0.0, -145.0, 0.0)
         target = Vec3(0.0, 135.0, 20.0)
         lengths = (120.0, 105.0, 95.0)
-        points = solve_z_posture_3d(base, target, lengths, bend_side=1)
+        points = solve_z_posture_3d(base, target, lengths, pole_hint=Vec3(1.0, 0.0, 0.0))
         self.assertGreater(points[1].x, 0.0)
         self.assertLess(points[2].x, 0.0)
         self.assertEqual(points[-1], target)
         for start, end, expected in zip(points[:-1], points[1:], lengths, strict=True):
             self.assertAlmostEqual((end - start).length, expected, places=6)
 
-        mirrored = solve_z_posture_3d(base, target, lengths, bend_side=-1)
+        mirrored = solve_z_posture_3d(base, target, lengths, pole_hint=Vec3(-1.0, 0.0, 0.0))
         self.assertLess(mirrored[1].x, 0.0)
         self.assertGreater(mirrored[2].x, 0.0)
+
+    def test_pole_crosses_center_through_depth_without_a_branch_jump(self) -> None:
+        camera = Camera(180.0, 190.0, yaw=-0.38, pitch=-0.10, focal_length=650.0)
+        left_of_center = continuous_pole_hint(179.0, 360.0, camera)
+        center = continuous_pole_hint(180.0, 360.0, camera)
+        right_of_center = continuous_pole_hint(181.0, 360.0, camera)
+        self.assertGreater(left_of_center.dot(center), 0.999)
+        self.assertGreater(center.dot(right_of_center), 0.999)
+        self.assertGreater(center.dot(camera.world_space(Vec3(0.0, 0.0, 1.0)).normalized()), 0.999)
+
+        base = Vec3(0.0, -145.0, 0.0)
+        target = Vec3(0.0, 135.0, 20.0)
+        lengths = (120.0, 105.0, 95.0)
+        left_pose = solve_z_posture_3d(base, target, lengths, pole_hint=left_of_center)
+        right_pose = solve_z_posture_3d(base, target, lengths, pole_hint=right_of_center)
+        self.assertLess((left_pose[1] - right_pose[1]).length, 2.0)
+        self.assertLess((left_pose[2] - right_pose[2]).length, 2.0)
+
+    def test_full_pointer_sweep_keeps_joint_motion_continuous(self) -> None:
+        view = RobotArm3DView()
+        for _ in range(90):
+            view.tick(55, 310, 0, 0)
+        previous = view.joints
+        maximum_step = 0.0
+        for pointer_x in range(55, 306):
+            view.tick(pointer_x, 310, 0, 0)
+            maximum_step = max(
+                maximum_step,
+                max((current - prior).length for prior, current in zip(previous, view.joints, strict=True)),
+            )
+            previous = view.joints
+        self.assertLess(maximum_step, 2.5)
 
     def test_3d_view_reuses_event_expression_mapping(self) -> None:
         view = RobotArm3DView()
