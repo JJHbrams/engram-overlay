@@ -12,12 +12,13 @@ from pathlib import Path
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--overlay", default="xeyes")
     parser.add_argument("--seconds", type=float, default=8.0)
     args = parser.parse_args()
     repository = Path(__file__).resolve().parents[1]
     launcher = repository / ".venv" / "Scripts" / "engram-custom-overlay.exe"
     child = subprocess.Popen(
-        [str(launcher), "--overlay", "xeyes", "--mode", "replace"],
+        [str(launcher), "--overlay", args.overlay, "--mode", "replace"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

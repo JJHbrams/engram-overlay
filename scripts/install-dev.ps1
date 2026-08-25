@@ -1,4 +1,6 @@
 param(
+    [ValidateSet("xeyes", "robot-arm")]
+    [string]$Overlay = "xeyes",
     [ValidateSet("observer", "replace")]
     [string]$Mode = "replace"
 )
@@ -23,18 +25,19 @@ if (-not (Test-Path -LiteralPath $launcher)) {
 }
 
 $userProfilePath = [Environment]::GetFolderPath("UserProfile")
-$installDir = Join-Path $userProfilePath ".engram\overlays\xeyes"
+$installDir = Join-Path $userProfilePath ".engram\overlays\$Overlay"
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 $manifestPath = Join-Path $installDir "manifest.yaml"
 $launcherYaml = $launcher.Replace("\", "/").Replace('"', '\"')
+$overlayName = if ($Overlay -eq "robot-arm") { "Engram 3-Link Robot Arm" } else { "Engram XEyes" }
 $manifest = @"
 schema_version: 1
-id: xeyes
-name: Engram XEyes
+id: $Overlay
+name: $overlayName
 command:
   - "$launcherYaml"
   - "--overlay"
-  - "xeyes"
+  - "$Overlay"
   - "--mode"
   - "$Mode"
 supported_modes: [observer, replace]
@@ -43,4 +46,4 @@ supported_modes: [observer, replace]
 
 Write-Output "Installed: $manifestPath"
 Write-Output "Launcher: $launcher"
-Write-Output "Select 'Engram XEyes' in Settings > Overlay and restart Engram."
+Write-Output "Select '$overlayName' in Settings > Overlay and restart Engram."
