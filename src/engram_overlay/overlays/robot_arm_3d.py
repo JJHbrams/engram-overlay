@@ -334,6 +334,22 @@ def exploration_waypoint(rng: random.Random) -> tuple[float, float]:
     return math.cos(angle) * 92.0 * radius, math.sin(angle) * 50.0 * radius
 
 
+def exploration_target(rng: random.Random, width: float) -> tuple[float, float]:
+    """Place an autonomous interest point inside the overlay workspace."""
+    offset_x, offset_y = exploration_waypoint(rng)
+    return width * 0.5 + offset_x, 300.0 + offset_y
+
+
+def exploration_duration(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    rng: random.Random,
+) -> float:
+    travel_distance = math.hypot(end[0] - start[0], end[1] - start[1])
+    base_duration = min(max(travel_distance / 55.0, 1.1), 2.5)
+    return base_duration * rng.uniform(0.9, 1.08)
+
+
 def eased_exploration_point(
     start: tuple[float, float],
     end: tuple[float, float],
@@ -399,9 +415,9 @@ class RobotArm3DView:
         self.pulse_phase = 0.0
         now = time.monotonic()
         self.next_expression_at = now + self.rng.uniform(3.0, 5.5)
-        self.idle_motion = (0.0, 0.0)
-        self.explore_from = (0.0, 0.0)
-        self.explore_to = (0.0, 0.0)
+        self.explorer_pointer = (self.width * 0.5, 300.0)
+        self.explore_from = self.explorer_pointer
+        self.explore_to = self.explorer_pointer
         self.explore_started_at = now
         self.explore_duration = 1.0
         self.explore_hold_until = now + 1.2
@@ -443,28 +459,30 @@ class RobotArm3DView:
 
         can_explore = self.random_expressions_enabled and now - self.last_pointer_motion_at >= 1.2
         if can_explore:
+            was_active = self.explorer_active
             self.explorer_active = True
             route_finished = now >= self.explore_started_at + self.explore_duration
-            if route_finished and now >= self.explore_hold_until:
-                self.explore_from = self.idle_motion
-                self.explore_to = exploration_waypoint(self.rng)
-                self.explore_started_at = now
-                travel_distance = math.hypot(
-                    self.explore_to[0] - self.explore_from[0],
-                    self.explore_to[1] - self.explore_from[1],
+            if not was_active:
+                self.explorer_pointer = (
+                    min(max(local_pointer[0], 55.0), self.width - 55.0),
+                    min(max(local_pointer[1], 250.0), 350.0),
                 )
-                base_duration = min(max(travel_distance / 55.0, 1.1), 2.5)
-                self.explore_duration = base_duration * self.rng.uniform(0.9, 1.08)
+                self.explore_from = self.explorer_pointer
+                self.explore_to = exploration_target(self.rng, self.width)
+                self.explore_started_at = now
+                self.explore_duration = exploration_duration(self.explore_from, self.explore_to, self.rng)
+                self.explore_hold_until = now + self.explore_duration + self.rng.uniform(0.25, 0.7)
+            elif route_finished and now >= self.explore_hold_until:
+                self.explore_from = self.explorer_pointer
+                self.explore_to = exploration_target(self.rng, self.width)
+                self.explore_started_at = now
+                self.explore_duration = exploration_duration(self.explore_from, self.explore_to, self.rng)
                 self.explore_hold_until = now + self.explore_duration + self.rng.uniform(0.25, 0.7)
             progress = (now - self.explore_started_at) / max(self.explore_duration, 1e-6)
-            self.idle_motion = eased_exploration_point(self.explore_from, self.explore_to, progress)
+            self.explorer_pointer = eased_exploration_point(self.explore_from, self.explore_to, progress)
         else:
             self.explorer_active = False
-            self.idle_motion = (self.idle_motion[0] * 0.82, self.idle_motion[1] * 0.82)
-        motion_pointer = (
-            local_pointer[0] + self.idle_motion[0],
-            local_pointer[1] + self.idle_motion[1],
-        )
+        motion_pointer = self.explorer_pointer if self.explorer_active else local_pointer
         self.depth_phase = (self.depth_phase + 0.009) % math.tau
         desired_depth = depth_at_phase(self.depth_phase)
         self.target_depth += (desired_depth - self.target_depth) * 0.08
@@ -493,7 +511,11 @@ class RobotArm3DView:
         )
 
         projected_eye = self.camera.project(self.joints[-1])
-        gaze_pointer = motion_pointer if self.explorer_active else local_pointer
+        # During autonomous exploration the arm follows the interpolated virtual
+        # pointer, while the pupil looks ahead to its current interest point.
+        # Looking at motion_pointer here makes the gaze almost disappear because
+        # the eye endpoint is solving toward that same position.
+        gaze_pointer = self.explore_to if self.explorer_active else local_pointer
         desired_mouse_gaze = tracked_gaze(gaze_pointer, (projected_eye.x, projected_eye.y), max_x=7.0, max_y=5.0)
         gaze_smoothing = 0.16
         self.mouse_gaze = (

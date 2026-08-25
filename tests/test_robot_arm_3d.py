@@ -12,6 +12,8 @@ from engram_overlay.overlays.robot_arm_3d import (
     depth_at_phase,
     eye_shading_from_link,
     eased_exploration_point,
+    exploration_duration,
+    exploration_target,
     exploration_waypoint,
     first_link_accessory_faces,
     first_link_back_loops,
@@ -230,6 +232,14 @@ class RobotArm3DTests(unittest.TestCase):
         elliptical_radius = math.hypot(waypoint[0] / 92.0, waypoint[1] / 50.0)
         self.assertGreaterEqual(elliptical_radius, 0.65)
         self.assertLessEqual(elliptical_radius, 1.0)
+        target = exploration_target(random.Random(7), 360.0)
+        self.assertGreaterEqual(target[0], 88.0)
+        self.assertLessEqual(target[0], 272.0)
+        self.assertGreaterEqual(target[1], 250.0)
+        self.assertLessEqual(target[1], 350.0)
+        duration = exploration_duration((55.0, 250.0), target, random.Random(7))
+        self.assertGreaterEqual(duration, 0.99)
+        self.assertLessEqual(duration, 2.7)
 
     def test_idle_explorer_uses_a_smooth_virtual_pointer_and_yields_to_mouse(self) -> None:
         self.assertEqual(eased_exploration_point((0.0, 0.0), (10.0, -4.0), 0.0), (0.0, 0.0))
@@ -244,7 +254,15 @@ class RobotArm3DTests(unittest.TestCase):
         view.explore_hold_until = 0.0
         view.tick(180, 310, 0, 0)
         self.assertTrue(view.explorer_active)
-        self.assertNotEqual(view.explore_to, (0.0, 0.0))
+        self.assertGreaterEqual(view.explore_to[0], 88.0)
+        self.assertLessEqual(view.explore_to[0], 272.0)
+        self.assertGreaterEqual(view.explore_to[1], 250.0)
+        self.assertLessEqual(view.explore_to[1], 350.0)
+        look_ahead = (
+            view.explore_to[0] - view.explorer_pointer[0],
+            view.explore_to[1] - view.explorer_pointer[1],
+        )
+        self.assertGreater(view.mouse_gaze[0] * look_ahead[0] + view.mouse_gaze[1] * look_ahead[1], 0.0)
         view.tick(230, 310, 0, 0)
         self.assertFalse(view.explorer_active)
 
