@@ -19,7 +19,7 @@ Engram의 External Overlay Event API v1을 사용하는 독립 커스텀 오버�
 | schema | `schema_version: 1` |
 | handshake | renderer stdout의 첫 줄은 `overlay.hello` |
 | privacy | 대화·thinking·도구 payload·파일 경로를 받지 않는 `metadata_only` |
-| modes | 번들 캐릭터와 공존하는 `observer`, 번들을 대체하는 `replace` |
+| modes | 번들 캐릭터와 공존하는 `observer` (geometry + click이면 shared bubble anchor), 번들을 대체하는 `replace` |
 | fallback | handshake·JSONL·child 오류 시 Engram 번들 renderer 복구 |
 
 세부 계약은 [Event API v1](docs/event-api-v1.md), 프로젝트 구조는
