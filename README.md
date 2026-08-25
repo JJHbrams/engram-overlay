@@ -30,7 +30,7 @@ Engram의 External Overlay Event API v1을 사용하는 독립 커스텀 오버�
 | id | backend | 설명 |
 | --- | --- | --- |
 | `xeyes` | Tk | 화면 전체의 mouse pointer를 따라보는 두 눈. 첫 API/입력 smoke 구현 |
-| `robot-arm` | Tk | 상단 endpoint를 따라 Z 자세로 풀리는 3-link 2D inverse-kinematics arm |
+| `robot-arm` | Tk | 천장 root에서 Z 자세로 내려오며 iris·LED·ambient 표정을 재생하는 단안 3-link arm |
 
 ## 문서 기준
 

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import math
+import random
+import time
 import tkinter as tk
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from ..backends.tk import TkOverlayHost
 from ..protocol import JsonlTransport
@@ -12,6 +15,25 @@ from ..state import OverlayState
 
 Point = tuple[float, float]
 TRANSPARENT = "#010203"
+
+
+@dataclass(frozen=True)
+class EyeExpression:
+    name: str
+    color: str
+    aperture: float
+    gaze: Point
+    pulse_speed: float
+
+
+EXPRESSIONS = (
+    EyeExpression("calm", "#60a5fa", 15.0, (0.0, 0.0), 0.7),
+    EyeExpression("curious", "#22d3ee", 18.0, (-4.0, -3.0), 1.2),
+    EyeExpression("amused", "#f472b6", 13.0, (4.0, -2.0), 1.6),
+    EyeExpression("focused", "#fbbf24", 9.0, (3.0, 1.0), 2.0),
+    EyeExpression("wary", "#fb7185", 7.0, (-3.0, 3.0), 2.5),
+)
+ALARM_EXPRESSION = EyeExpression("alarm", "#ef4444", 6.0, (0.0, 0.0), 3.4)
 
 
 def _distance(a: Point, b: Point) -> float:
@@ -68,12 +90,13 @@ def solve_three_link_z(
             points.append(_point_at(points[-1], direction, length))
         return points
 
-    # Hold the tool at a shallow up-right angle, then solve the first two
+    # Hold the tool at a shallow right-facing angle, then solve the first two
     # circles for the right-handed elbow. This makes the preferred branch a
     # clear /\/ silhouette instead of letting an unconstrained solver relax
     # the final link toward vertical.
     tool_angle = math.radians(28.0)
-    tool_direction = (math.sin(tool_angle), -math.cos(tool_angle))
+    vertical_sign = 1.0 if target[1] >= base[1] else -1.0
+    tool_direction = (math.sin(tool_angle), vertical_sign * math.cos(tool_angle))
     wrist = _point_at(target, tool_direction, -lengths[2])
     wrist_distance = _distance(base, wrist)
     if abs(lengths[0] - lengths[1]) <= wrist_distance <= lengths[0] + lengths[1]:
@@ -110,68 +133,110 @@ def solve_three_link_z(
     return points
 
 
-def upper_workspace_target(pointer_x: float, pointer_y: float, width: float) -> Point:
-    """Keep the end effector inside the upper workspace while tracking the pointer."""
-    return min(max(pointer_x, 95.0), width - 95.0), min(max(pointer_y, 65.0), 145.0)
+def lower_workspace_target(pointer_x: float, pointer_y: float, width: float) -> Point:
+    """Keep the hanging eye below its ceiling root while tracking the pointer."""
+    return min(max(pointer_x, 95.0), width - 95.0), min(max(pointer_y, 285.0), 375.0)
+
+
+def iris_blade_points(center: Point, index: int, aperture: float, twist: float) -> tuple[float, ...]:
+    """Return one of six radial shutter blades around the eye aperture."""
+    angle = index * math.tau / 6.0 + twist
+    radii_and_offsets = ((30.0, -0.45), (30.0, 0.45), (aperture, 0.18), (aperture, -0.18))
+    points: list[float] = []
+    for radius, offset in radii_and_offsets:
+        points.extend((center[0] + math.cos(angle + offset) * radius, center[1] + math.sin(angle + offset) * radius))
+    return tuple(points)
 
 
 class RobotArmView:
     width = 360
-    height = 410
+    height = 430
     background = TRANSPARENT
     transparent_color = TRANSPARENT
-    base: Point = (180.0, 374.0)
+    base: Point = (180.0, 48.0)
     lengths = (132.0, 122.0, 116.0)
 
-    def __init__(self) -> None:
+    def __init__(self, *, rng: random.Random | None = None) -> None:
         self.canvas: tk.Canvas | None = None
-        self.target: Point = (180.0, 72.0)
+        self.target: Point = (180.0, 350.0)
         self.joints = solve_three_link_z(self.base, self.target, self.lengths)
         self.link_ids: list[int] = []
         self.joint_ids: list[int] = []
         self.target_id: int | None = None
-        self.gripper_ids: list[int] = []
+        self.ambient_ids: list[int] = []
+        self.iris_ids: list[int] = []
+        self.led_halo_id: int | None = None
+        self.led_core_id: int | None = None
         self.status_id: int | None = None
-        self.accent = "#86a8e7"
+        self.rng = rng or random.Random()
+        self.expression = EXPRESSIONS[0]
+        self.aperture = self.expression.aperture
+        self.gaze: Point = self.expression.gaze
+        self.pulse_phase = 0.0
+        self.next_expression_at = time.monotonic() + self.rng.uniform(3.0, 5.5)
 
     def mount(self, canvas: tk.Canvas) -> None:
         self.canvas = canvas
-        canvas.create_text(20, 25, text="3-LINK / Z-IK", fill="#64748b", anchor="w", font=("Segoe UI", 9, "bold"))
-        self.status_id = canvas.create_oval(326, 17, 340, 31, fill=self.accent, outline="")
-        self.target_id = canvas.create_oval(0, 0, 0, 0, outline=self.accent, width=2, dash=(3, 3))
+        color = self.expression.color
+        canvas.create_rectangle(116, 0, 244, 15, fill="#1e293b", outline="#64748b", width=2)
+        canvas.create_line(138, 13, 160, 44, fill="#475569", width=7, capstyle=tk.ROUND)
+        canvas.create_line(222, 13, 200, 44, fill="#475569", width=7, capstyle=tk.ROUND)
+        canvas.create_text(18, 22, text="CEILING LINK / IRIS", fill="#64748b", anchor="w", font=("Segoe UI", 9, "bold"))
+        self.status_id = canvas.create_oval(326, 15, 340, 29, fill=color, outline="")
+        self.target_id = canvas.create_oval(0, 0, 0, 0, outline=color, width=2, dash=(3, 3))
+        for dash in ((2, 5), (5, 5), (1, 7)):
+            self.ambient_ids.append(canvas.create_oval(0, 0, 0, 0, outline=color, width=1, dash=dash))
         for width in (18, 16, 14):
             self.link_ids.append(canvas.create_line(0, 0, 0, 0, fill="#334155", width=width, capstyle=tk.ROUND))
         for _ in range(4):
-            self.joint_ids.append(canvas.create_oval(0, 0, 0, 0, fill="#e2e8f0", outline=self.accent, width=4))
-        self.gripper_ids = [
-            canvas.create_line(0, 0, 0, 0, fill=self.accent, width=5, capstyle=tk.ROUND),
-            canvas.create_line(0, 0, 0, 0, fill=self.accent, width=5, capstyle=tk.ROUND),
-        ]
-        canvas.create_polygon(154, 390, 206, 390, 218, 404, 142, 404, fill="#1e293b", outline=self.accent, width=3)
+            self.joint_ids.append(canvas.create_oval(0, 0, 0, 0, fill="#e2e8f0", outline=color, width=4))
+        for _ in range(6):
+            self.iris_ids.append(canvas.create_polygon(0, 0, 0, 0, fill="#111827", outline=color, width=2))
+        self.led_halo_id = canvas.create_oval(0, 0, 0, 0, fill=color, outline="", stipple="gray50")
+        self.led_core_id = canvas.create_oval(0, 0, 0, 0, fill="#f8fafc", outline=color, width=3)
         self._draw()
 
     def apply_state(self, state: OverlayState) -> None:
-        self.accent, _ = state.appearance
-        if self.canvas is None:
-            return
-        if self.target_id is not None:
-            self.canvas.itemconfigure(self.target_id, outline=self.accent)
-        if self.status_id is not None:
-            self.canvas.itemconfigure(self.status_id, fill=self.accent)
-        for joint_id in self.joint_ids:
-            self.canvas.itemconfigure(joint_id, outline=self.accent)
-        for gripper_id in self.gripper_ids:
-            self.canvas.itemconfigure(gripper_id, fill=self.accent)
+        if state.display_hint in {"error", "provider_error"}:
+            self._set_expression(ALARM_EXPRESSION, time.monotonic())
 
     def tick(self, pointer_x: int, pointer_y: int, window_x: int, window_y: int) -> None:
-        local_target = upper_workspace_target(pointer_x - window_x, pointer_y - window_y, self.width)
+        local_target = lower_workspace_target(pointer_x - window_x, pointer_y - window_y, self.width)
         smoothing = 0.14
         self.target = (
             self.target[0] + (local_target[0] - self.target[0]) * smoothing,
             self.target[1] + (local_target[1] - self.target[1]) * smoothing,
         )
         self.joints = solve_three_link_z(self.base, self.target, self.lengths, seed=self.joints)
+        now = time.monotonic()
+        if now >= self.next_expression_at:
+            choices = tuple(expression for expression in EXPRESSIONS if expression.name != self.expression.name)
+            self._set_expression(self.rng.choice(choices), now)
+        expression_smoothing = 0.1
+        self.aperture += (self.expression.aperture - self.aperture) * expression_smoothing
+        self.gaze = (
+            self.gaze[0] + (self.expression.gaze[0] - self.gaze[0]) * expression_smoothing,
+            self.gaze[1] + (self.expression.gaze[1] - self.gaze[1]) * expression_smoothing,
+        )
+        self.pulse_phase += 0.055 * self.expression.pulse_speed
         self._draw()
+
+    def _set_expression(self, expression: EyeExpression, now: float) -> None:
+        self.expression = expression
+        self.next_expression_at = now + self.rng.uniform(3.0, 5.5)
+        if self.canvas is None:
+            return
+        color = expression.color
+        if self.target_id is not None:
+            self.canvas.itemconfigure(self.target_id, outline=color)
+        if self.status_id is not None:
+            self.canvas.itemconfigure(self.status_id, fill=color)
+        for item_id in (*self.joint_ids, *self.ambient_ids, *self.iris_ids):
+            self.canvas.itemconfigure(item_id, outline=color)
+        if self.led_halo_id is not None:
+            self.canvas.itemconfigure(self.led_halo_id, fill=color)
+        if self.led_core_id is not None:
+            self.canvas.itemconfigure(self.led_core_id, outline=color)
 
     def _draw(self) -> None:
         if self.canvas is None:
@@ -179,21 +244,37 @@ class RobotArmView:
         for link_id, start, end in zip(self.link_ids, self.joints[:-1], self.joints[1:], strict=True):
             self.canvas.coords(link_id, *start, *end)
         for index, (joint_id, point) in enumerate(zip(self.joint_ids, self.joints, strict=True)):
-            radius = 13 if index in (0, 3) else 11
+            radius = 31 if index == 3 else (14 if index == 0 else 11)
             self.canvas.coords(joint_id, point[0] - radius, point[1] - radius, point[0] + radius, point[1] + radius)
         if self.target_id is not None:
-            self.canvas.coords(self.target_id, self.target[0] - 19, self.target[1] - 19, self.target[0] + 19, self.target[1] + 19)
+            self.canvas.coords(self.target_id, self.target[0] - 34, self.target[1] - 34, self.target[0] + 34, self.target[1] + 34)
         end = self.joints[-1]
-        previous = self.joints[-2]
-        direction = _unit(previous, end)
-        normal = (-direction[1], direction[0])
-        wrist = _point_at(end, direction, 9)
-        left = (wrist[0] + normal[0] * 13, wrist[1] + normal[1] * 13)
-        right = (wrist[0] - normal[0] * 13, wrist[1] - normal[1] * 13)
-        left_tip = _point_at(left, direction, 16)
-        right_tip = _point_at(right, direction, 16)
-        self.canvas.coords(self.gripper_ids[0], *wrist, *left, *left_tip)
-        self.canvas.coords(self.gripper_ids[1], *wrist, *right, *right_tip)
+        pulse = (math.sin(self.pulse_phase) + 1.0) * 0.5
+        for index, ambient_id in enumerate(self.ambient_ids):
+            radius = 40.0 + index * 9.0 + pulse * (2.0 + index)
+            self.canvas.coords(ambient_id, end[0] - radius, end[1] - radius, end[0] + radius, end[1] + radius)
+        twist = 0.12 + math.sin(self.pulse_phase * 0.6) * 0.06
+        for index, iris_id in enumerate(self.iris_ids):
+            self.canvas.coords(iris_id, *iris_blade_points(end, index, self.aperture, twist))
+        pupil = (end[0] + self.gaze[0], end[1] + self.gaze[1])
+        halo_radius = 12.0 + pulse * 3.0
+        core_radius = 6.0 + pulse * 1.2
+        if self.led_halo_id is not None:
+            self.canvas.coords(
+                self.led_halo_id,
+                pupil[0] - halo_radius,
+                pupil[1] - halo_radius,
+                pupil[0] + halo_radius,
+                pupil[1] + halo_radius,
+            )
+        if self.led_core_id is not None:
+            self.canvas.coords(
+                self.led_core_id,
+                pupil[0] - core_radius,
+                pupil[1] - core_radius,
+                pupil[0] + core_radius,
+                pupil[1] + core_radius,
+            )
 
 
 def create_robot_arm(transport: JsonlTransport, mode: str) -> TkOverlayHost:

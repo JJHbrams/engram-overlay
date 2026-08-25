@@ -14,7 +14,7 @@ Engram child process / JSONL
       │  └─ webview.py             # 향후 Live2D/Web renderer
       └─ overlays/<id>/            # 개별 작품의 behavior, scene, packaged assets
          ├─ xeyes.py               # asset 없는 작은 mouse tracking 예제
-         ├─ robot_arm.py           # 3-link Z 자세 2D inverse kinematics
+         ├─ robot_arm.py           # ceiling 3-link Z-IK + single-eye expression VFX
          ├─ image-character/       # 향후 기능형 2D 이미지 + assets/
          ├─ object-3d/             # 향후 3D object + model/texture
          └─ live2d-character/      # 향후 Live2D model + runtime assets
