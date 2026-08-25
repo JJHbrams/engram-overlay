@@ -5,9 +5,10 @@ from engram_overlay.overlays.robot_arm import (
     EXPRESSIONS,
     RobotArmView,
     bend_side_for_target,
+    eyelid_polygon_points,
     lower_workspace_target,
-    shutter_line_points,
     solve_three_link_z,
+    tracked_gaze,
 )
 from engram_overlay.registry import OVERLAYS, overlay_ids
 
@@ -73,13 +74,32 @@ class RobotArmTests(unittest.TestCase):
         self.assertEqual(lower_workspace_target(-100, 999, 360), (95.0, 375.0))
         self.assertEqual(lower_workspace_target(200, -5, 360), (200, 285.0))
 
-    def test_two_shutter_profiles_cover_reference_expressions(self) -> None:
+    def test_two_eyelid_profiles_cover_reference_expressions(self) -> None:
         names = {expression.name for expression in EXPRESSIONS}
         self.assertEqual(
             names,
-            {"idle", "boring", "giggle", "curious", "well", "hmm", "tempered", "angry", "depressed", "sad"},
+            {
+                "idle",
+                "boring",
+                "giggle",
+                "curious",
+                "hesitant",
+                "skeptical",
+                "tempered",
+                "angry",
+                "depressed",
+                "sad",
+            },
         )
-        self.assertEqual(shutter_line_points((10.0, 20.0), -5.0, 2.0, 3.0), (-15.0, 13.0, 10.0, 18.0, 35.0, 17.0))
+        upper = eyelid_polygon_points((10.0, 20.0), -5.0, 2.0, 3.0, upper=True)
+        lower = eyelid_polygon_points((10.0, 20.0), 5.0, 2.0, 3.0, upper=False)
+        self.assertEqual(upper[:6], (-18.0, 13.0, 10.0, 18.0, 38.0, 17.0))
+        self.assertEqual(lower[:6], (-18.0, 23.0, 10.0, 28.0, 38.0, 27.0))
+
+    def test_mouse_gaze_is_soft_and_elliptically_bounded(self) -> None:
+        self.assertEqual(tracked_gaze((10.0, 0.0), (0.0, 0.0)), (2.0 / 3.0, 0.0))
+        far_gaze = tracked_gaze((1000.0, 1000.0), (0.0, 0.0), (3.0, 2.0))
+        self.assertLessEqual((far_gaze[0] / 8.0) ** 2 + (far_gaze[1] / 6.0) ** 2, 1.0 + 1e-9)
 
     def test_draw_maps_three_links_to_four_joint_points(self) -> None:
         view = RobotArmView()
@@ -90,11 +110,12 @@ class RobotArmTests(unittest.TestCase):
         view.ambient_ids = [9, 10]
         view.led_halo_id = 11
         view.led_core_id = 12
-        view.shutter_ids = [13, 14]
+        view.eyelid_ids = [13, 14]
+        view.eye_rim_id = 15
 
         view._draw()
 
-        self.assertEqual(view.canvas.coords.call_count, 14)
+        self.assertEqual(view.canvas.coords.call_count, 15)
 
 
 if __name__ == "__main__":

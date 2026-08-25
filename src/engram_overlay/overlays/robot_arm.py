@@ -29,21 +29,25 @@ class EyeExpression:
     lower_peak: float
     gaze: Point
     pulse_speed: float
+    pupil_size: Point
+    pupil_outline_width: float
 
 
 EXPRESSIONS = (
-    EyeExpression("idle", "#fbbf24", -27.0, 27.0, 0.0, 0.0, 0.0, 0.0, (0.0, 0.0), 0.7),
-    EyeExpression("boring", "#fbbf24", -6.0, 27.0, 0.0, 0.0, 0.0, 0.0, (0.0, 2.0), 0.5),
-    EyeExpression("giggle", "#facc15", -27.0, 8.0, 0.0, 0.0, 0.0, 0.0, (0.0, -2.0), 1.5),
-    EyeExpression("curious", "#eaff00", -22.0, 16.0, 0.0, -9.0, 0.0, 0.0, (4.0, -2.0), 1.2),
-    EyeExpression("well", "#cbd5e1", -12.0, 20.0, 0.0, -9.0, 0.0, 0.0, (-3.0, 1.0), 0.8),
-    EyeExpression("hmm", "#cbd5e1", -7.0, 7.0, 0.0, 0.0, 0.0, 0.0, (2.0, 0.0), 0.6),
-    EyeExpression("tempered", "#ef4444", -11.0, 23.0, 0.0, -5.0, 12.0, 0.0, (0.0, 2.0), 2.3),
-    EyeExpression("angry", "#ef4444", -12.0, 9.0, 0.0, 0.0, 15.0, 0.0, (0.0, 2.0), 2.8),
-    EyeExpression("depressed", "#0ea5e9", -8.0, 27.0, 0.0, 0.0, -10.0, 0.0, (0.0, 4.0), 0.5),
-    EyeExpression("sad", "#0ea5e9", -8.0, 10.0, 0.0, 0.0, -11.0, 0.0, (0.0, 4.0), 0.45),
+    EyeExpression("idle", "#fbbf24", -27.0, 27.0, 0.0, 0.0, 0.0, 0.0, (0.0, 0.0), 0.7, (15.0, 15.0), 4.0),
+    EyeExpression("boring", "#fbbf24", -6.0, 27.0, 0.0, 0.0, 0.0, 0.0, (0.0, 2.0), 0.5, (15.0, 13.0), 4.5),
+    EyeExpression("giggle", "#facc15", -27.0, 8.0, 0.0, 0.0, 0.0, 0.0, (0.0, -2.0), 1.5, (16.0, 13.0), 3.5),
+    EyeExpression("curious", "#eaff00", -22.0, 16.0, 0.0, -9.0, 0.0, 0.0, (4.0, -2.0), 1.2, (14.0, 17.0), 3.5),
+    EyeExpression("hesitant", "#cbd5e1", -12.0, 20.0, 0.0, -9.0, 0.0, 0.0, (-3.0, 1.0), 0.8, (14.0, 15.0), 4.0),
+    EyeExpression("skeptical", "#cbd5e1", -7.0, 7.0, 0.0, 0.0, 0.0, 0.0, (2.0, 0.0), 0.6, (16.0, 9.0), 5.0),
+    EyeExpression("tempered", "#ef4444", -11.0, 23.0, 0.0, -5.0, 12.0, 0.0, (0.0, 2.0), 2.3, (15.0, 16.0), 4.5),
+    EyeExpression("angry", "#ef4444", -12.0, 9.0, 0.0, 0.0, 15.0, 0.0, (0.0, 2.0), 2.8, (17.0, 14.0), 5.5),
+    EyeExpression("depressed", "#0ea5e9", -8.0, 27.0, 0.0, 0.0, -10.0, 0.0, (0.0, 4.0), 0.5, (15.0, 14.0), 3.5),
+    EyeExpression("sad", "#0ea5e9", -8.0, 10.0, 0.0, 0.0, -11.0, 0.0, (0.0, 4.0), 0.45, (14.0, 16.0), 4.0),
 )
-ALARM_EXPRESSION = EyeExpression("alarm", "#ef4444", -12.0, 8.0, 0.0, 0.0, 16.0, 0.0, (0.0, 1.0), 3.4)
+ALARM_EXPRESSION = EyeExpression(
+    "alarm", "#ef4444", -12.0, 8.0, 0.0, 0.0, 16.0, 0.0, (0.0, 1.0), 3.4, (17.0, 15.0), 6.0
+)
 
 
 def _distance(a: Point, b: Point) -> float:
@@ -157,17 +161,68 @@ def bend_side_for_target(current: int, target_x: float, center_x: float, *, dead
     return current
 
 
-def shutter_line_points(center: Point, y_offset: float, tilt: float, peak: float) -> tuple[float, ...]:
-    """Return a single three-point shutter line clipped visually by the eye rim."""
-    radius = 25.0
-    return (
-        center[0] - radius,
-        center[1] + y_offset - tilt,
-        center[0],
-        center[1] + y_offset + peak,
-        center[0] + radius,
-        center[1] + y_offset + tilt,
+def eyelid_polygon_points(
+    center: Point,
+    y_offset: float,
+    tilt: float,
+    peak: float,
+    *,
+    upper: bool,
+) -> tuple[float, ...]:
+    """Build a filled mechanical eyelid whose inner edge carries the expression."""
+    edge_radius = 28.0
+    rim_radius = 29.0
+    inner = (
+        (center[0] - edge_radius, center[1] + y_offset - tilt),
+        (center[0], center[1] + y_offset + peak),
+        (center[0] + edge_radius, center[1] + y_offset + tilt),
     )
+    if upper:
+        rim = (
+            (center[0] + rim_radius, center[1] - 8.0),
+            (center[0] + 20.0, center[1] - 25.0),
+            (center[0], center[1] - rim_radius),
+            (center[0] - 20.0, center[1] - 25.0),
+            (center[0] - rim_radius, center[1] - 8.0),
+        )
+    else:
+        rim = (
+            (center[0] + rim_radius, center[1] + 8.0),
+            (center[0] + 20.0, center[1] + 25.0),
+            (center[0], center[1] + rim_radius),
+            (center[0] - 20.0, center[1] + 25.0),
+            (center[0] - rim_radius, center[1] + 8.0),
+        )
+    points = (*inner, *rim)
+    return tuple(coordinate for point in points for coordinate in point)
+
+
+def tracked_gaze(
+    pointer: Point,
+    center: Point,
+    bias: Point = (0.0, 0.0),
+    *,
+    max_x: float = 8.0,
+    max_y: float = 6.0,
+    response_distance: float = 120.0,
+) -> Point:
+    """Return a softly bounded elliptical gaze toward the pointer."""
+    dx = pointer[0] - center[0]
+    dy = pointer[1] - center[1]
+    distance = math.hypot(dx, dy)
+    if distance <= 1e-9:
+        mouse_x = mouse_y = 0.0
+    else:
+        strength = min(distance / response_distance, 1.0)
+        mouse_x = dx / distance * max_x * strength
+        mouse_y = dy / distance * max_y * strength
+    gaze_x = bias[0] + mouse_x
+    gaze_y = bias[1] + mouse_y
+    ellipse_length = math.hypot(gaze_x / max_x, gaze_y / max_y)
+    if ellipse_length > 1.0:
+        gaze_x /= ellipse_length
+        gaze_y /= ellipse_length
+    return gaze_x, gaze_y
 
 
 class RobotArmView:
@@ -187,7 +242,8 @@ class RobotArmView:
         self.joint_ids: list[int] = []
         self.target_id: int | None = None
         self.ambient_ids: list[int] = []
-        self.shutter_ids: list[int] = []
+        self.eyelid_ids: list[int] = []
+        self.eye_rim_id: int | None = None
         self.led_halo_id: int | None = None
         self.led_core_id: int | None = None
         self.status_id: int | None = None
@@ -200,6 +256,9 @@ class RobotArmView:
         self.upper_peak = self.expression.upper_peak
         self.lower_peak = self.expression.lower_peak
         self.gaze: Point = self.expression.gaze
+        self.mouse_gaze: Point = (0.0, 0.0)
+        self.pupil_size: Point = self.expression.pupil_size
+        self.pupil_outline_width = self.expression.pupil_outline_width
         self.pulse_phase = 0.0
         self.next_expression_at = time.monotonic() + self.rng.uniform(3.0, 5.5)
 
@@ -221,9 +280,10 @@ class RobotArmView:
         self.led_halo_id = canvas.create_oval(0, 0, 0, 0, fill=color, outline="", stipple="gray50")
         self.led_core_id = canvas.create_oval(0, 0, 0, 0, fill=color, outline="#082f49", width=4)
         for _ in range(2):
-            self.shutter_ids.append(
-                canvas.create_line(0, 0, 0, 0, fill="#475569", width=7, capstyle=tk.ROUND, joinstyle=tk.ROUND)
+            self.eyelid_ids.append(
+                canvas.create_polygon(0, 0, 0, 0, fill="#64748b", outline="#0f172a", width=3, joinstyle=tk.ROUND)
             )
+        self.eye_rim_id = canvas.create_oval(0, 0, 0, 0, fill="", outline="#0f172a", width=4)
         self._draw()
 
     def apply_state(self, state: OverlayState) -> None:
@@ -245,6 +305,15 @@ class RobotArmView:
             seed=self.joints,
             bend_side=self.bend_side,
         )
+        desired_mouse_gaze = tracked_gaze(
+            (pointer_x - window_x, pointer_y - window_y),
+            self.joints[-1],
+        )
+        gaze_smoothing = 0.16
+        self.mouse_gaze = (
+            self.mouse_gaze[0] + (desired_mouse_gaze[0] - self.mouse_gaze[0]) * gaze_smoothing,
+            self.mouse_gaze[1] + (desired_mouse_gaze[1] - self.mouse_gaze[1]) * gaze_smoothing,
+        )
         now = time.monotonic()
         if now >= self.next_expression_at:
             choices = tuple(expression for expression in EXPRESSIONS if expression.name != self.expression.name)
@@ -257,6 +326,13 @@ class RobotArmView:
             self.gaze[0] + (self.expression.gaze[0] - self.gaze[0]) * expression_smoothing,
             self.gaze[1] + (self.expression.gaze[1] - self.gaze[1]) * expression_smoothing,
         )
+        self.pupil_size = (
+            self.pupil_size[0] + (self.expression.pupil_size[0] - self.pupil_size[0]) * expression_smoothing,
+            self.pupil_size[1] + (self.expression.pupil_size[1] - self.pupil_size[1]) * expression_smoothing,
+        )
+        self.pupil_outline_width += (
+            self.expression.pupil_outline_width - self.pupil_outline_width
+        ) * expression_smoothing
         self.pulse_phase += 0.055 * self.expression.pulse_speed
         self._draw()
 
@@ -275,7 +351,7 @@ class RobotArmView:
         if self.led_halo_id is not None:
             self.canvas.itemconfigure(self.led_halo_id, fill=color)
         if self.led_core_id is not None:
-            self.canvas.itemconfigure(self.led_core_id, fill=color)
+            self.canvas.itemconfigure(self.led_core_id, fill=color, width=expression.pupil_outline_width)
 
     def _draw(self) -> None:
         if self.canvas is None:
@@ -292,34 +368,42 @@ class RobotArmView:
         for index, ambient_id in enumerate(self.ambient_ids):
             radius = 40.0 + index * 9.0 + pulse * (2.0 + index)
             self.canvas.coords(ambient_id, end[0] - radius, end[1] - radius, end[0] + radius, end[1] + radius)
-        pupil = (end[0] + self.gaze[0], end[1] + self.gaze[1])
-        halo_radius = 12.0 + pulse * 3.0
-        core_radius = 6.0 + pulse * 1.2
+        pupil = (
+            end[0] + self.gaze[0] + self.mouse_gaze[0],
+            end[1] + self.gaze[1] + self.mouse_gaze[1],
+        )
+        pupil_radius_x = self.pupil_size[0] + pulse * 0.8
+        pupil_radius_y = self.pupil_size[1] + pulse * 0.8
+        halo_radius_x = pupil_radius_x + 5.0 + pulse * 1.5
+        halo_radius_y = pupil_radius_y + 5.0 + pulse * 1.5
         if self.led_halo_id is not None:
             self.canvas.coords(
                 self.led_halo_id,
-                pupil[0] - halo_radius,
-                pupil[1] - halo_radius,
-                pupil[0] + halo_radius,
-                pupil[1] + halo_radius,
+                pupil[0] - halo_radius_x,
+                pupil[1] - halo_radius_y,
+                pupil[0] + halo_radius_x,
+                pupil[1] + halo_radius_y,
             )
         if self.led_core_id is not None:
+            self.canvas.itemconfigure(self.led_core_id, width=self.pupil_outline_width)
             self.canvas.coords(
                 self.led_core_id,
-                pupil[0] - core_radius,
-                pupil[1] - core_radius,
-                pupil[0] + core_radius,
-                pupil[1] + core_radius,
+                pupil[0] - pupil_radius_x,
+                pupil[1] - pupil_radius_y,
+                pupil[0] + pupil_radius_x,
+                pupil[1] + pupil_radius_y,
             )
-        if len(self.shutter_ids) == 2:
+        if len(self.eyelid_ids) == 2:
             self.canvas.coords(
-                self.shutter_ids[0],
-                *shutter_line_points(end, self.upper_y, self.upper_tilt, self.upper_peak),
+                self.eyelid_ids[0],
+                *eyelid_polygon_points(end, self.upper_y, self.upper_tilt, self.upper_peak, upper=True),
             )
             self.canvas.coords(
-                self.shutter_ids[1],
-                *shutter_line_points(end, self.lower_y, self.lower_tilt, self.lower_peak),
+                self.eyelid_ids[1],
+                *eyelid_polygon_points(end, self.lower_y, self.lower_tilt, self.lower_peak, upper=False),
             )
+        if self.eye_rim_id is not None:
+            self.canvas.coords(self.eye_rim_id, end[0] - 31, end[1] - 31, end[0] + 31, end[1] + 31)
 
 
 def create_robot_arm(transport: JsonlTransport, mode: str) -> TkOverlayHost:
