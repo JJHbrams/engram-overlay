@@ -8,6 +8,7 @@ import tkinter as tk
 import ctypes
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageTk
 
@@ -28,6 +29,7 @@ from .robot_arm_3d_v2 import (
 STRIP_HEIGHT = 96
 MAX_SCENE_WIDTH = 640
 GROUND_Y = 82.0
+TRAVELER_HEIGHTS = (26, 24, 28)
 
 
 @dataclass(frozen=True)
@@ -263,6 +265,67 @@ def terrain_ridge_points(width: float) -> tuple[tuple[float, float], ...]:
     return (*top, (width, STRIP_HEIGHT), (0.0, STRIP_HEIGHT))
 
 
+def atlas_frames(atlas: Image.Image, columns: int, rows: int) -> tuple[tuple[Image.Image, ...], ...]:
+    """Split and tightly crop a regular alpha sprite atlas."""
+    cell_width = atlas.width // columns
+    cell_height = atlas.height // rows
+    result = []
+    for row in range(rows):
+        frames = []
+        for column in range(columns):
+            cell = atlas.crop(
+                (column * cell_width, row * cell_height, (column + 1) * cell_width, (row + 1) * cell_height)
+            )
+            bounds = cell.getbbox()
+            frames.append(cell.crop(bounds) if bounds is not None else Image.new("RGBA", (1, 1), (0, 0, 0, 0)))
+        result.append(tuple(frames))
+    return tuple(result)
+
+
+def fit_height(image: Image.Image, height: int) -> Image.Image:
+    width = max(1, round(image.width * height / max(image.height, 1)))
+    return image.resize((width, height), Image.Resampling.LANCZOS)
+
+
+def composite_party_texture(
+    target: Image.Image,
+    frames: tuple[tuple[Image.Image, ...], ...],
+    party: WandererParty,
+) -> None:
+    """Render the high-resolution walk atlas at a deliberately minor scale."""
+    frame_index = int(party.stride * 1.35) % 4
+    crouch = 4 if party.state == "hide" else 2 if party.state == "peek" else 0
+    for role, offset in enumerate((-17.0, 0.0, 17.0)):
+        sprite = fit_height(frames[role][frame_index], TRAVELER_HEIGHTS[role])
+        if party.direction < 0.0:
+            sprite = sprite.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+        center_x = party.x + offset * party.direction
+        target.paste(sprite, (round(center_x - sprite.width * 0.5), round(party.y - sprite.height + crouch)), sprite)
+
+
+def composite_terrain_texture(
+    target: Image.Image,
+    cover_frames: tuple[Image.Image, ...],
+    ridge: Image.Image,
+    covers: tuple[Cover, ...],
+) -> None:
+    ridge_texture = ridge.resize((target.width, 16), Image.Resampling.LANCZOS)
+    target.paste(ridge_texture, (0, round(GROUND_Y - 1)), ridge_texture)
+    heights = (76, 52, 60)
+    for cover, texture, height in zip(covers, cover_frames, heights, strict=True):
+        sprite = fit_height(texture, height)
+        target.paste(sprite, (round(cover.x - sprite.width * 0.5), round(cover.y - sprite.height + 2)), sprite)
+
+
+def v3_exploration_target(rng: object, width: float) -> tuple[float, float]:
+    """Use more of the V3 canvas while preserving a smooth elliptical patrol."""
+    uniform = getattr(rng, "uniform")
+    angle = uniform(0.0, math.tau)
+    radius = uniform(0.58, 1.0)
+    horizontal = min(width * 0.5 - 28.0, 178.0)
+    return width * 0.5 + math.cos(angle) * horizontal * radius, 276.0 + math.sin(angle) * 55.0 * radius
+
+
 def draw_ground_and_covers(target: Image.Image, covers: tuple[Cover, ...]) -> None:
     draw = ImageDraw.Draw(target)
     ridge = terrain_ridge_points(target.width)
@@ -344,6 +407,18 @@ class TinyWandererDisplay:
         self._positioned = False
         self.corner = "left"
         self.covers, self.party = scene_layout(self.width)
+        asset_dir = Path(__file__).parent / "assets" / "robot_arm_3d_v3"
+        self.traveler_frames: tuple[tuple[Image.Image, ...], ...] | None = None
+        self.cover_frames: tuple[Image.Image, ...] | None = None
+        self.ridge_texture: Image.Image | None = None
+        try:
+            traveler_atlas = Image.open(asset_dir / "traveler-walk-atlas.png").convert("RGBA")
+            cover_atlas = Image.open(asset_dir / "terrain-cover-atlas.png").convert("RGBA")
+            self.traveler_frames = atlas_frames(traveler_atlas, 4, 3)
+            self.cover_frames = atlas_frames(cover_atlas, 3, 1)[0]
+            self.ridge_texture = Image.open(asset_dir / "terrain-ridge.png").convert("RGBA")
+        except (OSError, ValueError):
+            pass
         self._place()
         self.window.deiconify()
         self.window.update_idletasks()
@@ -420,8 +495,14 @@ class TinyWandererDisplay:
             covers=self.covers,
             bounds=(18.0, self.width - 18.0),
         )
-        draw_party(draw, self.party)
-        draw_ground_and_covers(target, self.covers)
+        if self.traveler_frames is not None:
+            composite_party_texture(target, self.traveler_frames, self.party)
+        else:
+            draw_party(draw, self.party)
+        if self.cover_frames is not None and self.ridge_texture is not None:
+            composite_terrain_texture(target, self.cover_frames, self.ridge_texture, self.covers)
+        else:
+            draw_ground_and_covers(target, self.covers)
         self.photo = ImageTk.PhotoImage(target, master=self.canvas)
         self.canvas.delete("wanderers")
         self.canvas.create_image(0, 0, image=self.photo, anchor=tk.NW, tags=("wanderers",))
@@ -443,6 +524,9 @@ class RobotArm3DV3View(RobotArm3DV2View):
     def mount(self, canvas: tk.Canvas) -> None:
         super().mount(canvas)
         self.wanderer_display = TinyWandererDisplay(canvas.winfo_toplevel())
+
+    def _exploration_target(self) -> tuple[float, float]:
+        return v3_exploration_target(self.rng, self.width)
 
     def tick(self, pointer_x: int, pointer_y: int, window_x: int, window_y: int) -> None:
         """Let an alarmed arm pursue the party until it reaches cover."""

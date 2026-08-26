@@ -1,4 +1,6 @@
 import unittest
+import random
+from pathlib import Path
 
 from PIL import Image, ImageDraw
 
@@ -8,6 +10,7 @@ from engram_overlay.overlays.robot_arm_3d_v3 import (
     RobotArm3DV3View,
     WandererParty,
     absolute_tk_geometry,
+    atlas_frames,
     advance_party,
     draw_ground_and_covers,
     draw_party,
@@ -15,6 +18,7 @@ from engram_overlay.overlays.robot_arm_3d_v3 import (
     opposite_corner_origin,
     scene_layout,
     terrain_ridge_points,
+    v3_exploration_target,
     walking_limb_pose,
 )
 from engram_overlay.registry import OVERLAYS, overlay_ids
@@ -45,6 +49,15 @@ class RobotArm3DV3Tests(unittest.TestCase):
         self.assertEqual(len(first.left_leg), 3)
         self.assertNotEqual(first.left_leg[-1], quarter.left_leg[-1])
         self.assertLess(quarter.left_arm[-1][0], quarter.right_arm[-1][0])
+
+    def test_v3_idle_exploration_uses_more_of_the_canvas(self) -> None:
+        points = [v3_exploration_target(random.Random(seed), 420.0) for seed in range(100)]
+        xs = [point[0] for point in points]
+        ys = [point[1] for point in points]
+        self.assertLess(min(xs), 58.0)
+        self.assertGreater(max(xs), 362.0)
+        self.assertLess(min(ys), 230.0)
+        self.assertGreater(max(ys), 322.0)
 
     def test_seen_party_evades_toward_nearest_cover_then_hides(self) -> None:
         covers = (Cover(50.0, 100.0, 20.0), Cover(180.0, 100.0, 20.0))
@@ -89,6 +102,17 @@ class RobotArm3DV3Tests(unittest.TestCase):
         self.assertIsNone(view.wanderer_display)
         self.assertFalse(view.party_tracking_active)
         self.assertFalse(view.eye_emission_enabled)
+
+    def test_generated_silhouette_texture_atlases_are_packaged(self) -> None:
+        asset_dir = Path(__file__).parents[1] / "src" / "engram_overlay" / "overlays" / "assets" / "robot_arm_3d_v3"
+        travelers = Image.open(asset_dir / "traveler-walk-atlas.png").convert("RGBA")
+        covers = Image.open(asset_dir / "terrain-cover-atlas.png").convert("RGBA")
+        ridge = Image.open(asset_dir / "terrain-ridge.png").convert("RGBA")
+        frames = atlas_frames(travelers, 4, 3)
+        self.assertEqual((len(frames), len(frames[0])), (3, 4))
+        self.assertTrue(all(frame.getbbox() is not None for row in frames for frame in row))
+        self.assertIsNotNone(covers.getbbox())
+        self.assertIsNotNone(ridge.getbbox())
 
     def test_party_detection_forces_alarm_tracking_then_restores_idle(self) -> None:
         class FakeDisplay:
