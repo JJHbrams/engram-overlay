@@ -16,7 +16,7 @@ from ..backends.tk import TkOverlayHost
 from ..protocol import JsonlTransport
 from ..scene3d import Camera, Face3D, ProjectedPoint, Vec3, box_faces, lit_face_color, point_along, sphere_faces, tapered_prism_faces
 from ..software_uv import TexturedFace3D, UVTextureAtlas, atlas_cell_uv, rasterize_texture_quad, rasterize_textured_face, textured_prism_faces
-from .robot_arm import eyelid_polygon_points
+from .robot_arm import eyelid_polygon_points, tracked_gaze
 from .robot_arm_3d import TRANSPARENT, RobotArm3DView, cable_hardware_faces, first_link_accessory_faces, visible_eyelid_offsets
 
 PLAIN_CABLE = "#0c0d0f"
@@ -294,8 +294,11 @@ def render_expression_layers(view: RobotArm3DView, size: int = 72) -> tuple[Imag
         outline="#334155",
         width=3,
     )
-    gaze_x = view.expression_gaze[0] + view.mouse_gaze[0]
-    gaze_y = view.expression_gaze[1] + view.mouse_gaze[1]
+    if getattr(view, "pointer_tracking_active", False):
+        gaze_x, gaze_y = view.mouse_gaze
+    else:
+        gaze_x = view.expression_gaze[0] + view.mouse_gaze[0]
+        gaze_y = view.expression_gaze[1] + view.mouse_gaze[1]
     center_x = size * 0.5 + gaze_x * 0.9
     center_y = size * 0.5 + gaze_y * 0.9
     pulse = (math.sin(view.pulse_phase) + 1.0) * 0.5
@@ -385,8 +388,13 @@ def eye_emission_projection(
     up = (aperture[3] - aperture[0]).normalized(Vec3(0.0, 1.0, 0.0))
     rear_normal = side.cross(up).normalized(Vec3(0.0, 0.0, 1.0))
     forward = rear_normal * -1.0
-    gaze_x = min(max(view.expression_gaze[0] + view.mouse_gaze[0], -7.0), 7.0)
-    gaze_y = min(max(view.expression_gaze[1] + view.mouse_gaze[1], -5.0), 5.0)
+    if getattr(view, "pointer_tracking_active", False):
+        gaze_x, gaze_y = view.mouse_gaze
+    else:
+        gaze_x = view.expression_gaze[0] + view.mouse_gaze[0]
+        gaze_y = view.expression_gaze[1] + view.mouse_gaze[1]
+    gaze_x = min(max(gaze_x, -7.0), 7.0)
+    gaze_y = min(max(gaze_y, -5.0), 5.0)
     direction = (
         forward
         + side * (gaze_x / 7.0 * 0.38)
@@ -413,6 +421,31 @@ def display_bounds_for_window(window: tk.Misc) -> tuple[int, int, int, int] | No
             return None
         rect = info.rcMonitor
         return rect.left, rect.top, rect.right, rect.bottom
+    finally:
+        _pop_dpi_context(previous_context)
+
+
+def pointer_position_in_canvas(canvas: tk.Canvas) -> tuple[float, float]:
+    """Read the physical cursor and map it into the canvas coordinate space."""
+    if sys.platform != "win32":
+        pointer_x, pointer_y = canvas.winfo_pointerxy()
+        return pointer_x - canvas.winfo_rootx(), pointer_y - canvas.winfo_rooty()
+    logical_width = max(canvas.winfo_width(), 1)
+    logical_height = max(canvas.winfo_height(), 1)
+    hwnd = canvas.winfo_id()
+    point = wintypes.POINT()
+    rect = wintypes.RECT()
+    previous_context = _push_physical_dpi_context()
+    try:
+        user32 = ctypes.windll.user32
+        if not user32.GetCursorPos(ctypes.byref(point)) or not user32.ScreenToClient(hwnd, ctypes.byref(point)):
+            pointer_x, pointer_y = canvas.winfo_pointerxy()
+            return pointer_x - canvas.winfo_rootx(), pointer_y - canvas.winfo_rooty()
+        if not user32.GetClientRect(hwnd, ctypes.byref(rect)):
+            return float(point.x), float(point.y)
+        client_width = max(rect.right - rect.left, 1)
+        client_height = max(rect.bottom - rect.top, 1)
+        return point.x * logical_width / client_width, point.y * logical_height / client_height
     finally:
         _pop_dpi_context(previous_context)
 
@@ -684,6 +717,7 @@ class RobotArm3DV2View(RobotArm3DView):
         self.surface_photo: ImageTk.PhotoImage | None = None
         self.expression_plane: ExpressionPlaneLayers | None = None
         self.emission_display: EyeEmissionDisplay | None = None
+        self.pointer_tracking_active = False
 
     def mount(self, canvas: tk.Canvas) -> None:
         atlas_path = Path(__file__).parent / "assets" / "robot_arm_3d_v2" / "robot-uv-atlas-v2.png"
@@ -713,14 +747,24 @@ class RobotArm3DV2View(RobotArm3DView):
         if self.canvas is None or self.surface_image is None:
             return
         if self.expression_plane is not None:
+            start, end = eye_emission_projection(self, self.expression_plane, self.camera)
+            emission_end = (end.x, end.y)
+            self.pointer_tracking_active = not self.explorer_active
+            if self.pointer_tracking_active:
+                pointer_local = pointer_position_in_canvas(self.canvas)
+                desired_gaze = tracked_gaze(pointer_local, (start.x, start.y), max_x=7.0, max_y=5.0)
+                self.mouse_gaze = (
+                    self.mouse_gaze[0] + (desired_gaze[0] - self.mouse_gaze[0]) * 0.28,
+                    self.mouse_gaze[1] + (desired_gaze[1] - self.mouse_gaze[1]) * 0.28,
+                )
+                emission_end = pointer_local
             if self.eye_emission_enabled:
                 render_eye_emission(self.surface_image, self, self.expression_plane, self.camera)
                 if self.emission_display is not None:
-                    start, end = eye_emission_projection(self, self.expression_plane, self.camera)
                     self.emission_display.update(
                         self.canvas,
                         (start.x, start.y),
-                        (end.x, end.y),
+                        emission_end,
                         self.expression.color,
                         (math.sin(self.pulse_phase) + 1.0) * 0.5,
                     )

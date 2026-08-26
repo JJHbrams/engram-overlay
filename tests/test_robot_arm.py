@@ -136,6 +136,10 @@ class RobotArmTests(unittest.TestCase):
         far_gaze = tracked_gaze((1000.0, 1000.0), (0.0, 0.0), (3.0, 2.0))
         self.assertLessEqual((far_gaze[0] / 8.0) ** 2 + (far_gaze[1] / 6.0) ** 2, 1.0 + 1e-9)
 
+    def test_mouse_gaze_preserves_pointer_direction_inside_ellipse(self) -> None:
+        gaze = tracked_gaze((240.0, 120.0), (0.0, 0.0), max_x=8.0, max_y=6.0)
+        self.assertAlmostEqual(gaze[1] / gaze[0], 0.5)
+
     def test_shell_geometry_rotates_with_links(self) -> None:
         shell = link_shell_points(
             (0.0, 0.0),
