@@ -70,7 +70,7 @@ def main() -> int:
 
     args.user_config.parent.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    backup = args.user_config.with_name(f"{args.user_config.name}.bak-xeyes-{timestamp}")
+    backup = args.user_config.with_name(f"{args.user_config.name}.bak-{renderer.id}-{timestamp}")
     if args.user_config.exists():
         shutil.copy2(args.user_config, backup)
 

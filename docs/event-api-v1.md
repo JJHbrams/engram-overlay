@@ -65,8 +65,13 @@ Engram의 번들 창 위치를 바꾸거나 저장하지 않는다. `replace`는
 | `left_click` | 없음 | Engram 채팅 열기/닫기 |
 | `right_click` | `screen_x`, `screen_y` | Engram 공통 메뉴 |
 | `pointer_enter` / `pointer_leave` | 없음 | hover 상태 |
-| `drag_move` / `drag_end` | `screen_x`, `screen_y` | replace에서 Engram 소유 위치 갱신; observer는 로컬 이동 후 geometry 재보고 |
+| `drag_move` / `drag_end` | `screen_x`, `screen_y` | 창 좌상단 좌표. replace는 Engram 소유 위치 갱신, observer는 로컬 이동 후 geometry 재보고 |
 | `drag_begin` | 없음 | v1 예약/no-op |
+
+`drag_move`와 `drag_end`의 필드명은 `screen_x`, `screen_y`지만 커서 좌표가 아니다.
+드래그 시작 시의 커서-창 오프셋을 유지해 계산한 **창 좌상단의 절대 화면 좌표**를 보낸다.
+커서 좌표를 그대로 보내면 Engram의 `overlay.set_position` 응답이 창을 커서 위치로 되돌려
+오프셋과 플리커가 발생한다.
 
 ## Manifest
 
@@ -88,4 +93,3 @@ supported_modes: [observer, replace]
 v1은 `metadata_only`다. 사용자 입력, 모델 응답과 thinking 원문, 도구 입력·출력,
 파일 경로, 메모리 본문을 renderer에 전달하지 않는다. hello timeout, 잘못된 JSONL,
 쓰기 실패, child 종료가 발생하면 Engram은 번들 renderer를 유지하거나 복구한다.
-

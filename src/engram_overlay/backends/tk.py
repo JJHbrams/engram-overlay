@@ -125,9 +125,11 @@ class TkOverlayHost:
     def _drag_move(self, event: tk.Event) -> None:
         if self._drag_origin is None:
             return
-        start_x, start_y, window_x, window_y = self._drag_origin
-        self.root.geometry(f"+{window_x + event.x_root - start_x}+{window_y + event.y_root - start_y}")
-        self._send_pointer("drag_move", x=event.x_root, y=event.y_root)
+        target_x, target_y = self._drag_target(event)
+        self.root.geometry(f"+{target_x}+{target_y}")
+        # Event API v1 calls these fields screen_x/screen_y, but Engram treats
+        # them as the requested window top-left, not the current pointer.
+        self._send_pointer("drag_move", x=target_x, y=target_y)
 
     def _drag_end(self, event: tk.Event) -> None:
         if self._drag_origin is None:
@@ -136,11 +138,19 @@ class TkOverlayHost:
             start_x, start_y, _, _ = self._drag_origin
             moved = abs(event.x_root - start_x) + abs(event.y_root - start_y) > 4
             if moved:
-                self._send_pointer("drag_end", x=event.x_root, y=event.y_root)
+                target_x, target_y = self._drag_target(event)
+                self.root.geometry(f"+{target_x}+{target_y}")
+                self._send_pointer("drag_end", x=target_x, y=target_y)
                 self._send_geometry()
             else:
                 self._send_pointer("left_click")
         self._drag_origin = None
+
+    def _drag_target(self, event: tk.Event) -> tuple[int, int]:
+        if self._drag_origin is None:
+            raise RuntimeError("drag target requested without an active drag")
+        start_x, start_y, window_x, window_y = self._drag_origin
+        return window_x + event.x_root - start_x, window_y + event.y_root - start_y
 
     def _right_click(self, event: tk.Event) -> None:
         self._send_pointer("right_click", x=event.x_root, y=event.y_root)

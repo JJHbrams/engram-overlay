@@ -12,12 +12,13 @@ from pathlib import Path
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--overlay", default="xeyes")
     parser.add_argument("--seconds", type=float, default=8.0)
     args = parser.parse_args()
     repository = Path(__file__).resolve().parents[1]
     launcher = repository / ".venv" / "Scripts" / "engram-custom-overlay.exe"
     child = subprocess.Popen(
-        [str(launcher), "--overlay", "xeyes", "--mode", "replace"],
+        [str(launcher), "--overlay", args.overlay, "--mode", "replace"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -39,7 +40,13 @@ def main() -> int:
         for message in messages:
             child.stdin.write(json.dumps(message, separators=(",", ":")) + "\n")
         child.stdin.flush()
-        time.sleep(args.seconds)
+        deadline = time.monotonic() + args.seconds
+        while time.monotonic() < deadline:
+            return_code = child.poll()
+            if return_code is not None:
+                assert child.stderr is not None
+                raise RuntimeError(f"overlay exited early ({return_code}): {child.stderr.read().strip()}")
+            time.sleep(0.05)
     finally:
         child.terminate()
         try:
