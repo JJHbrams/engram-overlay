@@ -31,10 +31,6 @@ from .robot_arm import (
 )
 
 TRANSPARENT = "#010203"
-MIN_JOINT_BEND_DEGREES = 15.0
-MAX_JOINT_BEND_DEGREES = 168.0
-MIN_CEILING_CLEARANCE = 16.0
-MIN_NONADJACENT_LINK_CLEARANCE = 28.0
 
 
 def z_seed_3d(base: Vec3, target: Vec3, lengths: Sequence[float]) -> list[Vec3]:
@@ -133,120 +129,10 @@ def target_from_pointer(
     camera: Camera,
     depth: float,
 ) -> Vec3:
-    """Unproject a pointer into the arched, collision-aware screen workspace."""
+    """Unproject a pointer onto an independently selected camera-depth plane."""
     clamped_x = min(max(pointer_x, 55.0), width - 55.0)
-    clamped_y = min(max(pointer_y, upper_workspace_y(clamped_x, width)), min(height - 80.0, 350.0))
+    clamped_y = min(max(pointer_y, 220.0), min(height - 80.0, 350.0))
     return camera.unproject(clamped_x, clamped_y, depth)
-
-
-def upper_workspace_y(pointer_x: float, width: float) -> float:
-    """Return the highest safe screen Y, using depth freedom near the sides."""
-    half_span = max(width * 0.5 - 55.0, 1.0)
-    horizontal = min(abs(pointer_x - width * 0.5) / half_span, 1.0)
-    return 185.0 - 70.0 * horizontal**0.75
-
-
-def segment_distance(start_a: Vec3, end_a: Vec3, start_b: Vec3, end_b: Vec3) -> float:
-    """Return the shortest distance between two finite 3D segments."""
-    axis_a = end_a - start_a
-    axis_b = end_b - start_b
-    offset = start_a - start_b
-    aa = axis_a.dot(axis_a)
-    ab = axis_a.dot(axis_b)
-    bb = axis_b.dot(axis_b)
-    ao = axis_a.dot(offset)
-    bo = axis_b.dot(offset)
-    denominator = aa * bb - ab * ab
-    if denominator <= 1e-9:
-        along_a = 0.0
-        along_b = min(max(bo / max(bb, 1e-9), 0.0), 1.0)
-    else:
-        along_a = min(max((ab * bo - bb * ao) / denominator, 0.0), 1.0)
-        along_b = min(max((aa * bo - ab * ao) / denominator, 0.0), 1.0)
-        along_a = min(max((ab * along_b - ao) / max(aa, 1e-9), 0.0), 1.0)
-        along_b = min(max((ab * along_a + bo) / max(bb, 1e-9), 0.0), 1.0)
-    return (start_a + axis_a * along_a - start_b - axis_b * along_b).length
-
-
-def posture_clearances(points: Sequence[Vec3]) -> tuple[float, float, float, float]:
-    """Measure bend and physical clearances for one three-link posture."""
-    if len(points) != 4:
-        raise ValueError("four joint points are required")
-    bends = []
-    for index in (1, 2):
-        incoming = (points[index] - points[index - 1]).normalized()
-        outgoing = (points[index + 1] - points[index]).normalized()
-        bends.append(math.degrees(math.acos(min(max(incoming.dot(outgoing), -1.0), 1.0))))
-    ceiling_clearance = min(point.y - points[0].y for point in points[1:])
-    link_clearance = segment_distance(points[0], points[1], points[2], points[3])
-    return min(bends), max(bends), ceiling_clearance, link_clearance
-
-
-def solve_clearance_posture_3d(
-    base: Vec3,
-    target: Vec3,
-    lengths: Sequence[float],
-    *,
-    camera: Camera,
-    pointer_y: float,
-    elbow_hint: Vec3,
-    wrist_hint: Vec3,
-    previous: Sequence[Vec3] | None = None,
-) -> list[Vec3]:
-    """Choose a continuous Z posture that reserves bend and shell clearance."""
-    screen_down = camera.world_space(Vec3(0.0, 1.0, 0.0)).normalized(Vec3(0.0, 1.0, 0.0))
-    nominal_weight = 1.5 + max(185.0 - pointer_y, 0.0) * 0.025
-    weights = (
-        max(0.6, nominal_weight - 0.8),
-        max(0.8, nominal_weight - 0.4),
-        nominal_weight,
-        nominal_weight + 0.5,
-        nominal_weight + 1.0,
-    )
-    candidates: list[tuple[bool, float, list[Vec3]]] = []
-    if previous is not None and len(previous) == 4:
-        carried = solve_three_link_3d(base, target, lengths, seed=previous)
-        minimum_bend, maximum_bend, ceiling_clearance, link_clearance = posture_clearances(carried)
-        carried_safe = (
-            minimum_bend >= MIN_JOINT_BEND_DEGREES
-            and maximum_bend <= MAX_JOINT_BEND_DEGREES
-            and ceiling_clearance >= MIN_CEILING_CLEARANCE
-            and link_clearance >= MIN_NONADJACENT_LINK_CLEARANCE
-        )
-        carried_continuity = sum(
-            (point - prior).length**2 for point, prior in zip(carried[1:3], previous[1:3], strict=True)
-        )
-        candidates.append((carried_safe, carried_continuity, carried))
-    for weight in weights:
-        lowered_elbow = (elbow_hint + screen_down * weight).normalized(screen_down)
-        lowered_wrist = (wrist_hint + screen_down * weight).normalized(screen_down)
-        for tool_angle in (10.0, 16.0, 24.0, 32.0, 40.0, 50.0):
-            points = solve_z_posture_3d(
-                base,
-                target,
-                lengths,
-                elbow_hint=lowered_elbow,
-                wrist_hint=lowered_wrist,
-                tool_angle=math.radians(tool_angle),
-            )
-            minimum_bend, maximum_bend, ceiling_clearance, link_clearance = posture_clearances(points)
-            bend_violation = max(MIN_JOINT_BEND_DEGREES - minimum_bend, 0.0) + max(
-                maximum_bend - MAX_JOINT_BEND_DEGREES,
-                0.0,
-            )
-            clearance_violation = max(MIN_CEILING_CLEARANCE - ceiling_clearance, 0.0) + max(
-                MIN_NONADJACENT_LINK_CLEARANCE - link_clearance,
-                0.0,
-            )
-            safe = bend_violation <= 1e-9 and clearance_violation <= 1e-9
-            continuity = 0.0
-            if previous is not None and len(previous) == 4:
-                continuity = sum((point - prior).length**2 for point, prior in zip(points[1:3], previous[1:3], strict=True))
-            preference = abs(tool_angle - 24.0) * 0.8 + abs(weight - nominal_weight) * 5.0
-            violation = (bend_violation * 40.0 + clearance_violation * 12.0) ** 2
-            candidates.append((safe, continuity + preference + violation, points))
-    safe_candidates = [candidate for candidate in candidates if candidate[0]]
-    return min(safe_candidates or candidates, key=lambda candidate: candidate[1])[2]
 
 
 def continuous_posture_hints(pointer_x: float, width: float, camera: Camera) -> tuple[Vec3, Vec3]:
@@ -319,6 +205,26 @@ def constrain_target_reach(base: Vec3, target: Vec3, lengths: Sequence[float], *
     if offset.length <= maximum_distance:
         return target
     return base + offset.normalized() * maximum_distance
+
+
+def critically_damped_target(
+    current: Vec3,
+    velocity: Vec3,
+    desired: Vec3,
+    *,
+    frequency: float = 2.2,
+    timestep: float = 1.0 / 60.0,
+) -> tuple[Vec3, Vec3]:
+    """Advance a no-overshoot second-order target controller."""
+    if frequency <= 0.0 or timestep <= 0.0:
+        raise ValueError("frequency and timestep must be positive")
+    angular_frequency = math.tau * frequency
+    decay = math.exp(-angular_frequency * timestep)
+    error = current - desired
+    temporary = (velocity + error * angular_frequency) * timestep
+    next_target = desired + (error + temporary) * decay
+    next_velocity = (velocity - temporary * angular_frequency) * decay
+    return next_target, next_velocity
 
 
 def quadratic_curve(start: Vec3, control: Vec3, end: Vec3, *, steps: int = 6) -> list[Vec3]:
@@ -507,6 +413,7 @@ class RobotArm3DView:
             ),
             self.lengths,
         )
+        self.target_velocity = Vec3(0.0, 0.0, 0.0)
         self.elbow_hint, self.wrist_hint = continuous_posture_hints(self.width * 0.5, self.width, self.camera)
         self.joints = solve_z_posture_3d(
             self.base,
@@ -614,21 +521,21 @@ class RobotArm3DView:
             ),
             self.lengths,
         )
-        target_smoothing = 0.11
-        self.target = self.target + (desired_target - self.target) * target_smoothing
+        self.target, self.target_velocity = critically_damped_target(
+            self.target,
+            self.target_velocity,
+            desired_target,
+        )
         projected_goal = self.camera.project(desired_target)
         desired_elbow, desired_wrist = continuous_posture_hints(motion_pointer[0], self.width, self.camera)
         self.elbow_hint = (self.elbow_hint * 0.89 + desired_elbow * 0.11).normalized(desired_elbow)
         self.wrist_hint = (self.wrist_hint * 0.89 + desired_wrist * 0.11).normalized(desired_wrist)
-        self.joints = solve_clearance_posture_3d(
+        self.joints = solve_z_posture_3d(
             self.base,
             self.target,
             self.lengths,
-            camera=self.camera,
-            pointer_y=projected_goal.y,
             elbow_hint=self.elbow_hint,
             wrist_hint=self.wrist_hint,
-            previous=self.joints,
         )
 
         projected_eye = self.camera.project(self.joints[-1])
