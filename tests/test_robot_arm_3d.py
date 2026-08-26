@@ -3,6 +3,10 @@ import random
 import unittest
 
 from engram_overlay.overlays.robot_arm_3d import (
+    MAX_JOINT_BEND_DEGREES,
+    MIN_CEILING_CLEARANCE,
+    MIN_JOINT_BEND_DEGREES,
+    MIN_NONADJACENT_LINK_CLEARANCE,
     RobotArm3DView,
     aperture_segments,
     cable_decoration_paths,
@@ -20,9 +24,13 @@ from engram_overlay.overlays.robot_arm_3d import (
     first_link_hub_center,
     first_link_service_path,
     quadratic_curve,
+    posture_clearances,
+    segment_distance,
+    solve_clearance_posture_3d,
     solve_three_link_3d,
     solve_z_posture_3d,
     target_from_pointer,
+    upper_workspace_y,
     visible_eyelid_offsets,
 )
 from engram_overlay.registry import OVERLAYS, overlay_ids
@@ -109,6 +117,50 @@ class RobotArm3DTests(unittest.TestCase):
         near_scale = camera.project(camera.unproject(180.0, 300.0, -30.0)).scale
         far_scale = camera.project(camera.unproject(180.0, 300.0, 30.0)).scale
         self.assertLess(near_scale / far_scale, 1.11)
+
+    def test_upper_workspace_expands_into_an_arched_cspace(self) -> None:
+        camera = Camera(180.0, 190.0, yaw=-0.38, pitch=-0.10, focal_length=650.0)
+        center = camera.project(target_from_pointer(180.0, 0.0, 360.0, 430.0, camera=camera, depth=0.0))
+        left = camera.project(target_from_pointer(55.0, 0.0, 360.0, 430.0, camera=camera, depth=0.0))
+        right = camera.project(target_from_pointer(305.0, 0.0, 360.0, 430.0, camera=camera, depth=0.0))
+        self.assertAlmostEqual(center.y, 185.0)
+        self.assertAlmostEqual(left.y, 115.0)
+        self.assertAlmostEqual(right.y, 115.0)
+        self.assertLess(upper_workspace_y(55.0, 360.0), upper_workspace_y(180.0, 360.0))
+
+    def test_clearance_solver_reserves_bend_ceiling_and_link_space(self) -> None:
+        view = RobotArm3DView()
+        for pointer_x in (55.0, 115.0, 180.0, 245.0, 305.0):
+            pointer_y = upper_workspace_y(pointer_x, view.width)
+            for depth in (-30.0, 0.0, 30.0):
+                target = constrain_target_reach(
+                    view.base,
+                    target_from_pointer(
+                        pointer_x,
+                        pointer_y,
+                        view.width,
+                        view.height,
+                        camera=view.camera,
+                        depth=depth,
+                    ),
+                    view.lengths,
+                )
+                elbow_hint, wrist_hint = continuous_posture_hints(pointer_x, view.width, view.camera)
+                points = solve_clearance_posture_3d(
+                    view.base,
+                    target,
+                    view.lengths,
+                    camera=view.camera,
+                    pointer_y=pointer_y,
+                    elbow_hint=elbow_hint,
+                    wrist_hint=wrist_hint,
+                )
+                minimum_bend, maximum_bend, ceiling_clearance, link_clearance = posture_clearances(points)
+                self.assertGreaterEqual(minimum_bend, MIN_JOINT_BEND_DEGREES)
+                self.assertLessEqual(maximum_bend, MAX_JOINT_BEND_DEGREES)
+                self.assertGreaterEqual(ceiling_clearance, MIN_CEILING_CLEARANCE)
+                self.assertGreaterEqual(link_clearance, MIN_NONADJACENT_LINK_CLEARANCE)
+        self.assertAlmostEqual(segment_distance(Vec3(0, 0, 0), Vec3(10, 0, 0), Vec3(5, -5, 0), Vec3(5, 5, 0)), 0.0)
 
     def test_reach_constraint_avoids_a_fully_straight_configuration(self) -> None:
         view = RobotArm3DView()
