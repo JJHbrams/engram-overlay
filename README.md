@@ -24,6 +24,8 @@ Engram의 External Overlay Event API v1을 사용하는 독립 커스텀 오버�
 
 세부 계약은 [Event API v1](docs/event-api-v1.md), 프로젝트 구조는
 [Overlay 구현 계층](docs/architecture.md), 개발 순서는 [개발 가이드](docs/development.md)를 참고한다.
+LLM으로 개인 overlay를 만들 때는 [LLM authoring guide](docs/llm-overlay-authoring.md)와
+프로젝트의 `create-engram-overlay` skill을 사용한다.
 
 ## 포함된 overlay
 
