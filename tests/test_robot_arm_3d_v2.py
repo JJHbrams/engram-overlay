@@ -3,6 +3,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from engram_overlay.__main__ import build_parser
 from engram_overlay.overlays.robot_arm_3d_v2 import (
     RobotArm3DV2View,
     joint_point_texture_face,
@@ -31,6 +32,15 @@ class RobotArm3DV2Tests(unittest.TestCase):
         self.assertIn("robot-arm-3d-v2", overlay_ids())
         self.assertEqual(OVERLAYS["robot-arm-3d-v2"].backend, "tk-textured-software-3d")
         self.assertEqual(OVERLAYS["robot-arm-3d"].backend, "tk-software-3d")
+
+    def test_eye_emission_is_an_explicit_opt_in(self) -> None:
+        parser = build_parser()
+        default_args = parser.parse_args(("--overlay", "robot-arm-3d-v2"))
+        enabled_args = parser.parse_args(("--overlay", "robot-arm-3d-v2", "--eye-emission"))
+        self.assertFalse(default_args.eye_emission)
+        self.assertTrue(enabled_args.eye_emission)
+        self.assertFalse(RobotArm3DV2View().eye_emission_enabled)
+        self.assertTrue(RobotArm3DV2View(eye_emission_enabled=True).eye_emission_enabled)
 
     def test_uv_cells_are_padded_and_prism_faces_keep_complete_uvs(self) -> None:
         uvs = atlas_cell_uv(2, 1)

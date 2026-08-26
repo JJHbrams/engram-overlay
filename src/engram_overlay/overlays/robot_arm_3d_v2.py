@@ -403,8 +403,9 @@ class RobotArm3DV2View(RobotArm3DView):
 
     DRAW_VECTOR_EYE = False
 
-    def __init__(self) -> None:
+    def __init__(self, *, eye_emission_enabled: bool = False) -> None:
         super().__init__()
+        self.eye_emission_enabled = eye_emission_enabled
         self.uv_atlas: UVTextureAtlas | None = None
         self.surface_image: Image.Image | None = None
         self.surface_photo: ImageTk.PhotoImage | None = None
@@ -436,7 +437,8 @@ class RobotArm3DV2View(RobotArm3DView):
         if self.canvas is None or self.surface_image is None:
             return
         if self.expression_plane is not None:
-            render_eye_emission(self.surface_image, self, self.expression_plane, self.camera)
+            if self.eye_emission_enabled:
+                render_eye_emission(self.surface_image, self, self.expression_plane, self.camera)
             for plane, texture in zip(self.expression_plane.ordered(), render_expression_layers(self), strict=True):
                 projected = tuple(self.camera.project(vertex) for vertex in plane)
                 rasterize_texture_quad(self.surface_image, texture, projected)
@@ -444,5 +446,15 @@ class RobotArm3DV2View(RobotArm3DView):
         self.canvas.create_image(0, 0, image=self.surface_photo, anchor=tk.NW, tags=("scene3d",))
 
 
-def create_robot_arm_3d_v2(transport: JsonlTransport, mode: str) -> TkOverlayHost:
-    return TkOverlayHost(transport, RobotArm3DV2View(), mode=mode, title="Engram 3D Robot Arm V2")
+def create_robot_arm_3d_v2(
+    transport: JsonlTransport,
+    mode: str,
+    *,
+    eye_emission: bool = False,
+) -> TkOverlayHost:
+    return TkOverlayHost(
+        transport,
+        RobotArm3DV2View(eye_emission_enabled=eye_emission),
+        mode=mode,
+        title="Engram 3D Robot Arm V2",
+    )

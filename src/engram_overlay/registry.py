@@ -18,7 +18,7 @@ class OverlayRunner(Protocol):
     def run(self) -> None: ...
 
 
-OverlayFactory = Callable[[JsonlTransport, str], OverlayRunner]
+OverlayFactory = Callable[..., OverlayRunner]
 
 
 @dataclass(frozen=True)
@@ -48,11 +48,21 @@ def overlay_ids() -> tuple[str, ...]:
     return tuple(sorted(OVERLAYS))
 
 
-def create_overlay(overlay_id: str, transport: JsonlTransport, mode: str) -> OverlayRunner:
+def create_overlay(
+    overlay_id: str,
+    transport: JsonlTransport,
+    mode: str,
+    *,
+    eye_emission: bool = False,
+) -> OverlayRunner:
     try:
         spec = OVERLAYS[overlay_id]
     except KeyError as exc:
         raise ValueError(f"unknown overlay: {overlay_id}") from exc
     module = importlib.import_module(spec.module)
     factory = cast(OverlayFactory, getattr(module, spec.factory))
+    if overlay_id == "robot-arm-3d-v2":
+        return factory(transport, mode, eye_emission=eye_emission)
+    if eye_emission:
+        raise ValueError("eye emission is only supported by robot-arm-3d-v2")
     return factory(transport, mode)
