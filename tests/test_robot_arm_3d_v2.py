@@ -7,12 +7,15 @@ from engram_overlay.__main__ import build_parser
 from engram_overlay.overlays.robot_arm_3d_v2 import (
     RobotArm3DV2View,
     joint_point_texture_face,
+    emission_cone_polygons,
+    eye_emission_projection,
     pod_axis,
     pod_attachment_point,
     pod_faces_and_expression_plane,
     render_expression_layers,
     render_expression_texture,
     render_eye_emission,
+    ray_to_display_edge,
     v2_surface_faces,
     visual_link_joints,
 )
@@ -159,6 +162,30 @@ class RobotArm3DV2Tests(unittest.TestCase):
         self.assertGreater(len(colored), 150)
         self.assertTrue(all(alpha == 255 for _red, _green, _blue, alpha in colored))
         self.assertTrue(any(red > blue for red, _green, blue, _alpha in colored))
+
+    def test_emission_cone_reaches_display_edge_with_nested_gradient(self) -> None:
+        edge = ray_to_display_edge((50.0, 50.0), (2.0, 1.0), 100.0, 100.0)
+        self.assertAlmostEqual(edge[0], 100.0)
+        self.assertAlmostEqual(edge[1], 75.0)
+        polygons = emission_cone_polygons((50.0, 50.0), edge, pulse=0.5)
+        self.assertEqual(len(polygons), 3)
+        self.assertTrue(all(len(polygon) == 8 for polygon in polygons))
+        self.assertGreater(abs(polygons[0][6] - polygons[0][4]), abs(polygons[2][6] - polygons[2][4]))
+
+    def test_eye_projection_changes_with_gaze(self) -> None:
+        view = RobotArm3DV2View(eye_emission_enabled=True)
+        camera = Camera(180.0, 190.0)
+        eye = Vec3(20.0, 105.0, 8.0)
+        wrist = Vec3(-30.0, 25.0, -12.0)
+        _, planes = pod_faces_and_expression_plane(camera, eye, wrist)
+        neutral_start, neutral_end = eye_emission_projection(view, planes, camera)
+        aperture_center = sum(planes.eyelid[1:], planes.eyelid[0]) * 0.25
+        projected_center = camera.project(aperture_center)
+        self.assertAlmostEqual(neutral_start.x, projected_center.x)
+        self.assertAlmostEqual(neutral_start.y, projected_center.y)
+        view.mouse_gaze = (7.0, 0.0)
+        _, right_end = eye_emission_projection(view, planes, camera)
+        self.assertGreater(abs(right_end.x - neutral_end.x), 1.0)
 
     def test_generated_uv_atlas_is_packaged(self) -> None:
         asset = (

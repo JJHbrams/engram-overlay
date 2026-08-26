@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import ctypes
 import math
+import sys
 import tkinter as tk
+from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,7 +17,7 @@ from ..protocol import JsonlTransport
 from ..scene3d import Camera, Face3D, ProjectedPoint, Vec3, box_faces, lit_face_color, point_along, sphere_faces, tapered_prism_faces
 from ..software_uv import TexturedFace3D, UVTextureAtlas, atlas_cell_uv, rasterize_texture_quad, rasterize_textured_face, textured_prism_faces
 from .robot_arm import eyelid_polygon_points
-from .robot_arm_3d import RobotArm3DView, cable_hardware_faces, first_link_accessory_faces, visible_eyelid_offsets
+from .robot_arm_3d import TRANSPARENT, RobotArm3DView, cable_hardware_faces, first_link_accessory_faces, visible_eyelid_offsets
 
 PLAIN_CABLE = "#0c0d0f"
 PLAIN_TECH = "#34302b"
@@ -26,6 +29,15 @@ EYE_IRIS_DEPTH = 2.4
 EYE_PUPIL_DEPTH = -2.2
 
 ExpressionQuad = tuple[Vec3, Vec3, Vec3, Vec3]
+
+
+class _MonitorInfo(ctypes.Structure):
+    _fields_ = (
+        ("cbSize", wintypes.DWORD),
+        ("rcMonitor", wintypes.RECT),
+        ("rcWork", wintypes.RECT),
+        ("dwFlags", wintypes.DWORD),
+    )
 
 
 @dataclass(frozen=True)
@@ -323,13 +335,12 @@ def render_expression_texture(view: RobotArm3DView, size: int = 72) -> Image.Ima
     return image
 
 
-def render_eye_emission(
-    target: Image.Image,
+def eye_emission_projection(
     view: RobotArm3DView,
     planes: ExpressionPlaneLayers,
     camera: Camera,
-) -> None:
-    """Emit a soft mood-colored bloom along the 3D eye gaze direction."""
+) -> tuple[ProjectedPoint, ProjectedPoint]:
+    """Project the eye source and its gaze-biased forward ray."""
     aperture = planes.eyelid
     center = sum(aperture[1:], aperture[0]) * 0.25
     side = (aperture[1] - aperture[0]).normalized(Vec3(1.0, 0.0, 0.0))
@@ -343,8 +354,196 @@ def render_eye_emission(
         + side * (gaze_x / 7.0 * 0.38)
         + up * (gaze_y / 5.0 * 0.30)
     ).normalized(forward)
-    start = camera.project(center + forward * 1.0)
-    end = camera.project(center + direction * 115.0)
+    return camera.project(center), camera.project(center + direction * 115.0)
+
+
+def display_bounds_for_point(point: tuple[float, float]) -> tuple[int, int, int, int] | None:
+    """Return the physical monitor containing a screen-space point on Windows."""
+    if sys.platform != "win32":
+        return None
+    user32 = ctypes.windll.user32
+    monitor_from_point = user32.MonitorFromPoint
+    monitor_from_point.argtypes = (wintypes.POINT, wintypes.DWORD)
+    monitor_from_point.restype = ctypes.c_void_p
+    monitor = monitor_from_point(wintypes.POINT(round(point[0]), round(point[1])), 2)
+    if not monitor:
+        return None
+    info = _MonitorInfo()
+    info.cbSize = ctypes.sizeof(_MonitorInfo)
+    if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+        return None
+    rect = info.rcMonitor
+    return rect.left, rect.top, rect.right, rect.bottom
+
+
+def ray_to_display_edge(
+    start: tuple[float, float],
+    direction: tuple[float, float],
+    width: float,
+    height: float,
+) -> tuple[float, float]:
+    """Intersect a positive screen ray with the first display boundary."""
+    start_x, start_y = start
+    direction_x, direction_y = direction
+    length = math.hypot(direction_x, direction_y)
+    if length <= 1e-6:
+        direction_x, direction_y, length = 0.0, 1.0, 1.0
+    direction_x /= length
+    direction_y /= length
+    candidates: list[float] = []
+    if direction_x > 1e-9:
+        candidates.append((width - start_x) / direction_x)
+    elif direction_x < -1e-9:
+        candidates.append((0.0 - start_x) / direction_x)
+    if direction_y > 1e-9:
+        candidates.append((height - start_y) / direction_y)
+    elif direction_y < -1e-9:
+        candidates.append((0.0 - start_y) / direction_y)
+    for distance in sorted(candidate for candidate in candidates if candidate >= 0.0):
+        point = start_x + direction_x * distance, start_y + direction_y * distance
+        if -1e-6 <= point[0] <= width + 1e-6 and -1e-6 <= point[1] <= height + 1e-6:
+            return point
+    return start
+
+
+def emission_cone_polygons(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    *,
+    pulse: float = 0.0,
+) -> tuple[tuple[float, ...], ...]:
+    """Build three nested field-of-view filters from the eye to screen edge."""
+    delta_x = end[0] - start[0]
+    delta_y = end[1] - start[1]
+    distance = max(math.hypot(delta_x, delta_y), 1.0)
+    perpendicular_x = -delta_y / distance
+    perpendicular_y = delta_x / distance
+    far_width = min(max(distance * 0.22, 70.0), 420.0)
+    near_width = 20.0 + pulse * 3.0
+    polygons = []
+    for scale in (1.0, 0.64, 0.34):
+        scaled_near = near_width * scale
+        scaled_far = far_width * scale
+        polygons.append(
+            (
+                start[0] + perpendicular_x * scaled_near,
+                start[1] + perpendicular_y * scaled_near,
+                start[0] - perpendicular_x * scaled_near,
+                start[1] - perpendicular_y * scaled_near,
+                end[0] - perpendicular_x * scaled_far,
+                end[1] - perpendicular_y * scaled_far,
+                end[0] + perpendicular_x * scaled_far,
+                end[1] + perpendicular_y * scaled_far,
+            )
+        )
+    return tuple(polygons)
+
+
+class EyeEmissionDisplay:
+    """Click-through display-sized stipple filter behind the robot window."""
+
+    def __init__(self, root: tk.Misc) -> None:
+        self.root = root
+        self.hwnd = 0
+        self.origin_x = root.winfo_vrootx()
+        self.origin_y = root.winfo_vrooty()
+        self.width = root.winfo_vrootwidth() or root.winfo_screenwidth()
+        self.height = root.winfo_vrootheight() or root.winfo_screenheight()
+        self.bounds = (self.origin_x, self.origin_y, self.origin_x + self.width, self.origin_y + self.height)
+        self.window = tk.Toplevel(root)
+        self.window.withdraw()
+        self.window.overrideredirect(True)
+        self.window.attributes("-topmost", True)
+        try:
+            self.window.attributes("-transparentcolor", TRANSPARENT)
+            self.window.attributes("-alpha", 0.14)
+        except tk.TclError:
+            pass
+        self.window.geometry(f"{self.width}x{self.height}{self.origin_x:+d}{self.origin_y:+d}")
+        self.canvas = tk.Canvas(
+            self.window,
+            width=self.width,
+            height=self.height,
+            highlightthickness=0,
+            borderwidth=0,
+            bg=TRANSPARENT,
+        )
+        self.canvas.pack(fill="both", expand=True)
+        self.window.deiconify()
+        self.window.update_idletasks()
+        self._make_click_through()
+        self._restore_overlay_stack()
+        self.frame = 0
+
+    def _restore_overlay_stack(self) -> None:
+        """Keep the filter above apps and the robot above the filter."""
+        if sys.platform == "win32" and self.hwnd:
+            user32 = ctypes.windll.user32
+            root_id = self.root.winfo_id()
+            root_hwnd = user32.GetParent(root_id) or root_id
+            flags = 0x0001 | 0x0002 | 0x0010
+            user32.SetWindowPos(self.hwnd, -1, 0, 0, 0, 0, flags)
+            user32.SetWindowPos(root_hwnd, -1, 0, 0, 0, 0, flags)
+            return
+        self.window.lift()
+        self.root.lift()
+
+    def _make_click_through(self) -> None:
+        if sys.platform != "win32":
+            return
+        user32 = ctypes.windll.user32
+        window_id = self.window.winfo_id()
+        parent_id = user32.GetParent(window_id)
+        hwnd = parent_id or window_id
+        self.hwnd = hwnd
+        extended_style = user32.GetWindowLongW(hwnd, -20)
+        user32.SetWindowLongW(hwnd, -20, extended_style | 0x00000020 | 0x00000080 | 0x08000000)
+
+    def update(
+        self,
+        source_screen: tuple[float, float],
+        direction: tuple[float, float],
+        color: str,
+        pulse: float,
+    ) -> None:
+        self.frame += 1
+        if self.frame % 2:
+            return
+        bounds = display_bounds_for_point(source_screen)
+        if bounds is not None and bounds != self.bounds:
+            self.bounds = bounds
+            self.origin_x, self.origin_y = bounds[0], bounds[1]
+            self.width, self.height = bounds[2] - bounds[0], bounds[3] - bounds[1]
+            self.window.geometry(f"{self.width}x{self.height}{self.origin_x:+d}{self.origin_y:+d}")
+            self.canvas.configure(width=self.width, height=self.height)
+        self._restore_overlay_stack()
+        start = source_screen[0] - self.origin_x, source_screen[1] - self.origin_y
+        end = ray_to_display_edge(start, direction, self.width, self.height)
+        polygons = emission_cone_polygons(start, end, pulse=pulse)
+        red, green, blue = ImageColor.getrgb(color)
+        colors = (
+            color,
+            "#" + "".join(f"{round(channel + (255 - channel) * 0.18):02x}" for channel in (red, green, blue)),
+            "#" + "".join(f"{round(channel + (255 - channel) * 0.42):02x}" for channel in (red, green, blue)),
+        )
+        self.canvas.delete("eye-emission-field")
+        for polygon, shade in zip(polygons, colors, strict=True):
+            self.canvas.create_polygon(
+                polygon,
+                fill=shade,
+                outline="",
+                tags=("eye-emission-field",),
+            )
+
+
+def render_eye_emission(
+    target: Image.Image,
+    view: RobotArm3DView,
+    planes: ExpressionPlaneLayers,
+    camera: Camera,
+) -> None:
+    """Emit a soft mood-colored bloom along the 3D eye gaze direction."""
+    start, end = eye_emission_projection(view, planes, camera)
     delta_x = end.x - start.x
     delta_y = end.y - start.y
     distance = math.hypot(delta_x, delta_y)
@@ -410,11 +609,14 @@ class RobotArm3DV2View(RobotArm3DView):
         self.surface_image: Image.Image | None = None
         self.surface_photo: ImageTk.PhotoImage | None = None
         self.expression_plane: ExpressionPlaneLayers | None = None
+        self.emission_display: EyeEmissionDisplay | None = None
 
     def mount(self, canvas: tk.Canvas) -> None:
         atlas_path = Path(__file__).parent / "assets" / "robot_arm_3d_v2" / "robot-uv-atlas-v2.png"
         self.uv_atlas = UVTextureAtlas(Image.open(atlas_path))
         super().mount(canvas)
+        if self.eye_emission_enabled:
+            self.emission_display = EyeEmissionDisplay(canvas.winfo_toplevel())
 
     def _scene_faces(self) -> list[Face3D]:
         faces, self.expression_plane = v2_surface_faces(self.base, self.joints, self.camera)
@@ -439,6 +641,14 @@ class RobotArm3DV2View(RobotArm3DView):
         if self.expression_plane is not None:
             if self.eye_emission_enabled:
                 render_eye_emission(self.surface_image, self, self.expression_plane, self.camera)
+                if self.emission_display is not None:
+                    start, end = eye_emission_projection(self, self.expression_plane, self.camera)
+                    self.emission_display.update(
+                        (self.canvas.winfo_rootx() + start.x, self.canvas.winfo_rooty() + start.y),
+                        (end.x - start.x, end.y - start.y),
+                        self.expression.color,
+                        (math.sin(self.pulse_phase) + 1.0) * 0.5,
+                    )
             for plane, texture in zip(self.expression_plane.ordered(), render_expression_layers(self), strict=True):
                 projected = tuple(self.camera.project(vertex) for vertex in plane)
                 rasterize_texture_quad(self.surface_image, texture, projected)
