@@ -5,11 +5,14 @@ from PIL import Image
 
 from engram_overlay.overlays.robot_arm_3d_v2 import (
     RobotArm3DV2View,
+    joint_point_texture_face,
     pod_axis,
+    pod_attachment_point,
     pod_faces_and_expression_plane,
     render_expression_layers,
     render_expression_texture,
     v2_surface_faces,
+    visual_link_joints,
 )
 from engram_overlay.registry import OVERLAYS, overlay_ids
 from engram_overlay.scene3d import Camera, ProjectedPoint, Vec3
@@ -61,15 +64,33 @@ class RobotArm3DV2Tests(unittest.TestCase):
         camera_depth = camera.world_space(Vec3(0.0, 0.0, 1.0)).normalized()
         self.assertGreater(pod_axis(camera, eye, wrist).dot(camera_depth), 0.85)
 
+    def test_terminal_link_attaches_to_rear_of_pod_not_aperture(self) -> None:
+        camera = Camera(180.0, 190.0)
+        wrist = Vec3(-30.0, 25.0, -12.0)
+        eye = Vec3(20.0, 105.0, 8.0)
+        joints = [Vec3(0.0, -138.0, 0.0), Vec3(45.0, -65.0, 20.0), wrist, eye]
+        attachment = pod_attachment_point(camera, eye, wrist)
+        rendered = visual_link_joints(joints, camera)
+        self.assertEqual(rendered[-1], attachment)
+        self.assertGreater((attachment - eye).length, 90.0)
+        self.assertEqual(joints[-1], eye)
+
     def test_v2_mesh_contains_stable_uv_faces_for_links_and_pod(self) -> None:
         camera = Camera(180.0, 190.0)
         base = Vec3(0.0, -138.0, 0.0)
         joints = [base, Vec3(45.0, -65.0, 20.0), Vec3(-30.0, 25.0, -12.0), Vec3(20.0, 105.0, 8.0)]
         faces, plane = v2_surface_faces(base, joints, camera)
         textured = [face for face in faces if isinstance(face, TexturedFace3D)]
-        self.assertGreater(len(textured), 60)
+        self.assertGreater(len(textured), 63)
         self.assertEqual(len(plane.ordered()), 4)
         self.assertTrue(all(len(face.vertices) == len(face.uvs) for face in textured))
+
+    def test_joint_point_textures_reuse_pod_atlas_style(self) -> None:
+        camera = Camera(180.0, 190.0)
+        end = Vec3(45.0, -65.0, 20.0)
+        joint_cap = joint_point_texture_face(end, camera, index=1)
+        self.assertEqual(joint_cap.uvs, atlas_cell_uv(1, 1))
+        self.assertEqual(len(joint_cap.vertices), 4)
 
     def test_perspective_rasterizer_paints_texture_pixels(self) -> None:
         source = Image.new("RGB", (16, 16), "#ff0000")

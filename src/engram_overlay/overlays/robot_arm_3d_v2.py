@@ -12,13 +12,15 @@ from PIL import Image, ImageDraw, ImageTk
 from ..backends.tk import TkOverlayHost
 from ..protocol import JsonlTransport
 from ..scene3d import Camera, Face3D, ProjectedPoint, Vec3, box_faces, lit_face_color, point_along, sphere_faces, tapered_prism_faces
-from ..software_uv import TexturedFace3D, UVTextureAtlas, rasterize_texture_quad, rasterize_textured_face, textured_prism_faces
+from ..software_uv import TexturedFace3D, UVTextureAtlas, atlas_cell_uv, rasterize_texture_quad, rasterize_textured_face, textured_prism_faces
 from .robot_arm import eyelid_polygon_points
 from .robot_arm_3d import RobotArm3DView, cable_hardware_faces, first_link_accessory_faces, visible_eyelid_offsets
 
 PLAIN_CABLE = "#0c0d0f"
 PLAIN_TECH = "#34302b"
 PLAIN_JOINT = "#25282c"
+POD_MIDDLE_DEPTH = 38.0
+POD_REAR_DEPTH = 94.0
 
 ExpressionQuad = tuple[Vec3, Vec3, Vec3, Vec3]
 
@@ -43,6 +45,39 @@ def pod_axis(camera: Camera, eye: Vec3, wrist: Vec3) -> Vec3:
     return (link_rear * 0.42 + camera_depth * 0.90).normalized(camera_depth)
 
 
+def pod_attachment_point(camera: Camera, eye: Vec3, wrist: Vec3) -> Vec3:
+    """Return the rear mechanical socket; the aperture remains at ``eye``."""
+    return eye + pod_axis(camera, eye, wrist) * POD_REAR_DEPTH
+
+
+def visual_link_joints(joints: list[Vec3], camera: Camera) -> list[Vec3]:
+    """Route only the rendered terminal link into the pod's rear socket."""
+    rendered = list(joints)
+    rendered[-1] = pod_attachment_point(camera, joints[-1], joints[-2])
+    return rendered
+
+
+def joint_point_texture_face(joint: Vec3, camera: Camera, *, index: int) -> TexturedFace3D:
+    """Map a circular atlas mechanism onto the camera-facing joint cap."""
+    camera_depth = camera.world_space(Vec3(0.0, 0.0, 1.0)).normalized()
+    camera_right = camera.world_space(Vec3(1.0, 0.0, 0.0)).normalized()
+    camera_up = camera.world_space(Vec3(0.0, 1.0, 0.0)).normalized()
+    center = joint - camera_depth * 15.2
+    radius = 14.2
+    joint_cells = ((3, 1), (1, 1), (3, 1))
+    return TexturedFace3D(
+        vertices=(
+            center - camera_right * radius - camera_up * radius,
+            center + camera_right * radius - camera_up * radius,
+            center + camera_right * radius + camera_up * radius,
+            center - camera_right * radius + camera_up * radius,
+        ),
+        color="#26292d",
+        outline="#111318",
+        uvs=atlas_cell_uv(*joint_cells[index % len(joint_cells)]),
+    )
+
+
 def pod_faces_and_expression_plane(
     camera: Camera,
     eye: Vec3,
@@ -53,8 +88,8 @@ def pod_faces_and_expression_plane(
     camera_right = camera.world_space(Vec3(1.0, 0.0, 0.0)).normalized()
     side = (camera_right - axis * camera_right.dot(axis)).normalized(Vec3(1.0, 0.0, 0.0))
     up = axis.cross(side).normalized(Vec3(0.0, -1.0, 0.0))
-    middle = eye + axis * 38.0
-    rear = eye + axis * 94.0
+    middle = eye + axis * POD_MIDDLE_DEPTH
+    rear = pod_attachment_point(camera, eye, wrist)
     faces = textured_prism_faces(
         eye,
         middle,
@@ -117,7 +152,8 @@ def v2_surface_faces(
         faces.extend(tapered_prism_faces(Vec3(root_x, -157.0, 0.0), base, start_radius=8.0, end_radius=10.0, color=PLAIN_CABLE))
 
     shell_widths = ((27.0, 22.0), (25.0, 20.0), (22.0, 17.0))
-    for index, (start, end) in enumerate(zip(joints[:-1], joints[1:], strict=True)):
+    rendered_joints = visual_link_joints(joints, camera)
+    for index, (start, end) in enumerate(zip(rendered_joints[:-1], rendered_joints[1:], strict=True)):
         faces.extend(
             textured_prism_faces(
                 start,
@@ -131,7 +167,7 @@ def v2_surface_faces(
             )
         )
         shell_start = point_along(start, end, 10.0)
-        shell_inset = 72.0 if index == 2 else 15.0
+        shell_inset = 12.0 if index == 2 else 15.0
         shell_end = point_along(end, start, shell_inset)
         start_width, end_width = shell_widths[index]
         texture_row = 1 if index == 2 else 0
@@ -140,10 +176,11 @@ def v2_surface_faces(
         # so the atlas reads as actual cladding rather than a thin dark line.
         shell_sections = ((0.0, 0.46), (0.54, 1.0))
         for section_index, (section_start, section_end) in enumerate(shell_sections):
-            section_cells = tuple(
-                ((column + section_index + index) % 4, texture_row)
-                for column in range(4)
-            )
+            section_cells = []
+            for column in range(4):
+                point_panel = index < 2 and section_index == 1 and column % 2 == index % 2
+                cell_row = 1 if point_panel else texture_row
+                section_cells.append(((column + section_index + index) % 4, cell_row))
             faces.extend(
                 textured_prism_faces(
                     shell_start + shell_axis * section_start,
@@ -151,7 +188,7 @@ def v2_surface_faces(
                     start_radius=start_width + (end_width - start_width) * section_start,
                     end_radius=start_width + (end_width - start_width) * section_end,
                     sides=4,
-                    side_cells=section_cells,
+                    side_cells=tuple(section_cells),
                     cap_cells=((0, 3), (2, 3)),
                     color="#d8d3c8" if index == 2 else "#181a1d",
                 )
@@ -161,10 +198,11 @@ def v2_surface_faces(
         depth = side.cross(axis).normalized(Vec3(0.0, 0.0, 1.0))
         for rail_sign in (-1.0, 1.0):
             rail_offset = side * (rail_sign * (start_width + 3.0)) + depth * 4.0
+            rail_inset = 10.0 if index == 2 else max(25.0, shell_inset)
             faces.extend(
                 tapered_prism_faces(
                     point_along(start, end, 18.0) + rail_offset,
-                    point_along(end, start, max(25.0, shell_inset)) + rail_offset * 0.72,
+                    point_along(end, start, rail_inset) + rail_offset * 0.72,
                     start_radius=3.4,
                     end_radius=2.8,
                     color=PLAIN_TECH,
@@ -178,6 +216,7 @@ def v2_surface_faces(
         faces.extend(sphere_faces(joint, 16.0, color=PLAIN_JOINT, rings=4, segments=10, z_scale=0.82))
         if index > 0:
             faces.extend(sphere_faces(joint + Vec3(0.0, 0.0, -1.5), 7.0, color="#7f1d1d", rings=3, segments=8))
+        faces.append(joint_point_texture_face(joint, camera, index=index))
     pod_faces, expression_plane = pod_faces_and_expression_plane(camera, joints[-1], joints[-2])
     faces.extend(pod_faces)
     return faces, expression_plane
