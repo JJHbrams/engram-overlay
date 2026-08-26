@@ -1,6 +1,6 @@
 schema_version: 1
 id: robot-arm-3d-v3
-name: Engram Watchful 3D Robot Arm V3
+name: CCTV
 command:
   - "C:/absolute/path/to/.venv/Scripts/engram-custom-overlay.exe"
   - "--overlay"

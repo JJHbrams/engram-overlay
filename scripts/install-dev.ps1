@@ -37,7 +37,7 @@ $overlayName = switch ($Overlay) {
     "robot-arm" { "Engram 3-Link Robot Arm" }
     "robot-arm-3d" { "Engram 3D Robot Arm" }
     "robot-arm-3d-v2" { "Engram Textured 3D Robot Arm V2" }
-    "robot-arm-3d-v3" { "Engram Watchful 3D Robot Arm V3" }
+    "robot-arm-3d-v3" { "CCTV" }
     default { "Engram XEyes" }
 }
 $eyeEmissionArg = if ($EyeEmission) { '  - "--eye-emission"' } else { $null }

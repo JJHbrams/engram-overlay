@@ -35,7 +35,7 @@ LLM으로 개인 overlay를 만들 때는 [LLM authoring guide](docs/llm-overlay
 | `robot-arm` | Tk | 천장 root에서 Z 자세로 내려오며 iris·LED·ambient 표정을 재생하는 단안 3-link arm |
 | `robot-arm-3d` | Tk software 3D | 고정 카메라에서 독립적인 XYZ 운동을 원근 투영·depth sort·면 조명으로 렌더링하는 단안 3-link arm |
 | `robot-arm-3d-v2` | Tk textured software 3D | 생성형 material atlas를 quad 세분 면에 샘플링하고 적층 외장·케이블 레일을 확장한 산업형 단안 arm |
-| `robot-arm-3d-v3` | Tk textured software 3D + 2D actors | V2 arm의 실제 gaze를 감지해 엄폐·엿보기·이동하는 작은 순례자 실루엣을 합성한 감시 장면 |
+| `robot-arm-3d-v3` (`CCTV`) | Tk textured software 3D + 2D actors | V2 arm의 실제 gaze를 감지해 엄폐·엿보기·이동하는 작은 순례자 실루엣을 합성한 감시 장면 |
 
 ## 설치와 릴리스
 

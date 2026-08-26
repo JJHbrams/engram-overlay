@@ -583,5 +583,5 @@ def create_robot_arm_3d_v3(
         transport,
         RobotArm3DV3View(eye_emission_enabled=eye_emission),
         mode=mode,
-        title="Engram 3D Robot Arm V3",
+        title="CCTV",
     )
