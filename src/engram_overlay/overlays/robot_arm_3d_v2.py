@@ -524,7 +524,6 @@ class EyeEmissionDisplay:
         self.window.update_idletasks()
         self._make_click_through()
         self._position_display(restore_stack=True)
-        self.frame = 0
 
     def _position_display(self, *, restore_stack: bool = False) -> None:
         """Anchor the filter without churning the robot window's z-order."""
@@ -571,9 +570,6 @@ class EyeEmissionDisplay:
         color: str,
         pulse: float,
     ) -> None:
-        self.frame += 1
-        if self.frame % 2:
-            return
         bounds = display_bounds_for_window(self.root)
         bounds_changed = bounds is not None and bounds != self.bounds
         if bounds_changed:
