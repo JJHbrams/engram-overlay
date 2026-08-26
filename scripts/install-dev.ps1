@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("xeyes", "robot-arm", "robot-arm-3d", "robot-arm-3d-v2")]
+    [ValidateSet("xeyes", "robot-arm", "robot-arm-3d", "robot-arm-3d-v2", "robot-arm-3d-v3")]
     [string]$Overlay = "xeyes",
     [ValidateSet("observer", "replace")]
     [string]$Mode = "replace"
@@ -33,6 +33,7 @@ $overlayName = switch ($Overlay) {
     "robot-arm" { "Engram 3-Link Robot Arm" }
     "robot-arm-3d" { "Engram 3D Robot Arm" }
     "robot-arm-3d-v2" { "Engram Textured 3D Robot Arm V2" }
+    "robot-arm-3d-v3" { "Engram Watchful 3D Robot Arm V3" }
     default { "Engram XEyes" }
 }
 $manifest = @"

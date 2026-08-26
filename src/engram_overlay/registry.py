@@ -40,6 +40,12 @@ OVERLAYS: dict[str, OverlaySpec] = {
         "engram_overlay.overlays.robot_arm_3d_v2",
         "create_robot_arm_3d_v2",
     ),
+    "robot-arm-3d-v3": OverlaySpec(
+        "robot-arm-3d-v3",
+        "tk-textured-software-3d",
+        "engram_overlay.overlays.robot_arm_3d_v3",
+        "create_robot_arm_3d_v3",
+    ),
     "xeyes": OverlaySpec("xeyes", "tk", "engram_overlay.overlays.xeyes", "create_xeyes"),
 }
 
@@ -61,8 +67,8 @@ def create_overlay(
         raise ValueError(f"unknown overlay: {overlay_id}") from exc
     module = importlib.import_module(spec.module)
     factory = cast(OverlayFactory, getattr(module, spec.factory))
-    if overlay_id == "robot-arm-3d-v2":
+    if overlay_id in {"robot-arm-3d-v2", "robot-arm-3d-v3"}:
         return factory(transport, mode, eye_emission=eye_emission)
     if eye_emission:
-        raise ValueError("eye emission is only supported by robot-arm-3d-v2")
+        raise ValueError("eye emission is only supported by robot-arm-3d-v2 and robot-arm-3d-v3")
     return factory(transport, mode)

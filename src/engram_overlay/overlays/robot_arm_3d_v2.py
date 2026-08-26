@@ -770,8 +770,12 @@ class RobotArm3DV2View(RobotArm3DView):
             for plane, texture in zip(self.expression_plane.ordered(), render_expression_layers(self), strict=True):
                 projected = tuple(self.camera.project(vertex) for vertex in plane)
                 rasterize_texture_quad(self.surface_image, texture, projected)
+        self._draw_surface_overlays()
         self.surface_photo = ImageTk.PhotoImage(self.surface_image, master=self.canvas)
         self.canvas.create_image(0, 0, image=self.surface_photo, anchor=tk.NW, tags=("scene3d",))
+
+    def _draw_surface_overlays(self) -> None:
+        """Allow variants to add cheap screen-space layers before Tk upload."""
 
 
 def create_robot_arm_3d_v2(
