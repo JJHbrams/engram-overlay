@@ -1,195 +1,141 @@
-"""Texture-mapped industrial variant of the ceiling-mounted 3D robot arm."""
+"""UV-textured low-poly industrial robot arm with a 3D expression plane."""
 
 from __future__ import annotations
 
 import math
 import tkinter as tk
-from collections import deque
-from dataclasses import dataclass
 from pathlib import Path
 
-from PIL import Image, ImageTk
+from PIL import Image, ImageDraw, ImageTk
 
 from ..backends.tk import TkOverlayHost
 from ..protocol import JsonlTransport
-from ..scene3d import Face3D, Vec3, box_faces, face_normal, point_along, sphere_faces, tapered_prism_faces
-from .robot_arm_3d import (
-    RobotArm3DView,
-    cable_hardware_faces,
-    first_link_accessory_faces,
-)
+from ..scene3d import Camera, Face3D, ProjectedPoint, Vec3, box_faces, lit_face_color, point_along, sphere_faces, tapered_prism_faces
+from ..software_uv import TexturedFace3D, UVTextureAtlas, rasterize_texture_quad, rasterize_textured_face, textured_prism_faces
+from .robot_arm import eyelid_polygon_points
+from .robot_arm_3d import RobotArm3DView, cable_hardware_faces, first_link_accessory_faces, visible_eyelid_offsets
 
-MATERIAL_BLACK = "#181a1d"
-MATERIAL_WHITE = "#d8d3c8"
-MATERIAL_CABLE = "#111316"
-MATERIAL_TECH = "#292622"
 PLAIN_CABLE = "#0c0d0f"
 PLAIN_TECH = "#34302b"
 PLAIN_JOINT = "#25282c"
 
 
-@dataclass(frozen=True)
-class AtlasRegion:
-    left: float
-    top: float
-    right: float
-    bottom: float
+def pod_axis(camera: Camera, eye: Vec3, wrist: Vec3) -> Vec3:
+    """Blend link attachment and camera depth so the pod stays readable in 3/4 view."""
+    link_rear = (wrist - eye).normalized()
+    camera_depth = camera.world_space(Vec3(0.0, 0.0, 1.0)).normalized()
+    return (link_rear * 0.65 + camera_depth * 0.60).normalized(camera_depth)
 
 
-ATLAS_REGIONS = {
-    MATERIAL_BLACK: AtlasRegion(0.0, 0.0, 0.5, 0.5),
-    MATERIAL_WHITE: AtlasRegion(0.5, 0.0, 1.0, 0.5),
-    MATERIAL_CABLE: AtlasRegion(0.0, 0.5, 0.5, 1.0),
-    MATERIAL_TECH: AtlasRegion(0.5, 0.5, 1.0, 1.0),
-}
-
-
-def atlas_sample_coordinate(
-    material: str,
-    u: float,
-    v: float,
-    width: int,
-    height: int,
-) -> tuple[int, int]:
-    """Map local UV coordinates into one material quadrant without crossing its seam."""
-    region = ATLAS_REGIONS[material]
-    u = min(max(u, 0.0), 1.0)
-    v = min(max(v, 0.0), 1.0)
-    left = int(region.left * width)
-    top = int(region.top * height)
-    right = max(left, int(region.right * width) - 1)
-    bottom = max(top, int(region.bottom * height) - 1)
-    return round(left + (right - left) * u), round(top + (bottom - top) * v)
-
-
-def is_chroma_green(pixel: tuple[int, int, int] | tuple[int, int, int, int]) -> bool:
-    """Recognize the generated compositing green without touching amber details."""
-    red, green, blue = pixel[:3]
-    return green >= 135 and green > red * 1.35 and green > blue * 1.35
-
-
-def rotation_frame_index(screen_angle: float, frame_count: int = 24) -> int:
-    """Choose the nearest cached pod orientation for a screen-space link angle."""
-    normalized = (screen_angle + 180.0) % 360.0
-    return round(normalized / (360.0 / frame_count)) % frame_count
-
-
-def prepare_end_effector_pod(source_path: Path, output_size: int = 144) -> Image.Image:
-    """Chroma-key and recenter a generated 3/4 pod around its enclosed aperture."""
-    source = Image.open(source_path).convert("RGBA")
-    source.thumbnail((256, 256), Image.Resampling.LANCZOS)
-    width, height = source.size
-    pixels = source.load()
-    chroma = bytearray(width * height)
-    for y in range(height):
-        for x in range(width):
-            if is_chroma_green(pixels[x, y]):
-                chroma[y * width + x] = 1
-
-    visited = bytearray(width * height)
-    enclosed_components: list[tuple[int, float, float]] = []
-    for start_index, is_green in enumerate(chroma):
-        if not is_green or visited[start_index]:
-            continue
-        pending = deque([start_index])
-        visited[start_index] = 1
-        count = 0
-        sum_x = 0.0
-        sum_y = 0.0
-        touches_edge = False
-        while pending:
-            index = pending.popleft()
-            x = index % width
-            y = index // width
-            count += 1
-            sum_x += x
-            sum_y += y
-            touches_edge = touches_edge or x in (0, width - 1) or y in (0, height - 1)
-            for neighbor_x, neighbor_y in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
-                if not (0 <= neighbor_x < width and 0 <= neighbor_y < height):
-                    continue
-                neighbor = neighbor_y * width + neighbor_x
-                if chroma[neighbor] and not visited[neighbor]:
-                    visited[neighbor] = 1
-                    pending.append(neighbor)
-        if not touches_edge and count >= 24:
-            enclosed_components.append((count, sum_x / count, sum_y / count))
-
-    if enclosed_components:
-        _, pivot_x, pivot_y = max(enclosed_components)
-    else:
-        pivot_x, pivot_y = width * 0.5, height * 0.62
-
-    for y in range(height):
-        for x in range(width):
-            if chroma[y * width + x]:
-                red, green, blue, _ = pixels[x, y]
-                pixels[x, y] = red, green, blue, 0
-
-    centered = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    offset = (round(width * 0.5 - pivot_x), round(height * 0.5 - pivot_y))
-    centered.alpha_composite(source, dest=offset)
-    return centered.resize((output_size, output_size), Image.Resampling.LANCZOS)
-
-
-def v2_surface_faces(base: Vec3, joints: list[Vec3]) -> list[Face3D]:
-    """Build the heavier layered body while retaining the v1 kinematic skeleton."""
-    faces = box_faces(Vec3(0.0, -169.0, 0.0), Vec3(138.0, 18.0, 62.0), color=MATERIAL_WHITE)
-    faces.extend(box_faces(Vec3(0.0, -155.0, 0.0), Vec3(92.0, 16.0, 48.0), color=MATERIAL_TECH))
-    for root_x in (-38.0, 38.0):
-        faces.extend(
-            tapered_prism_faces(
-                Vec3(root_x, -157.0, 0.0),
-                base,
-                start_radius=8.0,
-                end_radius=10.0,
-                color=PLAIN_CABLE,
-            )
+def pod_faces_and_expression_plane(
+    camera: Camera,
+    eye: Vec3,
+    wrist: Vec3,
+) -> tuple[list[TexturedFace3D], tuple[Vec3, Vec3, Vec3, Vec3]]:
+    """Build an open-front octagonal pod and its inset display plane."""
+    axis = pod_axis(camera, eye, wrist)
+    camera_right = camera.world_space(Vec3(1.0, 0.0, 0.0)).normalized()
+    side = (camera_right - axis * camera_right.dot(axis)).normalized(Vec3(1.0, 0.0, 0.0))
+    up = axis.cross(side).normalized(Vec3(0.0, -1.0, 0.0))
+    middle = eye + axis * 28.0
+    rear = eye + axis * 62.0
+    faces = textured_prism_faces(
+        eye,
+        middle,
+        start_radius=36.0,
+        end_radius=32.0,
+        sides=8,
+        side_cells=((0, 1), (1, 1), (2, 1), (3, 1)),
+        cap_cells=((0, 3), (1, 3)),
+        color="#d8d3c8",
+        side=side,
+        depth=up,
+        include_start_cap=False,
+        include_end_cap=False,
+    )
+    faces.extend(
+        textured_prism_faces(
+            middle,
+            rear,
+            start_radius=32.0,
+            end_radius=18.0,
+            sides=8,
+            side_cells=((0, 2), (1, 2), (2, 2), (3, 2)),
+            cap_cells=((1, 3), (2, 3)),
+            color="#1b1e22",
+            side=side,
+            depth=up,
+            include_start_cap=False,
+            include_end_cap=True,
         )
+    )
+    plane_center = eye - axis * 1.2
+    radius = 29.0
+    plane = (
+        plane_center - side * radius - up * radius,
+        plane_center + side * radius - up * radius,
+        plane_center + side * radius + up * radius,
+        plane_center - side * radius + up * radius,
+    )
+    return faces, plane
+
+
+def v2_surface_faces(
+    base: Vec3,
+    joints: list[Vec3],
+    camera: Camera,
+) -> tuple[list[Face3D], tuple[Vec3, Vec3, Vec3, Vec3]]:
+    """Build UV-unwrapped link shells and a low-poly terminal pod."""
+    faces: list[Face3D] = box_faces(Vec3(0.0, -169.0, 0.0), Vec3(138.0, 18.0, 62.0), color="#d8d3c8")
+    faces.extend(box_faces(Vec3(0.0, -155.0, 0.0), Vec3(92.0, 16.0, 48.0), color="#292622"))
+    for root_x in (-38.0, 38.0):
+        faces.extend(tapered_prism_faces(Vec3(root_x, -157.0, 0.0), base, start_radius=8.0, end_radius=10.0, color=PLAIN_CABLE))
 
     shell_widths = ((23.0, 18.0), (21.0, 16.0), (18.0, 13.0))
     for index, (start, end) in enumerate(zip(joints[:-1], joints[1:], strict=True)):
-        axis = (end - start).normalized()
-        side = axis.cross(Vec3(0.0, 0.0, 1.0)).normalized(Vec3(1.0, 0.0, 0.0))
-        depth = side.cross(axis).normalized(Vec3(0.0, 0.0, 1.0))
-
         faces.extend(
-            tapered_prism_faces(
+            textured_prism_faces(
                 start,
                 end,
                 start_radius=10.0,
                 end_radius=8.0,
-                color=MATERIAL_CABLE,
+                sides=4,
+                side_cells=((0, 2), (1, 2), (2, 2), (3, 2)),
+                cap_cells=((0, 3), (1, 3)),
+                color="#111316",
             )
         )
         shell_start = point_along(start, end, 13.0)
-        shell_end = point_along(end, start, 18.0)
+        shell_inset = 58.0 if index == 2 else 18.0
+        shell_end = point_along(end, start, shell_inset)
         start_width, end_width = shell_widths[index]
-        shell_material = MATERIAL_WHITE if index == 2 else MATERIAL_BLACK
+        texture_row = 1 if index == 2 else 0
         faces.extend(
-            tapered_prism_faces(
+            textured_prism_faces(
                 shell_start,
                 shell_end,
                 start_radius=start_width,
                 end_radius=end_width,
-                color=shell_material,
+                sides=4,
+                side_cells=tuple((column, texture_row) for column in range(4)),
+                cap_cells=((0, 3), (2, 3)),
+                color="#d8d3c8" if index == 2 else "#181a1d",
             )
         )
-
-        # Two offset structural rails make the link read as a layered machine,
-        # rather than one smooth low-poly bar.
+        axis = (end - start).normalized()
+        side = axis.cross(Vec3(0.0, 0.0, 1.0)).normalized(Vec3(1.0, 0.0, 0.0))
+        depth = side.cross(axis).normalized(Vec3(0.0, 0.0, 1.0))
         for rail_sign in (-1.0, 1.0):
             rail_offset = side * (rail_sign * (start_width + 3.0)) + depth * 4.0
             faces.extend(
                 tapered_prism_faces(
                     point_along(start, end, 18.0) + rail_offset,
-                    point_along(end, start, 25.0) + rail_offset * 0.72,
+                    point_along(end, start, max(25.0, shell_inset)) + rail_offset * 0.72,
                     start_radius=3.4,
                     end_radius=2.8,
                     color=PLAIN_TECH,
                 )
             )
-
         faces.extend(cable_hardware_faces(start, end, index=index))
         if index == 0:
             faces.extend(first_link_accessory_faces(start, end))
@@ -198,101 +144,78 @@ def v2_surface_faces(base: Vec3, joints: list[Vec3]) -> list[Face3D]:
         faces.extend(sphere_faces(joint, 16.0, color=PLAIN_JOINT, rings=4, segments=10, z_scale=0.82))
         if index > 0:
             faces.extend(sphere_faces(joint + Vec3(0.0, 0.0, -1.5), 7.0, color="#7f1d1d", rings=3, segments=8))
-    return faces
+    pod_faces, expression_plane = pod_faces_and_expression_plane(camera, joints[-1], joints[-2])
+    faces.extend(pod_faces)
+    return faces, expression_plane
 
 
-class TextureAtlas:
-    def __init__(self, image: tk.PhotoImage) -> None:
-        self.image = image
-        self.width = image.width()
-        self.height = image.height()
-        self._cache: dict[tuple[str, int, int, int], str] = {}
-
-    def color(self, material: str, u: float, v: float, intensity: float) -> str:
-        quantized = (material, round(u * 24.0), round(v * 24.0), round(intensity * 20.0))
-        cached = self._cache.get(quantized)
-        if cached is not None:
-            return cached
-        x, y = atlas_sample_coordinate(material, u, v, self.width, self.height)
-        pixel = self.image.get(x, y)
-        if isinstance(pixel, str):
-            value = pixel.removeprefix("#")
-            red, green, blue = (int(value[index : index + 2], 16) for index in (0, 2, 4))
-        else:
-            red, green, blue = pixel[:3]
-        channels = (red, green, blue)
-        color = "#" + "".join(f"{min(max(round(channel * intensity), 0), 255):02x}" for channel in channels)
-        self._cache[quantized] = color
-        return color
+def render_expression_texture(view: RobotArm3DView, size: int = 72) -> Image.Image:
+    """Render the current animated expression into an RGBA display texture."""
+    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    margin = 3
+    draw.ellipse((margin, margin, size - margin, size - margin), fill="#f8fafc", outline="#0f172a", width=4)
+    center_x = size * 0.5 + (view.expression_gaze[0] + view.mouse_gaze[0]) * 0.9
+    center_y = size * 0.5 + (view.expression_gaze[1] + view.mouse_gaze[1]) * 0.9
+    pulse = (math.sin(view.pulse_phase) + 1.0) * 0.5
+    pupil_x = (view.pupil_size[0] + pulse * 0.8) * 0.92
+    pupil_y = (view.pupil_size[1] + pulse * 0.8) * 0.92
+    halo = 5.0 + pulse * 1.5
+    draw.ellipse((center_x - pupil_x - halo, center_y - pupil_y - halo, center_x + pupil_x + halo, center_y + pupil_y + halo), fill=view.expression.color + "70")
+    draw.ellipse((center_x - pupil_x, center_y - pupil_y, center_x + pupil_x, center_y + pupil_y), fill=view.expression.color, outline="#082f49", width=max(2, round(view.pupil_outline_width)))
+    upper_y, lower_y = visible_eyelid_offsets(view.upper_y, view.lower_y)
+    for points in (
+        eyelid_polygon_points((0.0, 0.0), upper_y, view.upper_tilt, view.upper_peak, upper=True),
+        eyelid_polygon_points((0.0, 0.0), lower_y, view.lower_tilt, view.lower_peak, upper=False),
+    ):
+        polygon = [(size * 0.5 + points[index], size * 0.5 + points[index + 1]) for index in range(0, len(points), 2)]
+        draw.polygon(polygon, fill="#475569", outline="#0f172a")
+    draw.ellipse((margin, margin, size - margin, size - margin), outline="#0f172a", width=4)
+    return image
 
 
 class RobotArm3DV2View(RobotArm3DView):
-    """V1 behavior with stable sampled materials and a textured eye-head sprite."""
+    """V1 behavior rendered through a real low-poly UV pipeline."""
 
-    EYE_VISUAL_SCALE = 0.68
-    POD_FRAME_COUNT = 24
+    DRAW_VECTOR_EYE = False
 
     def __init__(self) -> None:
         super().__init__()
-        self.texture_atlas: TextureAtlas | None = None
-        self.pod_frames: list[ImageTk.PhotoImage] = []
+        self.uv_atlas: UVTextureAtlas | None = None
+        self.surface_image: Image.Image | None = None
+        self.surface_photo: ImageTk.PhotoImage | None = None
+        self.expression_plane: tuple[Vec3, Vec3, Vec3, Vec3] | None = None
 
     def mount(self, canvas: tk.Canvas) -> None:
-        atlas_path = Path(__file__).parent / "assets" / "robot_arm_3d_v2" / "industrial-material-atlas.png"
-        self.texture_atlas = TextureAtlas(tk.PhotoImage(master=canvas, file=str(atlas_path)))
-        pod_path = Path(__file__).parent / "assets" / "robot_arm_3d_v2" / "end-effector-pod-v2.png"
-        centered_pod = prepare_end_effector_pod(pod_path)
-        self.pod_frames = []
-        for index in range(self.POD_FRAME_COUNT):
-            screen_angle = -180.0 + index * (360.0 / self.POD_FRAME_COUNT)
-            # The source pod points toward 12 o'clock. Pillow's positive
-            # rotation is counter-clockwise, opposite the screen-angle sign.
-            rotation = -screen_angle - 90.0
-            rotated = centered_pod.rotate(rotation, resample=Image.Resampling.BICUBIC, expand=False)
-            self.pod_frames.append(ImageTk.PhotoImage(rotated, master=canvas))
+        atlas_path = Path(__file__).parent / "assets" / "robot_arm_3d_v2" / "robot-uv-atlas-v2.png"
+        self.uv_atlas = UVTextureAtlas(Image.open(atlas_path))
         super().mount(canvas)
 
     def _scene_faces(self) -> list[Face3D]:
-        return v2_surface_faces(self.base, self.joints)
+        faces, self.expression_plane = v2_surface_faces(self.base, self.joints, self.camera)
+        return faces
 
-    def _draw_projected_face(self, face: Face3D, coordinates: tuple[float, ...]) -> None:
-        if self.canvas is None or self.texture_atlas is None or face.color not in ATLAS_REGIONS:
-            super()._draw_projected_face(face, coordinates)
-            return
-        normal = face_normal(face.vertices)
-        light = Vec3(-0.4, -0.7, -1.0).normalized()
-        intensity = 0.48 + abs(normal.dot(light)) * 0.62
-        centroid = sum(vertex.x * 0.017 + vertex.y * 0.011 + vertex.z * 0.023 for vertex in face.vertices)
-        phase = abs(math.sin(centroid))
-        # One stable atlas sample per face avoids the pseudo-UV mosaic that
-        # crawled and split at every low-poly face boundary.
-        sample_u = 0.16 + phase * 0.68
-        sample_v = 0.18 + abs(math.cos(centroid * 0.73)) * 0.64
-        fill = self.texture_atlas.color(face.color, sample_u, sample_v, intensity)
-        self.canvas.create_polygon(
-            *coordinates,
-            fill=fill,
-            outline=face.outline,
-            width=1,
-            tags=("scene3d",),
-        )
+    def _begin_surface_frame(self) -> None:
+        self.surface_image = Image.new("RGBA", (self.width, self.height), (0, 0, 0, 0))
 
-    def _draw(self) -> None:
-        super()._draw()
-        if self.canvas is None or not self.pod_frames:
+    def _draw_projected_face(self, face: Face3D, coordinates: tuple[float, ...], projected: tuple[object, ...] | None = None) -> None:
+        if self.surface_image is None:
             return
-        eye = self.camera.project(self.joints[-1])
-        rear = self.camera.project(self.joints[-2])
-        screen_angle = math.degrees(math.atan2(rear.y - eye.y, rear.x - eye.x))
-        pod_frame = self.pod_frames[rotation_frame_index(screen_angle, self.POD_FRAME_COUNT)]
-        self.canvas.create_image(
-            eye.x,
-            eye.y,
-            image=pod_frame,
-            anchor=tk.CENTER,
-            tags=("scene3d",),
-        )
-        self.canvas.tag_lower("scene3d")
+        projected_points = tuple(point for point in (projected or ()) if isinstance(point, ProjectedPoint))
+        if isinstance(face, TexturedFace3D) and self.uv_atlas is not None and len(projected_points) == len(face.vertices):
+            rasterize_textured_face(self.surface_image, self.uv_atlas, face, projected_points)
+            return
+        points = [(coordinates[index], coordinates[index + 1]) for index in range(0, len(coordinates), 2)]
+        ImageDraw.Draw(self.surface_image).polygon(points, fill=lit_face_color(face), outline=face.outline)
+
+    def _end_surface_frame(self) -> None:
+        if self.canvas is None or self.surface_image is None:
+            return
+        if self.expression_plane is not None:
+            projected = tuple(self.camera.project(vertex) for vertex in self.expression_plane)
+            rasterize_texture_quad(self.surface_image, render_expression_texture(self), projected)
+        self.surface_photo = ImageTk.PhotoImage(self.surface_image, master=self.canvas)
+        self.canvas.create_image(0, 0, image=self.surface_photo, anchor=tk.NW, tags=("scene3d",))
 
 
 def create_robot_arm_3d_v2(transport: JsonlTransport, mode: str) -> TkOverlayHost:

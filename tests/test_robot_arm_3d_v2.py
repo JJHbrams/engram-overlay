@@ -1,20 +1,23 @@
 import unittest
 from pathlib import Path
 
+from PIL import Image
+
 from engram_overlay.overlays.robot_arm_3d_v2 import (
-    ATLAS_REGIONS,
-    MATERIAL_BLACK,
-    MATERIAL_CABLE,
-    MATERIAL_TECH,
-    MATERIAL_WHITE,
-    atlas_sample_coordinate,
-    is_chroma_green,
-    prepare_end_effector_pod,
-    rotation_frame_index,
+    RobotArm3DV2View,
+    pod_faces_and_expression_plane,
+    render_expression_texture,
     v2_surface_faces,
 )
 from engram_overlay.registry import OVERLAYS, overlay_ids
-from engram_overlay.scene3d import Vec3
+from engram_overlay.scene3d import Camera, ProjectedPoint, Vec3
+from engram_overlay.software_uv import (
+    TexturedFace3D,
+    UVTextureAtlas,
+    atlas_cell_uv,
+    rasterize_textured_face,
+    textured_prism_faces,
+)
 
 
 class RobotArm3DV2Tests(unittest.TestCase):
@@ -23,30 +26,69 @@ class RobotArm3DV2Tests(unittest.TestCase):
         self.assertEqual(OVERLAYS["robot-arm-3d-v2"].backend, "tk-textured-software-3d")
         self.assertEqual(OVERLAYS["robot-arm-3d"].backend, "tk-software-3d")
 
-    def test_material_quadrants_do_not_cross_atlas_seams(self) -> None:
-        self.assertEqual(atlas_sample_coordinate(MATERIAL_BLACK, 0.0, 0.0, 100, 100), (0, 0))
-        self.assertEqual(atlas_sample_coordinate(MATERIAL_BLACK, 1.0, 1.0, 100, 100), (49, 49))
-        self.assertEqual(atlas_sample_coordinate(MATERIAL_WHITE, 0.0, 0.0, 100, 100), (50, 0))
-        self.assertEqual(atlas_sample_coordinate(MATERIAL_CABLE, 1.0, 1.0, 100, 100), (49, 99))
-        self.assertEqual(atlas_sample_coordinate(MATERIAL_TECH, 1.0, 1.0, 100, 100), (99, 99))
+    def test_uv_cells_are_padded_and_prism_faces_keep_complete_uvs(self) -> None:
+        uvs = atlas_cell_uv(2, 1)
+        self.assertTrue(all(0.5 < u < 0.75 and 0.25 < v < 0.5 for u, v in uvs))
+        faces = textured_prism_faces(
+            Vec3(0.0, 0.0, 0.0),
+            Vec3(0.0, 20.0, 0.0),
+            start_radius=4.0,
+            end_radius=3.0,
+            side_cells=((0, 0), (1, 0), (2, 0), (3, 0)),
+            cap_cells=((0, 3), (1, 3)),
+        )
+        self.assertEqual(len(faces), 6)
+        self.assertTrue(all(len(face.vertices) == len(face.uvs) for face in faces))
 
-    def test_pod_chroma_and_rotation_helpers(self) -> None:
-        self.assertTrue(is_chroma_green((0, 255, 0)))
-        self.assertFalse(is_chroma_green((245, 245, 245)))
-        self.assertFalse(is_chroma_green((245, 160, 0)))
-        self.assertEqual(rotation_frame_index(-180.0), 0)
-        self.assertEqual(rotation_frame_index(-90.0), 6)
-        self.assertEqual(rotation_frame_index(0.0), 12)
-        self.assertEqual(rotation_frame_index(180.0), 0)
+    def test_pod_is_octagonal_depth_mesh_with_open_expression_plane(self) -> None:
+        camera = Camera(180.0, 190.0)
+        eye = Vec3(20.0, 105.0, 8.0)
+        wrist = Vec3(-30.0, 25.0, -12.0)
+        faces, plane = pod_faces_and_expression_plane(camera, eye, wrist)
+        self.assertEqual(len(faces), 17)
+        self.assertEqual(len(plane), 4)
+        self.assertGreater((faces[-1].vertices[0] - eye).length, 40.0)
+        projected = tuple(camera.project(vertex) for vertex in plane)
+        self.assertGreater(abs((projected[1].x - projected[0].x) * (projected[3].y - projected[0].y)), 400.0)
 
-    def test_v2_mesh_uses_all_generated_material_regions(self) -> None:
+    def test_v2_mesh_contains_stable_uv_faces_for_links_and_pod(self) -> None:
+        camera = Camera(180.0, 190.0)
         base = Vec3(0.0, -138.0, 0.0)
         joints = [base, Vec3(45.0, -65.0, 20.0), Vec3(-30.0, 25.0, -12.0), Vec3(20.0, 105.0, 8.0)]
-        faces = v2_surface_faces(base, joints)
-        self.assertGreater(len(faces), 150)
-        self.assertTrue(set(ATLAS_REGIONS).issubset({face.color for face in faces}))
+        faces, plane = v2_surface_faces(base, joints, camera)
+        textured = [face for face in faces if isinstance(face, TexturedFace3D)]
+        self.assertGreater(len(textured), 45)
+        self.assertEqual(len(plane), 4)
+        self.assertTrue(all(len(face.vertices) == len(face.uvs) for face in textured))
 
-    def test_generated_texture_is_packaged_next_to_renderer(self) -> None:
+    def test_perspective_rasterizer_paints_texture_pixels(self) -> None:
+        source = Image.new("RGB", (16, 16), "#ff0000")
+        source.paste("#00ff00", (8, 0, 16, 16))
+        atlas = UVTextureAtlas(source, max_size=16)
+        face = TexturedFace3D(
+            vertices=(Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0)),
+            color="#ffffff",
+            uvs=((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)),
+        )
+        projected = (
+            ProjectedPoint(2.0, 2.0, 0.0, 1.0),
+            ProjectedPoint(13.0, 3.0, 10.0, 0.8),
+            ProjectedPoint(12.0, 13.0, 10.0, 0.8),
+            ProjectedPoint(3.0, 12.0, 0.0, 1.0),
+        )
+        target = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
+        rasterize_textured_face(target, atlas, face, projected)
+        colors = {pixel[:3] for pixel in target.get_flattened_data() if pixel[3]}
+        self.assertGreater(len(colors), 1)
+
+    def test_expression_is_rendered_to_rgba_texture(self) -> None:
+        view = RobotArm3DV2View()
+        texture = render_expression_texture(view)
+        self.assertEqual(texture.mode, "RGBA")
+        self.assertGreater(texture.getpixel((36, 36))[3], 0)
+        self.assertEqual(texture.getpixel((0, 0))[3], 0)
+
+    def test_generated_uv_atlas_is_packaged(self) -> None:
         asset = (
             Path(__file__).parents[1]
             / "src"
@@ -54,16 +96,10 @@ class RobotArm3DV2Tests(unittest.TestCase):
             / "overlays"
             / "assets"
             / "robot_arm_3d_v2"
-            / "industrial-material-atlas.png"
+            / "robot-uv-atlas-v2.png"
         )
         self.assertTrue(asset.is_file())
         self.assertGreater(asset.stat().st_size, 100_000)
-        pod = asset.with_name("end-effector-pod-v2.png")
-        self.assertTrue(pod.is_file())
-        self.assertGreater(pod.stat().st_size, 100_000)
-        prepared = prepare_end_effector_pod(pod, output_size=96)
-        self.assertEqual(prepared.size, (96, 96))
-        self.assertLess(prepared.getpixel((48, 48))[3], 16)
 
 
 if __name__ == "__main__":

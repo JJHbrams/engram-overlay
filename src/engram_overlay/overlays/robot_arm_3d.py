@@ -366,6 +366,7 @@ def eased_exploration_point(
 
 class RobotArm3DView:
     EYE_VISUAL_SCALE = 1.0
+    DRAW_VECTOR_EYE = True
 
     width = 360
     height = 430
@@ -585,7 +586,18 @@ class RobotArm3DView:
         faces.extend(sphere_faces(self.joints[-1], 34.0, color="#d8d6cf", rings=5, segments=10, z_scale=0.72))
         return faces
 
-    def _draw_projected_face(self, face: Face3D, coordinates: tuple[float, ...]) -> None:
+    def _begin_surface_frame(self) -> None:
+        """Allow renderer variants to prepare a frame-wide surface buffer."""
+
+    def _end_surface_frame(self) -> None:
+        """Allow renderer variants to publish a completed surface buffer."""
+
+    def _draw_projected_face(
+        self,
+        face: Face3D,
+        coordinates: tuple[float, ...],
+        projected: tuple[object, ...] | None = None,
+    ) -> None:
         """Draw one projected face; renderer variants may override its surface treatment."""
         if self.canvas is None:
             return
@@ -626,14 +638,16 @@ class RobotArm3DView:
                 capstyle=tk.ROUND,
                 tags=("scene3d",),
             )
-        projected_faces: list[tuple[float, Face3D, tuple[float, ...]]] = []
+        projected_faces: list[tuple[float, Face3D, tuple[float, ...], tuple[object, ...]]] = []
         for face in self._scene_faces():
             projected = tuple(self.camera.project(vertex) for vertex in face.vertices)
             coordinates = tuple(coordinate for point in projected for coordinate in (point.x, point.y))
             depth = sum(point.depth for point in projected) / len(projected)
-            projected_faces.append((depth, face, coordinates))
-        for _, face, coordinates in sorted(projected_faces, key=lambda item: item[0], reverse=True):
-            self._draw_projected_face(face, coordinates)
+            projected_faces.append((depth, face, coordinates, projected))
+        self._begin_surface_frame()
+        for _, face, coordinates, projected in sorted(projected_faces, key=lambda item: item[0], reverse=True):
+            self._draw_projected_face(face, coordinates, projected)
+        self._end_surface_frame()
 
         hub = self.camera.project(first_link_hub_center(self.joints[0], self.joints[1]))
         hub_radius = 14.0 * hub.scale
@@ -731,6 +745,10 @@ class RobotArm3DView:
                     capstyle=tk.ROUND,
                     tags=("scene3d",),
                 )
+
+        if not self.DRAW_VECTOR_EYE:
+            self.canvas.tag_lower("scene3d")
+            return
 
         eye = self.camera.project(self.joints[-1])
         center = (eye.x, eye.y)
