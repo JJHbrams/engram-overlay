@@ -169,8 +169,12 @@ class RobotArm3DV2Tests(unittest.TestCase):
         self.assertAlmostEqual(edge[1], 75.0)
         polygons = emission_cone_polygons((50.0, 50.0), edge, pulse=0.5)
         self.assertEqual(len(polygons), 3)
-        self.assertTrue(all(len(polygon) == 8 for polygon in polygons))
-        self.assertGreater(abs(polygons[0][6] - polygons[0][4]), abs(polygons[2][6] - polygons[2][4]))
+        self.assertTrue(all(len(polygon) == 22 for polygon in polygons))
+        outer_cap_width = abs(polygons[0][-2] - polygons[0][4])
+        inner_cap_width = abs(polygons[2][-2] - polygons[2][4])
+        self.assertGreater(outer_cap_width, inner_cap_width)
+        self.assertAlmostEqual(polygons[0][12], edge[0])
+        self.assertAlmostEqual(polygons[0][13], edge[1])
 
     def test_eye_projection_changes_with_gaze(self) -> None:
         view = RobotArm3DV2View(eye_emission_enabled=True)

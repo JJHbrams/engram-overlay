@@ -40,6 +40,18 @@ class _MonitorInfo(ctypes.Structure):
     )
 
 
+def enable_per_monitor_dpi_awareness() -> bool:
+    """Use one physical-pixel coordinate space across mixed-DPI displays."""
+    if sys.platform != "win32":
+        return False
+    setter = getattr(ctypes.windll.user32, "SetProcessDpiAwarenessContext", None)
+    if setter is None:
+        return False
+    setter.argtypes = (ctypes.c_void_p,)
+    setter.restype = wintypes.BOOL
+    return bool(setter(ctypes.c_void_p(-4)))
+
+
 @dataclass(frozen=True)
 class ExpressionPlaneLayers:
     """Render planes that give the iris and pupil restrained physical depth."""
@@ -376,6 +388,23 @@ def display_bounds_for_point(point: tuple[float, float]) -> tuple[int, int, int,
     return rect.left, rect.top, rect.right, rect.bottom
 
 
+def canvas_point_to_screen(canvas: tk.Canvas, point: tuple[float, float]) -> tuple[float, float]:
+    """Map a logical canvas point to physical virtual-screen coordinates."""
+    if sys.platform != "win32":
+        return canvas.winfo_rootx() + point[0], canvas.winfo_rooty() + point[1]
+    user32 = ctypes.windll.user32
+    hwnd = canvas.winfo_id()
+    rect = wintypes.RECT()
+    origin = wintypes.POINT(0, 0)
+    if not user32.GetClientRect(hwnd, ctypes.byref(rect)) or not user32.ClientToScreen(hwnd, ctypes.byref(origin)):
+        return canvas.winfo_rootx() + point[0], canvas.winfo_rooty() + point[1]
+    logical_width = max(canvas.winfo_width(), 1)
+    logical_height = max(canvas.winfo_height(), 1)
+    scale_x = max(rect.right - rect.left, 1) / logical_width
+    scale_y = max(rect.bottom - rect.top, 1) / logical_height
+    return origin.x + point[0] * scale_x, origin.y + point[1] * scale_y
+
+
 def ray_to_display_edge(
     start: tuple[float, float],
     direction: tuple[float, float],
@@ -418,22 +447,32 @@ def emission_cone_polygons(
     distance = max(math.hypot(delta_x, delta_y), 1.0)
     perpendicular_x = -delta_y / distance
     perpendicular_y = delta_x / distance
+    direction_x = delta_x / distance
+    direction_y = delta_y / distance
     far_width = min(max(distance * 0.22, 70.0), 420.0)
     near_width = 20.0 + pulse * 3.0
     polygons = []
     for scale in (1.0, 0.64, 0.34):
         scaled_near = near_width * scale
         scaled_far = far_width * scale
+        cap_depth = min(scaled_far * 0.52, 120.0)
+        far_arc: list[float] = []
+        for index in range(9):
+            t = -1.0 + index / 4.0
+            inset = cap_depth * (1.0 - math.sqrt(max(0.0, 1.0 - t * t)))
+            far_arc.extend(
+                (
+                    end[0] - direction_x * inset + perpendicular_x * scaled_far * t,
+                    end[1] - direction_y * inset + perpendicular_y * scaled_far * t,
+                )
+            )
         polygons.append(
             (
                 start[0] + perpendicular_x * scaled_near,
                 start[1] + perpendicular_y * scaled_near,
                 start[0] - perpendicular_x * scaled_near,
                 start[1] - perpendicular_y * scaled_near,
-                end[0] - perpendicular_x * scaled_far,
-                end[1] - perpendicular_y * scaled_far,
-                end[0] + perpendicular_x * scaled_far,
-                end[1] + perpendicular_y * scaled_far,
+                *far_arc,
             )
         )
     return tuple(polygons)
@@ -481,9 +520,16 @@ class EyeEmissionDisplay:
             user32 = ctypes.windll.user32
             root_id = self.root.winfo_id()
             root_hwnd = user32.GetParent(root_id) or root_id
-            flags = 0x0001 | 0x0002 | 0x0010
-            user32.SetWindowPos(self.hwnd, -1, 0, 0, 0, 0, flags)
-            user32.SetWindowPos(root_hwnd, -1, 0, 0, 0, 0, flags)
+            user32.SetWindowPos(
+                self.hwnd,
+                -1,
+                round(self.origin_x),
+                round(self.origin_y),
+                round(self.width),
+                round(self.height),
+                0x0010,
+            )
+            user32.SetWindowPos(root_hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
             return
         self.window.lift()
         self.root.lift()
@@ -643,9 +689,11 @@ class RobotArm3DV2View(RobotArm3DView):
                 render_eye_emission(self.surface_image, self, self.expression_plane, self.camera)
                 if self.emission_display is not None:
                     start, end = eye_emission_projection(self, self.expression_plane, self.camera)
+                    screen_start = canvas_point_to_screen(self.canvas, (start.x, start.y))
+                    screen_end = canvas_point_to_screen(self.canvas, (end.x, end.y))
                     self.emission_display.update(
-                        (self.canvas.winfo_rootx() + start.x, self.canvas.winfo_rooty() + start.y),
-                        (end.x - start.x, end.y - start.y),
+                        screen_start,
+                        (screen_end[0] - screen_start[0], screen_end[1] - screen_start[1]),
                         self.expression.color,
                         (math.sin(self.pulse_phase) + 1.0) * 0.5,
                     )
@@ -662,6 +710,7 @@ def create_robot_arm_3d_v2(
     *,
     eye_emission: bool = False,
 ) -> TkOverlayHost:
+    enable_per_monitor_dpi_awareness()
     return TkOverlayHost(
         transport,
         RobotArm3DV2View(eye_emission_enabled=eye_emission),
