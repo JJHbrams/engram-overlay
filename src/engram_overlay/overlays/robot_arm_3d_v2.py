@@ -40,16 +40,42 @@ class _MonitorInfo(ctypes.Structure):
     )
 
 
+def _push_physical_dpi_context() -> int | None:
+    if sys.platform != "win32":
+        return None
+    setter = getattr(ctypes.windll.user32, "SetThreadDpiAwarenessContext", None)
+    if setter is None:
+        return None
+    setter.argtypes = (ctypes.c_void_p,)
+    setter.restype = ctypes.c_void_p
+    previous = setter(ctypes.c_void_p(-4))
+    return int(previous) if previous else None
+
+
+def _pop_dpi_context(previous: int | None) -> None:
+    if previous is None or sys.platform != "win32":
+        return
+    setter = ctypes.windll.user32.SetThreadDpiAwarenessContext
+    setter(ctypes.c_void_p(previous))
+
+
 def enable_per_monitor_dpi_awareness() -> bool:
     """Use one physical-pixel coordinate space across mixed-DPI displays."""
     if sys.platform != "win32":
         return False
-    setter = getattr(ctypes.windll.user32, "SetProcessDpiAwarenessContext", None)
-    if setter is None:
+    user32 = ctypes.windll.user32
+    thread_setter = getattr(user32, "SetThreadDpiAwarenessContext", None)
+    if thread_setter is not None:
+        thread_setter.argtypes = (ctypes.c_void_p,)
+        thread_setter.restype = ctypes.c_void_p
+        if thread_setter(ctypes.c_void_p(-4)):
+            return True
+    process_setter = getattr(user32, "SetProcessDpiAwarenessContext", None)
+    if process_setter is None:
         return False
-    setter.argtypes = (ctypes.c_void_p,)
-    setter.restype = wintypes.BOOL
-    return bool(setter(ctypes.c_void_p(-4)))
+    process_setter.argtypes = (ctypes.c_void_p,)
+    process_setter.restype = wintypes.BOOL
+    return bool(process_setter(ctypes.c_void_p(-4)))
 
 
 @dataclass(frozen=True)
@@ -369,40 +395,26 @@ def eye_emission_projection(
     return camera.project(center), camera.project(center + direction * 115.0)
 
 
-def display_bounds_for_point(point: tuple[float, float]) -> tuple[int, int, int, int] | None:
-    """Return the physical monitor containing a screen-space point on Windows."""
+def display_bounds_for_window(window: tk.Misc) -> tuple[int, int, int, int] | None:
+    """Return the physical monitor containing a Tk top-level window."""
     if sys.platform != "win32":
         return None
-    user32 = ctypes.windll.user32
-    monitor_from_point = user32.MonitorFromPoint
-    monitor_from_point.argtypes = (wintypes.POINT, wintypes.DWORD)
-    monitor_from_point.restype = ctypes.c_void_p
-    monitor = monitor_from_point(wintypes.POINT(round(point[0]), round(point[1])), 2)
-    if not monitor:
-        return None
-    info = _MonitorInfo()
-    info.cbSize = ctypes.sizeof(_MonitorInfo)
-    if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
-        return None
-    rect = info.rcMonitor
-    return rect.left, rect.top, rect.right, rect.bottom
-
-
-def canvas_point_to_screen(canvas: tk.Canvas, point: tuple[float, float]) -> tuple[float, float]:
-    """Map a logical canvas point to physical virtual-screen coordinates."""
-    if sys.platform != "win32":
-        return canvas.winfo_rootx() + point[0], canvas.winfo_rooty() + point[1]
-    user32 = ctypes.windll.user32
-    hwnd = canvas.winfo_id()
-    rect = wintypes.RECT()
-    origin = wintypes.POINT(0, 0)
-    if not user32.GetClientRect(hwnd, ctypes.byref(rect)) or not user32.ClientToScreen(hwnd, ctypes.byref(origin)):
-        return canvas.winfo_rootx() + point[0], canvas.winfo_rooty() + point[1]
-    logical_width = max(canvas.winfo_width(), 1)
-    logical_height = max(canvas.winfo_height(), 1)
-    scale_x = max(rect.right - rect.left, 1) / logical_width
-    scale_y = max(rect.bottom - rect.top, 1) / logical_height
-    return origin.x + point[0] * scale_x, origin.y + point[1] * scale_y
+    previous_context = _push_physical_dpi_context()
+    try:
+        user32 = ctypes.windll.user32
+        window_id = window.winfo_id()
+        root_hwnd = user32.GetParent(window_id) or window_id
+        monitor = user32.MonitorFromWindow(root_hwnd, 2)
+        if not monitor:
+            return None
+        info = _MonitorInfo()
+        info.cbSize = ctypes.sizeof(_MonitorInfo)
+        if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            return None
+        rect = info.rcMonitor
+        return rect.left, rect.top, rect.right, rect.bottom
+    finally:
+        _pop_dpi_context(previous_context)
 
 
 def ray_to_display_edge(
@@ -517,19 +529,23 @@ class EyeEmissionDisplay:
     def _restore_overlay_stack(self) -> None:
         """Keep the filter above apps and the robot above the filter."""
         if sys.platform == "win32" and self.hwnd:
-            user32 = ctypes.windll.user32
             root_id = self.root.winfo_id()
-            root_hwnd = user32.GetParent(root_id) or root_id
-            user32.SetWindowPos(
-                self.hwnd,
-                -1,
-                round(self.origin_x),
-                round(self.origin_y),
-                round(self.width),
-                round(self.height),
-                0x0010,
-            )
-            user32.SetWindowPos(root_hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
+            previous_context = _push_physical_dpi_context()
+            try:
+                user32 = ctypes.windll.user32
+                root_hwnd = user32.GetParent(root_id) or root_id
+                user32.SetWindowPos(
+                    self.hwnd,
+                    -1,
+                    round(self.origin_x),
+                    round(self.origin_y),
+                    round(self.width),
+                    round(self.height),
+                    0x0010,
+                )
+                user32.SetWindowPos(root_hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
+            finally:
+                _pop_dpi_context(previous_context)
             return
         self.window.lift()
         self.root.lift()
@@ -547,15 +563,16 @@ class EyeEmissionDisplay:
 
     def update(
         self,
-        source_screen: tuple[float, float],
-        direction: tuple[float, float],
+        source_canvas: tk.Canvas,
+        source_point: tuple[float, float],
+        direction_point: tuple[float, float],
         color: str,
         pulse: float,
     ) -> None:
         self.frame += 1
         if self.frame % 2:
             return
-        bounds = display_bounds_for_point(source_screen)
+        bounds = display_bounds_for_window(self.root)
         if bounds is not None and bounds != self.bounds:
             self.bounds = bounds
             self.origin_x, self.origin_y = bounds[0], bounds[1]
@@ -563,7 +580,18 @@ class EyeEmissionDisplay:
             self.window.geometry(f"{self.width}x{self.height}{self.origin_x:+d}{self.origin_y:+d}")
             self.canvas.configure(width=self.width, height=self.height)
         self._restore_overlay_stack()
-        start = source_screen[0] - self.origin_x, source_screen[1] - self.origin_y
+        self.window.update_idletasks()
+        source_origin = source_canvas.winfo_rootx(), source_canvas.winfo_rooty()
+        target_origin = self.canvas.winfo_rootx(), self.canvas.winfo_rooty()
+        start = (
+            source_origin[0] + source_point[0] - target_origin[0],
+            source_origin[1] + source_point[1] - target_origin[1],
+        )
+        mapped_end = (
+            source_origin[0] + direction_point[0] - target_origin[0],
+            source_origin[1] + direction_point[1] - target_origin[1],
+        )
+        direction = mapped_end[0] - start[0], mapped_end[1] - start[1]
         end = ray_to_display_edge(start, direction, self.width, self.height)
         polygons = emission_cone_polygons(start, end, pulse=pulse)
         red, green, blue = ImageColor.getrgb(color)
@@ -689,11 +717,10 @@ class RobotArm3DV2View(RobotArm3DView):
                 render_eye_emission(self.surface_image, self, self.expression_plane, self.camera)
                 if self.emission_display is not None:
                     start, end = eye_emission_projection(self, self.expression_plane, self.camera)
-                    screen_start = canvas_point_to_screen(self.canvas, (start.x, start.y))
-                    screen_end = canvas_point_to_screen(self.canvas, (end.x, end.y))
                     self.emission_display.update(
-                        screen_start,
-                        (screen_end[0] - screen_start[0], screen_end[1] - screen_start[1]),
+                        self.canvas,
+                        (start.x, start.y),
+                        (end.x, end.y),
                         self.expression.color,
                         (math.sin(self.pulse_phase) + 1.0) * 0.5,
                     )
