@@ -6,10 +6,10 @@ from engram_overlay.__main__ import build_parser
 from engram_overlay.overlays.robot_arm_3d_v3 import (
     Cover,
     RobotArm3DV3View,
-    TinyWanderer,
-    advance_wanderer,
+    WandererParty,
+    advance_party,
     draw_ground_and_covers,
-    draw_wanderer,
+    draw_party,
     point_in_gaze_cone,
     scene_layout,
 )
@@ -29,38 +29,39 @@ class RobotArm3DV3Tests(unittest.TestCase):
         self.assertFalse(point_in_gaze_cone((-20.0, 0.0), (0.0, 0.0), (100.0, 0.0)))
         self.assertFalse(point_in_gaze_cone((130.0, 0.0), (0.0, 0.0), (100.0, 0.0)))
 
-    def test_seen_wanderer_evades_toward_nearest_cover_then_hides(self) -> None:
+    def test_seen_party_evades_toward_nearest_cover_then_hides(self) -> None:
         covers = (Cover(50.0, 100.0, 20.0), Cover(180.0, 100.0, 20.0))
-        traveler = TinyWanderer(100.0, 100.0, speed=20.0)
-        advance_wanderer(traveler, seen=True, covers=covers, dt=0.5)
-        self.assertEqual(traveler.state, "evade")
-        self.assertLess(traveler.x, 100.0)
+        party = WandererParty(100.0, 100.0, speed=20.0)
+        advance_party(party, seen=True, covers=covers, dt=0.5)
+        self.assertEqual(party.state, "evade")
+        self.assertLess(party.x, 100.0)
         for _ in range(10):
-            advance_wanderer(traveler, seen=True, covers=covers, dt=0.2)
-        self.assertEqual(traveler.state, "hide")
+            advance_party(party, seen=True, covers=covers, dt=0.2)
+        self.assertEqual(party.state, "hide")
 
-    def test_hidden_wanderer_peeks_then_resumes_patrol(self) -> None:
-        traveler = TinyWanderer(50.0, 100.0, state="hide")
-        advance_wanderer(traveler, seen=False, dt=1.2)
-        self.assertEqual(traveler.state, "peek")
-        advance_wanderer(traveler, seen=False, dt=0.7)
-        self.assertEqual(traveler.state, "walk")
+    def test_hidden_party_peeks_then_resumes_patrol(self) -> None:
+        party = WandererParty(50.0, 100.0, state="hide")
+        advance_party(party, seen=False, dt=1.4)
+        self.assertEqual(party.state, "peek")
+        advance_party(party, seen=False, dt=0.8)
+        self.assertEqual(party.state, "walk")
 
     def test_screen_space_scene_paints_compact_silhouettes(self) -> None:
         target = Image.new("RGBA", (220, 140), (0, 0, 0, 0))
-        cover = Cover(80.0, 120.0, 20.0)
+        cover = Cover(80.0, 120.0, 20.0, "rock")
         draw_ground_and_covers(target, (cover,))
-        draw_wanderer(ImageDraw.Draw(target), TinyWanderer(130.0, 118.0))
+        draw_party(ImageDraw.Draw(target), WandererParty(130.0, 118.0))
         self.assertIsNotNone(target.getbbox())
         self.assertGreater(sum(1 for pixel in target.get_flattened_data() if pixel[3]), 100)
 
     def test_v3_keeps_arm_height_and_scales_party_to_companion_strip(self) -> None:
         view = RobotArm3DV3View()
-        covers, wanderers = scene_layout(1920.0)
+        covers, party = scene_layout(640.0)
         self.assertEqual(view.height, 430)
-        self.assertEqual(len(wanderers), 3)
         self.assertEqual(len(covers), 3)
-        self.assertAlmostEqual(covers[-1].x, 1920.0 * 0.84)
+        self.assertAlmostEqual(covers[-1].x, 640.0 * 0.84)
+        self.assertAlmostEqual(party.x, 640.0 * 0.31)
+        self.assertEqual(covers[0].kind, "tower")
         self.assertIsNone(view.wanderer_display)
         self.assertFalse(view.eye_emission_enabled)
 

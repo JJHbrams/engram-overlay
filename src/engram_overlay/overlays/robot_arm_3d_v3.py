@@ -20,8 +20,9 @@ from .robot_arm_3d_v2 import (
     eye_emission_projection,
 )
 
-STRIP_HEIGHT = 78
-GROUND_Y = 64.0
+STRIP_HEIGHT = 96
+MAX_SCENE_WIDTH = 640
+GROUND_Y = 82.0
 
 
 @dataclass(frozen=True)
@@ -29,38 +30,33 @@ class Cover:
     x: float
     y: float
     radius: float
+    kind: str = "rock"
 
 
 @dataclass
-class TinyWanderer:
-    """Small autonomous traveler with a deliberately simple behavior state."""
+class WandererParty:
+    """Three travelers moving and reacting as one small procession."""
 
     x: float
     y: float
     direction: float = 1.0
-    speed: float = 12.0
+    speed: float = 27.0
     state: str = "walk"
     state_time: float = 0.0
     stride: float = 0.0
-    accent: str = "#d89135"
 
 
-def scene_layout(width: float) -> tuple[tuple[Cover, ...], list[TinyWanderer]]:
+def scene_layout(width: float) -> tuple[tuple[Cover, ...], WandererParty]:
     """Scale the miniature scene across the active monitor work area."""
     covers = (
-        Cover(width * 0.16, GROUND_Y, 23.0),
-        Cover(width * 0.49, GROUND_Y, 20.0),
-        Cover(width * 0.84, GROUND_Y, 27.0),
+        Cover(width * 0.16, GROUND_Y, 39.0, "tower"),
+        Cover(width * 0.49, GROUND_Y, 34.0, "rock"),
+        Cover(width * 0.84, GROUND_Y, 42.0, "ruin"),
     )
-    wanderers = [
-        TinyWanderer(width * 0.27, GROUND_Y, direction=1.0, speed=28.0, accent="#d89135"),
-        TinyWanderer(width * 0.40, GROUND_Y, direction=-1.0, speed=23.0, accent=""),
-        TinyWanderer(width * 0.69, GROUND_Y, direction=1.0, speed=30.0, accent="#7f9a73"),
-    ]
-    return covers, wanderers
+    return covers, WandererParty(width * 0.31, GROUND_Y)
 
 
-DEFAULT_COVERS, _DEFAULT_WANDERERS = scene_layout(420.0)
+DEFAULT_COVERS, _DEFAULT_PARTY = scene_layout(420.0)
 
 
 def point_in_gaze_cone(
@@ -81,76 +77,108 @@ def point_in_gaze_cone(
     return cosine >= math.cos(math.radians(half_angle_degrees))
 
 
-def advance_wanderer(
-    wanderer: TinyWanderer,
+def advance_party(
+    party: WandererParty,
     *,
     seen: bool,
     covers: tuple[Cover, ...] = DEFAULT_COVERS,
     dt: float = 1.0 / 60.0,
     bounds: tuple[float, float] = (18.0, 402.0),
 ) -> None:
-    """Advance one traveler: evade the gaze, hide, peek, then resume patrol."""
-    wanderer.state_time += dt
-    wanderer.stride += dt * (12.0 if wanderer.state in {"evade", "walk"} else 4.0)
-    nearest = min(covers, key=lambda cover: abs(cover.x - wanderer.x))
-    safe_distance = nearest.radius * 0.62
+    """Advance the procession: evade together, hide, peek, then march on."""
+    party.state_time += dt
+    party.stride += dt * (13.0 if party.state in {"evade", "walk"} else 3.5)
+    nearest = min(covers, key=lambda cover: abs(cover.x - party.x))
+    safe_distance = nearest.radius * 0.18
 
-    if seen and wanderer.state != "hide":
-        wanderer.state = "evade"
-        wanderer.state_time = 0.0
-    if wanderer.state == "evade":
-        delta = nearest.x - wanderer.x
+    if seen and party.state != "hide":
+        party.state = "evade"
+        party.state_time = 0.0
+    if party.state == "evade":
+        delta = nearest.x - party.x
         if abs(delta) <= safe_distance:
-            wanderer.state = "hide"
-            wanderer.state_time = 0.0
+            party.state = "hide"
+            party.state_time = 0.0
         else:
-            wanderer.direction = 1.0 if delta > 0.0 else -1.0
-            wanderer.x += wanderer.direction * wanderer.speed * 2.8 * dt
-    elif wanderer.state == "hide":
+            party.direction = 1.0 if delta > 0.0 else -1.0
+            party.x += party.direction * party.speed * 2.6 * dt
+    elif party.state == "hide":
         if seen:
-            wanderer.state_time = 0.0
-        elif wanderer.state_time > 1.1:
-            wanderer.state = "peek"
-            wanderer.state_time = 0.0
-    elif wanderer.state == "peek":
+            party.state_time = 0.0
+        elif party.state_time > 1.35:
+            party.state = "peek"
+            party.state_time = 0.0
+    elif party.state == "peek":
         if seen:
-            wanderer.state = "hide"
-            wanderer.state_time = 0.0
-        elif wanderer.state_time > 0.65:
-            wanderer.state = "walk"
-            wanderer.state_time = 0.0
-            wanderer.direction *= -1.0
+            party.state = "hide"
+            party.state_time = 0.0
+        elif party.state_time > 0.7:
+            party.state = "walk"
+            party.state_time = 0.0
+            party.direction *= -1.0
     else:
-        wanderer.x += wanderer.direction * wanderer.speed * dt
+        party.x += party.direction * party.speed * dt
 
-    if wanderer.x <= bounds[0] or wanderer.x >= bounds[1]:
-        wanderer.x = min(max(wanderer.x, bounds[0]), bounds[1])
-        wanderer.direction *= -1.0
+    margin = 25.0
+    if party.x <= bounds[0] + margin or party.x >= bounds[1] - margin:
+        party.x = min(max(party.x, bounds[0] + margin), bounds[1] - margin)
+        party.direction *= -1.0
 
 
-def draw_wanderer(draw: ImageDraw.ImageDraw, wanderer: TinyWanderer) -> None:
-    """Paint a tiny original hooded silhouette without character-specific detail."""
-    x, ground = wanderer.x, wanderer.y
-    crouch = 4.0 if wanderer.state == "hide" else 2.0 if wanderer.state == "peek" else 0.0
-    bob = 0.0 if crouch else math.sin(wanderer.stride) * 1.2
-    head_y = ground - 17.0 + crouch + bob
-    facing = wanderer.direction
-    cloak = [(x - 6.0, ground - 2.0), (x + 6.0, ground - 2.0), (x + facing * 3.5, head_y + 5.0)]
-    draw.polygon(cloak, fill="#17191d", outline="#4c4640")
-    draw.ellipse((x - 4.2, head_y - 4.2, x + 4.2, head_y + 4.2), fill="#22242a", outline="#665d50")
+def draw_wanderer(
+    draw: ImageDraw.ImageDraw,
+    *,
+    x: float,
+    ground: float,
+    direction: float,
+    stride: float,
+    state: str,
+    role: int,
+) -> None:
+    """Paint an original hooded carrier silhouette with role-specific gear."""
+    crouch = 5.0 if state == "hide" else 2.0 if state == "peek" else 0.0
+    bob = 0.0 if crouch else math.sin(stride + role * 1.7) * 1.2
+    height = (22.0, 18.0, 24.0)[role]
+    head_y = ground - height + crouch + bob
+    facing = direction
+    cloak_width = (6.5, 6.0, 7.0)[role]
+    cloak = [(x - cloak_width, ground - 2.0), (x + cloak_width, ground - 2.0), (x + facing * 3.0, head_y + 5.0)]
+    draw.polygon(cloak, fill="#101114", outline="#494139")
+    draw.ellipse((x - 3.7, head_y - 3.7, x + 3.7, head_y + 3.7), fill="#141518", outline="#5f5549")
     draw.polygon(
-        [(x - 5.4, head_y), (x + 5.4, head_y), (x + facing * 1.5, head_y - 6.0)],
-        fill="#302d31",
-        outline="#71685b",
+        [(x - 5.0, head_y), (x + 5.0, head_y), (x + facing * 1.5, head_y - 6.5)],
+        fill="#17171a",
+        outline="#665b4e",
     )
-    if wanderer.state != "hide":
-        foot = math.sin(wanderer.stride) * 2.0
+    if role == 0:
+        staff_x = x + facing * 7.0
+        draw.line((staff_x, head_y + 2.0, staff_x + facing * 1.5, ground + 1.0), fill="#736452", width=2)
+    elif role == 1:
+        pack_x = x - facing * 5.0
+        draw.ellipse((pack_x - 3.0, head_y + 4.0, pack_x + 3.0, head_y + 11.0), fill="#242124")
+        ember_x = x + facing * 6.0
+        draw.ellipse((ember_x - 1.5, head_y + 6.0, ember_x + 1.5, head_y + 9.0), fill="#d27a2e")
+    else:
+        draw.line((x - facing * 4.0, head_y + 5.0, x - facing * 8.0, head_y + 11.0), fill="#5b5045", width=2)
+    if state != "hide":
+        foot = math.sin(stride + role * 1.7) * 2.2
         draw.line((x - 2.0, ground - 2.0, x - 3.0 - foot, ground + 1.0), fill="#71685b", width=1)
         draw.line((x + 2.0, ground - 2.0, x + 3.0 + foot, ground + 1.0), fill="#71685b", width=1)
-    # A restrained carried ember gives one readable story beat at this scale.
-    if wanderer.accent and wanderer.state != "hide":
-        hand_x = x + facing * 6.0
-        draw.ellipse((hand_x - 1.5, head_y + 4.0, hand_x + 1.5, head_y + 7.0), fill=wanderer.accent)
+
+
+def draw_party(draw: ImageDraw.ImageDraw, party: WandererParty) -> None:
+    """Draw a tight three-person procession that keeps formation."""
+    offsets = (-15.0, 0.0, 15.0)
+    for role, offset in enumerate(offsets):
+        draw_wanderer(
+            draw,
+            x=party.x + offset * party.direction,
+            ground=party.y,
+            direction=party.direction,
+            stride=party.stride,
+            state=party.state,
+            role=role,
+        )
 
 
 def draw_ground_and_covers(target: Image.Image, covers: tuple[Cover, ...]) -> None:
@@ -158,17 +186,42 @@ def draw_ground_and_covers(target: Image.Image, covers: tuple[Cover, ...]) -> No
     draw.line((10, GROUND_Y + 2, target.width - 10, GROUND_Y + 2), fill="#34312f", width=2)
     for index, cover in enumerate(covers):
         shade = "#26272a" if index % 2 else "#302e2d"
-        draw.polygon(
-            [
-                (cover.x - cover.radius, cover.y + 2),
-                (cover.x - cover.radius * 0.72, cover.y - cover.radius * 0.55),
-                (cover.x - cover.radius * 0.16, cover.y - cover.radius),
-                (cover.x + cover.radius * 0.62, cover.y - cover.radius * 0.68),
-                (cover.x + cover.radius, cover.y + 2),
-            ],
-            fill=shade,
-            outline="#5a5148",
-        )
+        if cover.kind == "tower":
+            draw.polygon(
+                [
+                    (cover.x - 18.0, cover.y + 2.0),
+                    (cover.x - 12.0, cover.y - 47.0),
+                    (cover.x - 7.0, cover.y - cover.radius * 1.75),
+                    (cover.x, cover.y - cover.radius * 2.05),
+                    (cover.x + 7.0, cover.y - cover.radius * 1.75),
+                    (cover.x + 12.0, cover.y - 47.0),
+                    (cover.x + 18.0, cover.y + 2.0),
+                ],
+                fill="#111215",
+                outline="#51483f",
+            )
+            eye_y = cover.y - cover.radius * 1.63
+            draw.ellipse((cover.x - 5.0, eye_y - 2.5, cover.x + 5.0, eye_y + 2.5), fill="#b9582c")
+        else:
+            crown = 1.15 if cover.kind == "ruin" else 1.0
+            draw.polygon(
+                [
+                    (cover.x - cover.radius, cover.y + 2),
+                    (cover.x - cover.radius * 0.72, cover.y - cover.radius * 0.55),
+                    (cover.x - cover.radius * 0.16, cover.y - cover.radius * crown),
+                    (cover.x + cover.radius * 0.18, cover.y - cover.radius * 0.72),
+                    (cover.x + cover.radius * 0.62, cover.y - cover.radius * 0.88),
+                    (cover.x + cover.radius, cover.y + 2),
+                ],
+                fill=shade,
+                outline="#5a5148",
+            )
+            if cover.kind == "ruin":
+                draw.rectangle(
+                    (cover.x + cover.radius * 0.25, cover.y - cover.radius * 1.25, cover.x + cover.radius * 0.57, cover.y - 8.0),
+                    fill="#1a1b1e",
+                    outline="#51483f",
+                )
         draw.line(
             (cover.x - cover.radius * 0.55, cover.y - cover.radius * 0.48, cover.x + cover.radius * 0.45, cover.y - cover.radius * 0.62),
             fill="#71665a",
@@ -184,7 +237,7 @@ class TinyWandererDisplay:
         self.bounds = (0, 0, root.winfo_screenwidth(), root.winfo_screenheight())
         self.origin_x = 0
         self.origin_y = self.bounds[3] - STRIP_HEIGHT
-        self.width = self.bounds[2]
+        self.width = min(MAX_SCENE_WIDTH, self.bounds[2])
         self.window = tk.Toplevel(root)
         self.window.withdraw()
         self.window.overrideredirect(True)
@@ -204,7 +257,8 @@ class TinyWandererDisplay:
         self.canvas.pack(fill="both", expand=True)
         self.photo: ImageTk.PhotoImage | None = None
         self._positioned = False
-        self.covers, self.wanderers = scene_layout(self.width)
+        self.corner = "left"
+        self.covers, self.party = scene_layout(self.width)
         self._place()
         self.window.deiconify()
         self.window.update_idletasks()
@@ -216,15 +270,21 @@ class TinyWandererDisplay:
             work = (0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight())
         changed = work != self.bounds
         self.bounds = work
-        self.origin_x = work[0]
         self.origin_y = work[3] - STRIP_HEIGHT
-        new_width = work[2] - work[0]
+        work_width = work[2] - work[0]
+        new_width = min(MAX_SCENE_WIDTH, work_width)
+        root_center = self.root.winfo_rootx() + self.root.winfo_width() * 0.5
+        new_corner = "left" if root_center >= work[0] + work_width * 0.5 else "right"
+        new_origin_x = work[0] if new_corner == "left" else work[2] - new_width
         size_changed = new_width != self.width
         if changed or size_changed:
             self.width = new_width
-            self.covers, self.wanderers = scene_layout(self.width)
+            self.covers, self.party = scene_layout(self.width)
             self.canvas.configure(width=self.width, height=STRIP_HEIGHT)
-        if changed or size_changed or not self._positioned:
+        corner_changed = new_corner != self.corner or new_origin_x != self.origin_x
+        self.corner = new_corner
+        self.origin_x = new_origin_x
+        if changed or size_changed or corner_changed or not self._positioned:
             self.window.geometry(f"{self.width}x{STRIP_HEIGHT}{self.origin_x:+d}{self.origin_y:+d}")
             self._positioned = True
 
@@ -253,15 +313,15 @@ class TinyWandererDisplay:
 
         target = Image.new("RGBA", (self.width, STRIP_HEIGHT), (0, 0, 0, 0))
         draw = ImageDraw.Draw(target)
-        for wanderer in self.wanderers:
-            seen = point_in_gaze_cone((wanderer.x, wanderer.y - 10.0), start, end)
-            advance_wanderer(
-                wanderer,
-                seen=seen,
-                covers=self.covers,
-                bounds=(18.0, self.width - 18.0),
-            )
-            draw_wanderer(draw, wanderer)
+        member_points = tuple((self.party.x + offset * self.party.direction, self.party.y - 12.0) for offset in (-15.0, 0.0, 15.0))
+        seen = any(point_in_gaze_cone(point, start, end) for point in member_points)
+        advance_party(
+            self.party,
+            seen=seen,
+            covers=self.covers,
+            bounds=(18.0, self.width - 18.0),
+        )
+        draw_party(draw, self.party)
         draw_ground_and_covers(target, self.covers)
         self.photo = ImageTk.PhotoImage(target, master=self.canvas)
         self.canvas.delete("wanderers")
