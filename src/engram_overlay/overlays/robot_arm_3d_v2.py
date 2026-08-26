@@ -447,6 +447,48 @@ def display_work_area_for_window(window: tk.Misc) -> tuple[int, int, int, int] |
         _pop_dpi_context(previous_context)
 
 
+def physical_window_bounds(window: tk.Misc) -> tuple[int, int, int, int] | None:
+    """Return the visible top-level's physical rect, including negative origins."""
+    if sys.platform != "win32":
+        return None
+    previous_context = _push_physical_dpi_context()
+    try:
+        user32 = ctypes.windll.user32
+        window_id = window.winfo_id()
+        get_ancestor = user32.GetAncestor
+        get_ancestor.argtypes = (wintypes.HWND, wintypes.UINT)
+        get_ancestor.restype = wintypes.HWND
+        root_hwnd = get_ancestor(window_id, 2) or user32.GetParent(window_id) or window_id
+        rect = wintypes.RECT()
+        if not user32.GetWindowRect(root_hwnd, ctypes.byref(rect)):
+            return None
+        return rect.left, rect.top, rect.right, rect.bottom
+    finally:
+        _pop_dpi_context(previous_context)
+
+
+def physical_canvas_transform(canvas: tk.Canvas) -> tuple[tuple[float, float], tuple[float, float]]:
+    """Map canvas-local logical coordinates into physical screen pixels."""
+    if sys.platform != "win32":
+        return (float(canvas.winfo_rootx()), float(canvas.winfo_rooty())), (1.0, 1.0)
+    previous_context = _push_physical_dpi_context()
+    try:
+        user32 = ctypes.windll.user32
+        hwnd = canvas.winfo_id()
+        origin = wintypes.POINT(0, 0)
+        rect = wintypes.RECT()
+        if not user32.ClientToScreen(hwnd, ctypes.byref(origin)) or not user32.GetClientRect(hwnd, ctypes.byref(rect)):
+            return (float(canvas.winfo_rootx()), float(canvas.winfo_rooty())), (1.0, 1.0)
+        logical_width = max(canvas.winfo_width(), 1)
+        logical_height = max(canvas.winfo_height(), 1)
+        return (
+            (float(origin.x), float(origin.y)),
+            (max(rect.right - rect.left, 1) / logical_width, max(rect.bottom - rect.top, 1) / logical_height),
+        )
+    finally:
+        _pop_dpi_context(previous_context)
+
+
 def pointer_position_in_canvas(canvas: tk.Canvas) -> tuple[float, float]:
     """Read the physical cursor and map it into the canvas coordinate space."""
     if sys.platform != "win32":

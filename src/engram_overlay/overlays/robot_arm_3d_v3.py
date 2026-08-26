@@ -21,6 +21,8 @@ from .robot_arm_3d_v2 import (
     display_work_area_for_window,
     enable_per_monitor_dpi_awareness,
     eye_emission_projection,
+    physical_canvas_transform,
+    physical_window_bounds,
 )
 
 STRIP_HEIGHT = 96
@@ -93,6 +95,11 @@ def opposite_corner_origin(root_center_x: float, work_left: float, work_right: f
     if root_center_x >= midpoint:
         return "left", work_left
     return "right", work_right - scene_width
+
+
+def absolute_tk_geometry(width: int, height: int, x: int, y: int) -> str:
+    """Encode signed virtual-desktop coordinates as absolute Tk offsets."""
+    return f"{width}x{height}+{x}+{y}"
 
 
 DEFAULT_COVERS, _DEFAULT_PARTY = scene_layout(420.0)
@@ -236,9 +243,31 @@ def draw_party(draw: ImageDraw.ImageDraw, party: WandererParty) -> None:
         )
 
 
+def terrain_ridge_points(width: float) -> tuple[tuple[float, float], ...]:
+    """Return a restrained continuous foreground ridge beneath the procession."""
+    ridge = (
+        (0.00, 0.0),
+        (0.07, -2.0),
+        (0.14, 1.0),
+        (0.23, -1.5),
+        (0.31, 0.5),
+        (0.40, -3.0),
+        (0.50, 0.0),
+        (0.61, -1.0),
+        (0.70, 1.0),
+        (0.80, -2.5),
+        (0.91, 0.0),
+        (1.00, -1.0),
+    )
+    top = tuple((width * ratio, GROUND_Y + offset) for ratio, offset in ridge)
+    return (*top, (width, STRIP_HEIGHT), (0.0, STRIP_HEIGHT))
+
+
 def draw_ground_and_covers(target: Image.Image, covers: tuple[Cover, ...]) -> None:
     draw = ImageDraw.Draw(target)
-    draw.line((10, GROUND_Y + 2, target.width - 10, GROUND_Y + 2), fill="#34312f", width=2)
+    ridge = terrain_ridge_points(target.width)
+    draw.polygon(ridge, fill="#111215")
+    draw.line(ridge[:12], fill="#51483f", width=1, joint="curve")
     for index, cover in enumerate(covers):
         shade = "#26272a" if index % 2 else "#302e2d"
         if cover.kind == "tower":
@@ -329,7 +358,12 @@ class TinyWandererDisplay:
         self.origin_y = work[3] - STRIP_HEIGHT
         work_width = work[2] - work[0]
         new_width = min(MAX_SCENE_WIDTH, work_width)
-        root_center = self.root.winfo_rootx() + self.root.winfo_width() * 0.5
+        root_bounds = physical_window_bounds(self.root)
+        root_center = (
+            (root_bounds[0] + root_bounds[2]) * 0.5
+            if root_bounds is not None
+            else self.root.winfo_rootx() + self.root.winfo_width() * 0.5
+        )
         new_corner, new_origin_x = opposite_corner_origin(root_center, work[0], work[2], new_width)
         size_changed = new_width != self.width
         if changed or size_changed:
@@ -340,7 +374,10 @@ class TinyWandererDisplay:
         self.corner = new_corner
         self.origin_x = new_origin_x
         if changed or size_changed or corner_changed or not self._positioned:
-            self.window.geometry(f"{self.width}x{STRIP_HEIGHT}{self.origin_x:+d}{self.origin_y:+d}")
+            # Tk's bare negative offset means "from the right/bottom edge".
+            # Prefix both coordinates with '+' so negative values remain
+            # absolute virtual-desktop coordinates (e.g. '+-2560+981').
+            self.window.geometry(absolute_tk_geometry(self.width, STRIP_HEIGHT, self.origin_x, self.origin_y))
             self._positioned = True
 
     def _make_click_through(self) -> None:
@@ -359,9 +396,13 @@ class TinyWandererDisplay:
         gaze_end: tuple[float, float],
     ) -> str:
         self._place()
-        source_x, source_y = source_canvas.winfo_rootx(), source_canvas.winfo_rooty()
-        start = source_x + gaze_start[0] - self.origin_x, source_y + gaze_start[1] - self.origin_y
-        direction_x, direction_y = gaze_end[0] - gaze_start[0], gaze_end[1] - gaze_start[1]
+        (source_x, source_y), (scale_x, scale_y) = physical_canvas_transform(source_canvas)
+        start = (
+            source_x + gaze_start[0] * scale_x - self.origin_x,
+            source_y + gaze_start[1] * scale_y - self.origin_y,
+        )
+        direction_x = (gaze_end[0] - gaze_start[0]) * scale_x
+        direction_y = (gaze_end[1] - gaze_start[1]) * scale_y
         length = max(math.hypot(direction_x, direction_y), 1.0)
         reach = math.hypot(self.width, self.bounds[3] - self.bounds[1]) * 2.0
         end = start[0] + direction_x / length * reach, start[1] + direction_y / length * reach
@@ -415,7 +456,13 @@ class RobotArm3DV3View(RobotArm3DV2View):
                 self._set_expression(ALARM_EXPRESSION, now)
             party_screen_x = display.origin_x + display.party.x
             party_screen_y = display.origin_y + display.party.y - 15.0
-            RobotArm3DView.tick(self, round(party_screen_x), round(party_screen_y), window_x, window_y)
+            if self.canvas is not None:
+                (canvas_x, canvas_y), (scale_x, scale_y) = physical_canvas_transform(self.canvas)
+                local_x = (party_screen_x - canvas_x) / max(scale_x, 1e-6)
+                local_y = (party_screen_y - canvas_y) / max(scale_y, 1e-6)
+                RobotArm3DView.tick(self, round(window_x + local_x), round(window_y + local_y), window_x, window_y)
+            else:
+                RobotArm3DView.tick(self, round(party_screen_x), round(party_screen_y), window_x, window_y)
             self.was_party_tracking = True
             return
 

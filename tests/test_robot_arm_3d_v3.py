@@ -7,12 +7,14 @@ from engram_overlay.overlays.robot_arm_3d_v3 import (
     Cover,
     RobotArm3DV3View,
     WandererParty,
+    absolute_tk_geometry,
     advance_party,
     draw_ground_and_covers,
     draw_party,
     point_in_gaze_cone,
     opposite_corner_origin,
     scene_layout,
+    terrain_ridge_points,
     walking_limb_pose,
 )
 from engram_overlay.registry import OVERLAYS, overlay_ids
@@ -34,6 +36,7 @@ class RobotArm3DV3Tests(unittest.TestCase):
     def test_scene_uses_opposite_corner_with_negative_monitor_coordinates(self) -> None:
         self.assertEqual(opposite_corner_origin(-420.0, -2560.0, 0.0, 640.0), ("left", -2560.0))
         self.assertEqual(opposite_corner_origin(-2200.0, -2560.0, 0.0, 640.0), ("right", -640.0))
+        self.assertEqual(absolute_tk_geometry(640, 96, -2560, 2277), "640x96+-2560+2277")
 
     def test_walking_pose_moves_opposite_limbs_through_two_segments(self) -> None:
         first = walking_limb_pose(50.0, 80.0, 1.0, 0.0)
@@ -67,6 +70,13 @@ class RobotArm3DV3Tests(unittest.TestCase):
         draw_party(ImageDraw.Draw(target), WandererParty(130.0, 118.0))
         self.assertIsNotNone(target.getbbox())
         self.assertGreater(sum(1 for pixel in target.get_flattened_data() if pixel[3]), 100)
+
+    def test_terrain_is_one_low_continuous_ridge(self) -> None:
+        ridge = terrain_ridge_points(640.0)
+        self.assertEqual(ridge[0][0], 0.0)
+        self.assertEqual(ridge[11][0], 640.0)
+        self.assertTrue(all(77.0 <= y <= 83.0 for _x, y in ridge[:12]))
+        self.assertEqual(ridge[-2:], ((640.0, 96), (0.0, 96)))
 
     def test_v3_keeps_arm_height_and_scales_party_to_companion_strip(self) -> None:
         view = RobotArm3DV3View()
