@@ -2,10 +2,14 @@ param(
     [ValidateSet("xeyes", "robot-arm", "robot-arm-3d", "robot-arm-3d-v2", "robot-arm-3d-v3")]
     [string]$Overlay = "xeyes",
     [ValidateSet("observer", "replace")]
-    [string]$Mode = "replace"
+    [string]$Mode = "replace",
+    [switch]$EyeEmission
 )
 
 $ErrorActionPreference = "Stop"
+if ($EyeEmission -and $Overlay -notin @("robot-arm-3d-v2", "robot-arm-3d-v3")) {
+    throw "Eye emission is only supported by robot-arm-3d-v2 and robot-arm-3d-v3"
+}
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $venvRoot = Join-Path $repoRoot ".venv"
 $venvPython = Join-Path $venvRoot "Scripts\python.exe"
@@ -36,6 +40,15 @@ $overlayName = switch ($Overlay) {
     "robot-arm-3d-v3" { "Engram Watchful 3D Robot Arm V3" }
     default { "Engram XEyes" }
 }
+$eyeEmissionArg = if ($EyeEmission) { '  - "--eye-emission"' } else { $null }
+$commandTail = @(
+    '  - "--mode"'
+    "  - `"$Mode`""
+)
+if ($eyeEmissionArg) {
+    $commandTail += $eyeEmissionArg
+}
+$commandTailYaml = $commandTail -join "`n"
 $manifest = @"
 schema_version: 1
 id: $Overlay
@@ -44,8 +57,7 @@ command:
   - "$launcherYaml"
   - "--overlay"
   - "$Overlay"
-  - "--mode"
-  - "$Mode"
+$commandTailYaml
 supported_modes: [observer, replace]
 "@
 [System.IO.File]::WriteAllText($manifestPath, $manifest, [System.Text.UTF8Encoding]::new($false))

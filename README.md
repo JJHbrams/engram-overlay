@@ -41,6 +41,9 @@ LLM으로 개인 overlay를 만들 때는 [LLM authoring guide](docs/llm-overlay
 
 GitHub Release의 wheel을 내려받아 설치하거나 저장소에서 editable install을 사용할 수 있다.
 
+V2/V3의 gaze emission을 함께 켜서 개발 설치하려면
+`./scripts/install-dev.ps1 -Overlay robot-arm-3d-v3 -EyeEmission`을 사용한다. 기본값은 off다.
+
 ```powershell
 python -m pip install .\engram_custom_overlay-1.0.0.<build>-py3-none-any.whl
 ```
