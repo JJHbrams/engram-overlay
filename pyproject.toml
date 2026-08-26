@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "engram-custom-overlay"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Minimal custom renderer for Engram External Overlay Event API v1"
 requires-python = ">=3.11"
 dependencies = ["Pillow>=10.0"]
 
 [project.optional-dependencies]
-tools = ["PyYAML>=6.0"]
+tools = ["PyYAML>=6.0", "build>=1.2"]
 
 [project.scripts]
 engram-custom-overlay = "engram_overlay.__main__:main"
@@ -20,6 +20,9 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "engram_overlay.overlays" = ["assets/robot_arm_3d_v2/*.png"]
+
+[tool.setuptools.dynamic]
+version = {attr = "engram_overlay._version.__version__"}
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
