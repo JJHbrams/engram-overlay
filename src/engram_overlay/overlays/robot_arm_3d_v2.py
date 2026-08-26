@@ -425,6 +425,28 @@ def display_bounds_for_window(window: tk.Misc) -> tuple[int, int, int, int] | No
         _pop_dpi_context(previous_context)
 
 
+def display_work_area_for_window(window: tk.Misc) -> tuple[int, int, int, int] | None:
+    """Return the physical work area, excluding the monitor taskbar."""
+    if sys.platform != "win32":
+        return None
+    previous_context = _push_physical_dpi_context()
+    try:
+        user32 = ctypes.windll.user32
+        window_id = window.winfo_id()
+        root_hwnd = user32.GetParent(window_id) or window_id
+        monitor = user32.MonitorFromWindow(root_hwnd, 2)
+        if not monitor:
+            return None
+        info = _MonitorInfo()
+        info.cbSize = ctypes.sizeof(_MonitorInfo)
+        if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            return None
+        rect = info.rcWork
+        return rect.left, rect.top, rect.right, rect.bottom
+    finally:
+        _pop_dpi_context(previous_context)
+
+
 def pointer_position_in_canvas(canvas: tk.Canvas) -> tuple[float, float]:
     """Read the physical cursor and map it into the canvas coordinate space."""
     if sys.platform != "win32":

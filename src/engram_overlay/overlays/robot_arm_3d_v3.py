@@ -3,20 +3,25 @@
 from __future__ import annotations
 
 import math
+import sys
+import tkinter as tk
+import ctypes
 from dataclasses import dataclass
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageTk
 
 from ..backends.tk import TkOverlayHost
 from ..protocol import JsonlTransport
 from .robot_arm_3d_v2 import (
     RobotArm3DV2View,
+    TRANSPARENT,
+    display_work_area_for_window,
     enable_per_monitor_dpi_awareness,
     eye_emission_projection,
-    ray_to_display_edge,
 )
 
-GROUND_Y = 484.0
+STRIP_HEIGHT = 78
+GROUND_Y = 64.0
 
 
 @dataclass(frozen=True)
@@ -40,11 +45,22 @@ class TinyWanderer:
     accent: str = "#d89135"
 
 
-DEFAULT_COVERS = (
-    Cover(66.0, GROUND_Y, 23.0),
-    Cover(205.0, GROUND_Y, 20.0),
-    Cover(350.0, GROUND_Y, 27.0),
-)
+def scene_layout(width: float) -> tuple[tuple[Cover, ...], list[TinyWanderer]]:
+    """Scale the miniature scene across the active monitor work area."""
+    covers = (
+        Cover(width * 0.16, GROUND_Y, 23.0),
+        Cover(width * 0.49, GROUND_Y, 20.0),
+        Cover(width * 0.84, GROUND_Y, 27.0),
+    )
+    wanderers = [
+        TinyWanderer(width * 0.27, GROUND_Y, direction=1.0, speed=28.0, accent="#d89135"),
+        TinyWanderer(width * 0.40, GROUND_Y, direction=-1.0, speed=23.0, accent=""),
+        TinyWanderer(width * 0.69, GROUND_Y, direction=1.0, speed=30.0, accent="#7f9a73"),
+    ]
+    return covers, wanderers
+
+
+DEFAULT_COVERS, _DEFAULT_WANDERERS = scene_layout(420.0)
 
 
 def point_in_gaze_cone(
@@ -160,42 +176,118 @@ def draw_ground_and_covers(target: Image.Image, covers: tuple[Cover, ...]) -> No
         )
 
 
+class TinyWandererDisplay:
+    """Independent taskbar-anchored strip that receives gaze in screen space."""
+
+    def __init__(self, root: tk.Misc) -> None:
+        self.root = root
+        self.bounds = (0, 0, root.winfo_screenwidth(), root.winfo_screenheight())
+        self.origin_x = 0
+        self.origin_y = self.bounds[3] - STRIP_HEIGHT
+        self.width = self.bounds[2]
+        self.window = tk.Toplevel(root)
+        self.window.withdraw()
+        self.window.overrideredirect(True)
+        self.window.attributes("-topmost", True)
+        try:
+            self.window.attributes("-transparentcolor", TRANSPARENT)
+        except tk.TclError:
+            pass
+        self.canvas = tk.Canvas(
+            self.window,
+            width=self.width,
+            height=STRIP_HEIGHT,
+            highlightthickness=0,
+            borderwidth=0,
+            bg=TRANSPARENT,
+        )
+        self.canvas.pack(fill="both", expand=True)
+        self.photo: ImageTk.PhotoImage | None = None
+        self._positioned = False
+        self.covers, self.wanderers = scene_layout(self.width)
+        self._place()
+        self.window.deiconify()
+        self.window.update_idletasks()
+        self._make_click_through()
+
+    def _place(self) -> None:
+        work = display_work_area_for_window(self.root)
+        if work is None:
+            work = (0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight())
+        changed = work != self.bounds
+        self.bounds = work
+        self.origin_x = work[0]
+        self.origin_y = work[3] - STRIP_HEIGHT
+        new_width = work[2] - work[0]
+        size_changed = new_width != self.width
+        if changed or size_changed:
+            self.width = new_width
+            self.covers, self.wanderers = scene_layout(self.width)
+            self.canvas.configure(width=self.width, height=STRIP_HEIGHT)
+        if changed or size_changed or not self._positioned:
+            self.window.geometry(f"{self.width}x{STRIP_HEIGHT}{self.origin_x:+d}{self.origin_y:+d}")
+            self._positioned = True
+
+    def _make_click_through(self) -> None:
+        if sys.platform != "win32":
+            return
+        user32 = ctypes.windll.user32
+        window_id = self.window.winfo_id()
+        hwnd = user32.GetParent(window_id) or window_id
+        extended_style = user32.GetWindowLongW(hwnd, -20)
+        user32.SetWindowLongW(hwnd, -20, extended_style | 0x00000020 | 0x00000080 | 0x08000000)
+
+    def update(
+        self,
+        source_canvas: tk.Canvas,
+        gaze_start: tuple[float, float],
+        gaze_end: tuple[float, float],
+    ) -> None:
+        self._place()
+        source_x, source_y = source_canvas.winfo_rootx(), source_canvas.winfo_rooty()
+        start = source_x + gaze_start[0] - self.origin_x, source_y + gaze_start[1] - self.origin_y
+        direction_x, direction_y = gaze_end[0] - gaze_start[0], gaze_end[1] - gaze_start[1]
+        length = max(math.hypot(direction_x, direction_y), 1.0)
+        reach = math.hypot(self.width, self.bounds[3] - self.bounds[1]) * 2.0
+        end = start[0] + direction_x / length * reach, start[1] + direction_y / length * reach
+
+        target = Image.new("RGBA", (self.width, STRIP_HEIGHT), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(target)
+        for wanderer in self.wanderers:
+            seen = point_in_gaze_cone((wanderer.x, wanderer.y - 10.0), start, end)
+            advance_wanderer(
+                wanderer,
+                seen=seen,
+                covers=self.covers,
+                bounds=(18.0, self.width - 18.0),
+            )
+            draw_wanderer(draw, wanderer)
+        draw_ground_and_covers(target, self.covers)
+        self.photo = ImageTk.PhotoImage(target, master=self.canvas)
+        self.canvas.delete("wanderers")
+        self.canvas.create_image(0, 0, image=self.photo, anchor=tk.NW, tags=("wanderers",))
+
+
 class RobotArm3DV3View(RobotArm3DV2View):
     """Textured arm plus reactive miniature travelers in its surveillance field."""
 
     width = 420
-    height = 520
+    height = 430
 
     def __init__(self, *, eye_emission_enabled: bool = False) -> None:
         super().__init__(eye_emission_enabled=eye_emission_enabled)
-        self.covers = DEFAULT_COVERS
-        self.wanderers = [
-            TinyWanderer(112.0, GROUND_Y, direction=1.0, speed=10.0, accent="#d89135"),
-            TinyWanderer(165.0, GROUND_Y, direction=-1.0, speed=8.5, accent=""),
-            TinyWanderer(286.0, GROUND_Y, direction=1.0, speed=11.0, accent="#7f9a73"),
-        ]
+        self.wanderer_display: TinyWandererDisplay | None = None
+
+    def mount(self, canvas: tk.Canvas) -> None:
+        super().mount(canvas)
+        self.wanderer_display = TinyWandererDisplay(canvas.winfo_toplevel())
 
     def _draw_surface_overlays(self) -> None:
-        if self.surface_image is None:
+        if self.surface_image is None or self.canvas is None or self.wanderer_display is None:
             return
-        gaze: tuple[tuple[float, float], tuple[float, float]] | None = None
         if self.expression_plane is not None:
             start, end = eye_emission_projection(self, self.expression_plane, self.camera)
-            gaze_start = (start.x, start.y)
-            gaze_end = ray_to_display_edge(
-                gaze_start,
-                (end.x - start.x, end.y - start.y),
-                self.width,
-                self.height,
-            )
-            gaze = gaze_start, gaze_end
-        draw = ImageDraw.Draw(self.surface_image)
-        for wanderer in self.wanderers:
-            seen = gaze is not None and point_in_gaze_cone((wanderer.x, wanderer.y - 10.0), *gaze)
-            advance_wanderer(wanderer, seen=seen, covers=self.covers)
-            draw_wanderer(draw, wanderer)
-        # Covers are foreground masks, so a crouched traveler is actually hidden.
-        draw_ground_and_covers(self.surface_image, self.covers)
+            self.wanderer_display.update(self.canvas, (start.x, start.y), (end.x, end.y))
 
 
 def create_robot_arm_3d_v3(

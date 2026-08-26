@@ -11,6 +11,7 @@ from engram_overlay.overlays.robot_arm_3d_v3 import (
     draw_ground_and_covers,
     draw_wanderer,
     point_in_gaze_cone,
+    scene_layout,
 )
 from engram_overlay.registry import OVERLAYS, overlay_ids
 
@@ -53,10 +54,14 @@ class RobotArm3DV3Tests(unittest.TestCase):
         self.assertIsNotNone(target.getbbox())
         self.assertGreater(sum(1 for pixel in target.get_flattened_data() if pixel[3]), 100)
 
-    def test_v3_uses_more_vertical_space_and_starts_with_a_small_party(self) -> None:
+    def test_v3_keeps_arm_height_and_scales_party_to_companion_strip(self) -> None:
         view = RobotArm3DV3View()
-        self.assertGreater(view.height, 430)
-        self.assertEqual(len(view.wanderers), 3)
+        covers, wanderers = scene_layout(1920.0)
+        self.assertEqual(view.height, 430)
+        self.assertEqual(len(wanderers), 3)
+        self.assertEqual(len(covers), 3)
+        self.assertAlmostEqual(covers[-1].x, 1920.0 * 0.84)
+        self.assertIsNone(view.wanderer_display)
         self.assertFalse(view.eye_emission_enabled)
 
 
