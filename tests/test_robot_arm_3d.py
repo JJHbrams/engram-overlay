@@ -69,6 +69,35 @@ class RobotArm3DTests(unittest.TestCase):
         self.assertNotEqual(view.target_depth, 0.0)
         self.assertNotEqual(depth_at_phase(math.pi * 0.5), depth_at_phase(math.pi * 1.5))
 
+    def test_gaze_settles_at_constrained_goal_instead_of_following_outside_pointer(self) -> None:
+        view = RobotArm3DView()
+        view.random_expressions_enabled = False
+        outside_pointer = (5000.0, 5000.0)
+        constrained_goal = constrain_target_reach(
+            view.base,
+            target_from_pointer(
+                *outside_pointer,
+                view.width,
+                view.height,
+                camera=view.camera,
+                depth=view.target_depth,
+            ),
+            view.lengths,
+        )
+        view.target = constrained_goal
+        view.joints = solve_z_posture_3d(
+            view.base,
+            view.target,
+            view.lengths,
+            elbow_hint=view.elbow_hint,
+            wrist_hint=view.wrist_hint,
+        )
+        view.mouse_gaze = (0.0, 0.0)
+
+        view.tick(round(outside_pointer[0]), round(outside_pointer[1]), 0, 0)
+
+        self.assertLess(math.hypot(*view.mouse_gaze), 0.01)
+
     def test_workspace_allows_wider_root_and_elbow_motion(self) -> None:
         camera = Camera(180.0, 190.0, yaw=-0.38, pitch=-0.10, focal_length=650.0)
         left = camera.project(target_from_pointer(-100.0, 300.0, 360.0, 430.0, camera=camera, depth=0.0))

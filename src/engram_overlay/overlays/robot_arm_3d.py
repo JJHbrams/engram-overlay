@@ -516,9 +516,11 @@ class RobotArm3DView:
         projected_eye = self.camera.project(self.joints[-1])
         # During autonomous exploration the arm follows the interpolated virtual
         # pointer, while the pupil looks ahead to its current interest point.
-        # Looking at motion_pointer here makes the gaze almost disappear because
-        # the eye endpoint is solving toward that same position.
-        gaze_pointer = self.explore_to if self.explorer_active else local_pointer
+        # During pointer tracking, use the constrained IK goal instead of the raw
+        # pointer.  The pupil therefore shows the remaining control error and
+        # settles with the arm at the edge of its reachable workspace.
+        projected_goal = self.camera.project(desired_target)
+        gaze_pointer = self.explore_to if self.explorer_active else (projected_goal.x, projected_goal.y)
         desired_mouse_gaze = tracked_gaze(gaze_pointer, (projected_eye.x, projected_eye.y), max_x=7.0, max_y=5.0)
         gaze_smoothing = 0.16
         self.mouse_gaze = (

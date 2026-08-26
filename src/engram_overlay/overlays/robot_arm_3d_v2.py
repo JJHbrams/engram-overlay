@@ -16,7 +16,7 @@ from ..backends.tk import TkOverlayHost
 from ..protocol import JsonlTransport
 from ..scene3d import Camera, Face3D, ProjectedPoint, Vec3, box_faces, lit_face_color, point_along, sphere_faces, tapered_prism_faces
 from ..software_uv import TexturedFace3D, UVTextureAtlas, atlas_cell_uv, rasterize_texture_quad, rasterize_textured_face, textured_prism_faces
-from .robot_arm import eyelid_polygon_points, tracked_gaze
+from .robot_arm import eyelid_polygon_points
 from .robot_arm_3d import TRANSPARENT, RobotArm3DView, cable_hardware_faces, first_link_accessory_faces, visible_eyelid_offsets
 
 PLAIN_CABLE = "#0c0d0f"
@@ -726,6 +726,14 @@ class RobotArm3DV2View(RobotArm3DView):
         if self.eye_emission_enabled:
             self.emission_display = EyeEmissionDisplay(canvas.winfo_toplevel())
 
+    def tick(self, pointer_x: int, pointer_y: int, window_x: int, window_y: int) -> None:
+        """Feed the IK controller one DPI-consistent pointer coordinate."""
+        if self.canvas is not None:
+            local_pointer = pointer_position_in_canvas(self.canvas)
+            pointer_x = round(window_x + local_pointer[0])
+            pointer_y = round(window_y + local_pointer[1])
+        super().tick(pointer_x, pointer_y, window_x, window_y)
+
     def _scene_faces(self) -> list[Face3D]:
         faces, self.expression_plane = v2_surface_faces(self.base, self.joints, self.camera)
         return faces
@@ -747,24 +755,15 @@ class RobotArm3DV2View(RobotArm3DView):
         if self.canvas is None or self.surface_image is None:
             return
         if self.expression_plane is not None:
-            start, end = eye_emission_projection(self, self.expression_plane, self.camera)
-            emission_end = (end.x, end.y)
             self.pointer_tracking_active = not self.explorer_active
-            if self.pointer_tracking_active:
-                pointer_local = pointer_position_in_canvas(self.canvas)
-                desired_gaze = tracked_gaze(pointer_local, (start.x, start.y), max_x=7.0, max_y=5.0)
-                self.mouse_gaze = (
-                    self.mouse_gaze[0] + (desired_gaze[0] - self.mouse_gaze[0]) * 0.28,
-                    self.mouse_gaze[1] + (desired_gaze[1] - self.mouse_gaze[1]) * 0.28,
-                )
-                emission_end = pointer_local
+            start, end = eye_emission_projection(self, self.expression_plane, self.camera)
             if self.eye_emission_enabled:
                 render_eye_emission(self.surface_image, self, self.expression_plane, self.camera)
                 if self.emission_display is not None:
                     self.emission_display.update(
                         self.canvas,
                         (start.x, start.y),
-                        emission_end,
+                        (end.x, end.y),
                         self.expression.color,
                         (math.sin(self.pulse_phase) + 1.0) * 0.5,
                     )
