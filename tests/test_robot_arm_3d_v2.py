@@ -11,6 +11,7 @@ from engram_overlay.overlays.robot_arm_3d_v2 import (
     pod_faces_and_expression_plane,
     render_expression_layers,
     render_expression_texture,
+    render_eye_emission,
     v2_surface_faces,
     visual_link_joints,
 )
@@ -135,6 +136,19 @@ class RobotArm3DV2Tests(unittest.TestCase):
         self.assertEqual(texture.mode, "RGBA")
         self.assertGreater(texture.getpixel((36, 36))[3], 0)
         self.assertEqual(texture.getpixel((0, 0))[3], 0)
+
+    def test_eye_emission_uses_mood_color_outside_aperture(self) -> None:
+        view = RobotArm3DV2View()
+        camera = Camera(180.0, 190.0)
+        eye = Vec3(20.0, 105.0, 8.0)
+        wrist = Vec3(-30.0, 25.0, -12.0)
+        _, planes = pod_faces_and_expression_plane(camera, eye, wrist)
+        target = Image.new("RGBA", (360, 420), (0, 0, 0, 0))
+        render_eye_emission(target, view, planes, camera)
+        colored = [pixel for pixel in target.get_flattened_data() if pixel[3] > 0]
+        self.assertGreater(len(colored), 150)
+        self.assertTrue(all(alpha == 255 for _red, _green, _blue, alpha in colored))
+        self.assertTrue(any(red > blue for red, _green, blue, _alpha in colored))
 
     def test_generated_uv_atlas_is_packaged(self) -> None:
         asset = (

@@ -7,7 +7,7 @@ import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageTk
+from PIL import Image, ImageColor, ImageDraw, ImageFilter, ImageTk
 
 from ..backends.tk import TkOverlayHost
 from ..protocol import JsonlTransport
@@ -323,6 +323,81 @@ def render_expression_texture(view: RobotArm3DView, size: int = 72) -> Image.Ima
     return image
 
 
+def render_eye_emission(
+    target: Image.Image,
+    view: RobotArm3DView,
+    planes: ExpressionPlaneLayers,
+    camera: Camera,
+) -> None:
+    """Emit a soft mood-colored bloom along the 3D eye gaze direction."""
+    aperture = planes.eyelid
+    center = sum(aperture[1:], aperture[0]) * 0.25
+    side = (aperture[1] - aperture[0]).normalized(Vec3(1.0, 0.0, 0.0))
+    up = (aperture[3] - aperture[0]).normalized(Vec3(0.0, 1.0, 0.0))
+    rear_normal = side.cross(up).normalized(Vec3(0.0, 0.0, 1.0))
+    forward = rear_normal * -1.0
+    gaze_x = min(max(view.expression_gaze[0] + view.mouse_gaze[0], -7.0), 7.0)
+    gaze_y = min(max(view.expression_gaze[1] + view.mouse_gaze[1], -5.0), 5.0)
+    direction = (
+        forward
+        + side * (gaze_x / 7.0 * 0.38)
+        + up * (gaze_y / 5.0 * 0.30)
+    ).normalized(forward)
+    start = camera.project(center + forward * 1.0)
+    end = camera.project(center + direction * 115.0)
+    delta_x = end.x - start.x
+    delta_y = end.y - start.y
+    distance = math.hypot(delta_x, delta_y)
+    if distance > 68.0:
+        scale = 68.0 / distance
+        delta_x *= scale
+        delta_y *= scale
+        distance = 68.0
+    end_x = start.x + delta_x
+    end_y = start.y + delta_y
+
+    bloom_radius = 48.0
+    left = max(0, math.floor(min(start.x, end_x) - bloom_radius))
+    top = max(0, math.floor(min(start.y, end_y) - bloom_radius))
+    right = min(target.width, math.ceil(max(start.x, end_x) + bloom_radius))
+    bottom = min(target.height, math.ceil(max(start.y, end_y) + bloom_radius))
+    if right <= left or bottom <= top:
+        return
+
+    local_size = (right - left, bottom - top)
+    start_x = start.x - left
+    start_y = start.y - top
+    red, green, blue = ImageColor.getrgb(view.expression.color)
+    mid = tuple(round(channel + (255 - channel) * 0.24) for channel in (red, green, blue))
+    pulse = (math.sin(view.pulse_phase) + 1.0) * 0.5
+
+    # Windows Tk color-key transparency turns ordinary semi-transparent blur
+    # pixels black.  Blur an intensity mask, then dither it to binary alpha so
+    # the bloom stays airy without ever emitting dark pixels.
+    outer_mask = Image.new("L", local_size, 0)
+    outer_draw = ImageDraw.Draw(outer_mask)
+    for step in range(5, -1, -1):
+        ratio = step / 5.0
+        center_x = start_x + delta_x * ratio * 0.45
+        center_y = start_y + delta_y * ratio * 0.45
+        radius = 17.0 + ratio * 8.0 + pulse * 1.5
+        strength = round(112.0 - ratio * 40.0 + pulse * 12.0)
+        outer_draw.ellipse(
+            (center_x - radius, center_y - radius, center_x + radius, center_y + radius),
+            fill=strength,
+        )
+    core_radius = 15.5 + pulse * 2.0
+    outer_draw.ellipse(
+        (start_x - core_radius, start_y - core_radius, start_x + core_radius, start_y + core_radius),
+        fill=190,
+    )
+    outer_mask = outer_mask.filter(ImageFilter.GaussianBlur(6.5))
+    outer_alpha = outer_mask.convert("1", dither=Image.Dither.FLOYDSTEINBERG).convert("L")
+    glow = Image.new("RGBA", local_size, mid + (255,))
+    glow.putalpha(outer_alpha)
+    target.alpha_composite(glow, dest=(left, top))
+
+
 class RobotArm3DV2View(RobotArm3DView):
     """V1 behavior rendered through a real low-poly UV pipeline."""
 
@@ -361,6 +436,7 @@ class RobotArm3DV2View(RobotArm3DView):
         if self.canvas is None or self.surface_image is None:
             return
         if self.expression_plane is not None:
+            render_eye_emission(self.surface_image, self, self.expression_plane, self.camera)
             for plane, texture in zip(self.expression_plane.ordered(), render_expression_layers(self), strict=True):
                 projected = tuple(self.camera.project(vertex) for vertex in plane)
                 rasterize_texture_quad(self.surface_image, texture, projected)
