@@ -5,7 +5,9 @@ from PIL import Image
 
 from engram_overlay.overlays.robot_arm_3d_v2 import (
     RobotArm3DV2View,
+    pod_axis,
     pod_faces_and_expression_plane,
+    render_expression_layers,
     render_expression_texture,
     v2_surface_faces,
 )
@@ -46,10 +48,18 @@ class RobotArm3DV2Tests(unittest.TestCase):
         wrist = Vec3(-30.0, 25.0, -12.0)
         faces, plane = pod_faces_and_expression_plane(camera, eye, wrist)
         self.assertEqual(len(faces), 17)
-        self.assertEqual(len(plane), 4)
-        self.assertGreater((faces[-1].vertices[0] - eye).length, 40.0)
-        projected = tuple(camera.project(vertex) for vertex in plane)
+        self.assertEqual(len(plane.ordered()), 4)
+        self.assertGreater((faces[-1].vertices[0] - eye).length, 80.0)
+        projected = tuple(camera.project(vertex) for vertex in plane.eyelid)
         self.assertGreater(abs((projected[1].x - projected[0].x) * (projected[3].y - projected[0].y)), 400.0)
+        self.assertGreater((plane.sclera[0] - plane.eyelid[0]).length, 4.0)
+
+    def test_pod_aperture_prefers_forward_camera_gaze(self) -> None:
+        camera = Camera(180.0, 190.0)
+        eye = Vec3(20.0, 105.0, 8.0)
+        wrist = Vec3(-30.0, 25.0, -12.0)
+        camera_depth = camera.world_space(Vec3(0.0, 0.0, 1.0)).normalized()
+        self.assertGreater(pod_axis(camera, eye, wrist).dot(camera_depth), 0.85)
 
     def test_v2_mesh_contains_stable_uv_faces_for_links_and_pod(self) -> None:
         camera = Camera(180.0, 190.0)
@@ -57,8 +67,8 @@ class RobotArm3DV2Tests(unittest.TestCase):
         joints = [base, Vec3(45.0, -65.0, 20.0), Vec3(-30.0, 25.0, -12.0), Vec3(20.0, 105.0, 8.0)]
         faces, plane = v2_surface_faces(base, joints, camera)
         textured = [face for face in faces if isinstance(face, TexturedFace3D)]
-        self.assertGreater(len(textured), 45)
-        self.assertEqual(len(plane), 4)
+        self.assertGreater(len(textured), 60)
+        self.assertEqual(len(plane.ordered()), 4)
         self.assertTrue(all(len(face.vertices) == len(face.uvs) for face in textured))
 
     def test_perspective_rasterizer_paints_texture_pixels(self) -> None:
@@ -83,6 +93,10 @@ class RobotArm3DV2Tests(unittest.TestCase):
 
     def test_expression_is_rendered_to_rgba_texture(self) -> None:
         view = RobotArm3DV2View()
+        layers = render_expression_layers(view)
+        self.assertEqual(len(layers), 4)
+        self.assertTrue(all(layer.mode == "RGBA" for layer in layers))
+        self.assertTrue(all(layer.getbbox() is not None for layer in layers))
         texture = render_expression_texture(view)
         self.assertEqual(texture.mode, "RGBA")
         self.assertGreater(texture.getpixel((36, 36))[3], 0)
