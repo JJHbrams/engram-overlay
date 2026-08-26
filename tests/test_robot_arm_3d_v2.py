@@ -55,7 +55,12 @@ class RobotArm3DV2Tests(unittest.TestCase):
         self.assertGreater((faces[-1].vertices[0] - eye).length, 80.0)
         projected = tuple(camera.project(vertex) for vertex in plane.eyelid)
         self.assertGreater(abs((projected[1].x - projected[0].x) * (projected[3].y - projected[0].y)), 400.0)
-        self.assertGreater((plane.sclera[0] - plane.eyelid[0]).length, 4.0)
+        self.assertLess((plane.sclera[0] - plane.eyelid[0]).length, 1e-9)
+        self.assertGreater((plane.iris[0] - plane.sclera[0]).length, 1.5)
+        self.assertGreater((plane.pupil[0] - plane.iris[0]).length, 1.5)
+        iris_width = abs(camera.project(plane.iris[1]).x - camera.project(plane.iris[0]).x)
+        pupil_width = abs(camera.project(plane.pupil[1]).x - camera.project(plane.pupil[0]).x)
+        self.assertGreater(pupil_width, iris_width)
 
     def test_pod_aperture_prefers_forward_camera_gaze(self) -> None:
         camera = Camera(180.0, 190.0)

@@ -21,13 +21,16 @@ PLAIN_TECH = "#34302b"
 PLAIN_JOINT = "#25282c"
 POD_MIDDLE_DEPTH = 38.0
 POD_REAR_DEPTH = 94.0
+EYE_BASE_DEPTH = 0.0
+EYE_IRIS_DEPTH = -1.6
+EYE_PUPIL_DEPTH = -3.2
 
 ExpressionQuad = tuple[Vec3, Vec3, Vec3, Vec3]
 
 
 @dataclass(frozen=True)
 class ExpressionPlaneLayers:
-    """Rear-to-front planes that give the mechanical eye physical depth."""
+    """Render planes that give the iris and pupil restrained physical depth."""
 
     sclera: ExpressionQuad
     iris: ExpressionQuad
@@ -132,10 +135,10 @@ def pod_faces_and_expression_plane(
         )
 
     planes = ExpressionPlaneLayers(
-        sclera=plane_at(2.8),
-        iris=plane_at(1.0),
-        pupil=plane_at(-0.6),
-        eyelid=plane_at(-2.2),
+        sclera=plane_at(EYE_BASE_DEPTH),
+        iris=plane_at(EYE_IRIS_DEPTH),
+        pupil=plane_at(EYE_PUPIL_DEPTH),
+        eyelid=plane_at(EYE_BASE_DEPTH),
     )
     return faces, planes
 
