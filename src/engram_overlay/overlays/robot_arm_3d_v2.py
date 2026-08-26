@@ -22,8 +22,8 @@ PLAIN_JOINT = "#25282c"
 POD_MIDDLE_DEPTH = 38.0
 POD_REAR_DEPTH = 94.0
 EYE_BASE_DEPTH = 0.0
-EYE_IRIS_DEPTH = -1.6
-EYE_PUPIL_DEPTH = -3.2
+EYE_IRIS_DEPTH = 2.4
+EYE_PUPIL_DEPTH = -2.2
 
 ExpressionQuad = tuple[Vec3, Vec3, Vec3, Vec3]
 
@@ -38,7 +38,7 @@ class ExpressionPlaneLayers:
     eyelid: ExpressionQuad
 
     def ordered(self) -> tuple[ExpressionQuad, ...]:
-        return self.sclera, self.iris, self.pupil, self.eyelid
+        return self.iris, self.sclera, self.pupil, self.eyelid
 
 
 def pod_axis(camera: Camera, eye: Vec3, wrist: Vec3) -> Vec3:
@@ -226,23 +226,40 @@ def v2_surface_faces(
 
 
 def render_expression_layers(view: RobotArm3DView, size: int = 72) -> tuple[Image.Image, ...]:
-    """Render sclera, iris, pupil, and eyelids as independent RGBA textures."""
+    """Render backlight, annular base, camera lens, and eyelids back-to-front."""
     layers = tuple(Image.new("RGBA", (size, size), (0, 0, 0, 0)) for _ in range(4))
     sclera, iris, pupil, eyelid = layers
     margin = 3
-    ImageDraw.Draw(sclera).ellipse(
+    base_draw = ImageDraw.Draw(sclera)
+    base_draw.ellipse(
         (margin, margin, size - margin, size - margin),
         fill="#e7edf0",
         outline="#0f172a",
         width=4,
     )
-    center_x = size * 0.5 + (view.expression_gaze[0] + view.mouse_gaze[0]) * 0.9
-    center_y = size * 0.5 + (view.expression_gaze[1] + view.mouse_gaze[1]) * 0.9
+    aperture_radius = size * 0.32
+    base_draw.ellipse(
+        (size * 0.5 - aperture_radius, size * 0.5 - aperture_radius, size * 0.5 + aperture_radius, size * 0.5 + aperture_radius),
+        fill=(0, 0, 0, 0),
+        outline="#334155",
+        width=3,
+    )
+    gaze_x = view.expression_gaze[0] + view.mouse_gaze[0]
+    gaze_y = view.expression_gaze[1] + view.mouse_gaze[1]
+    center_x = size * 0.5 + gaze_x * 0.9
+    center_y = size * 0.5 + gaze_y * 0.9
     pulse = (math.sin(view.pulse_phase) + 1.0) * 0.5
     iris_x = (view.pupil_size[0] + pulse * 0.8) * 0.92
     iris_y = (view.pupil_size[1] + pulse * 0.8) * 0.92
     halo = 5.0 + pulse * 1.5
     iris_draw = ImageDraw.Draw(iris)
+    backing_radius = aperture_radius + 4.0
+    iris_draw.ellipse(
+        (size * 0.5 - backing_radius, size * 0.5 - backing_radius, size * 0.5 + backing_radius, size * 0.5 + backing_radius),
+        fill="#071018",
+        outline="#1e293b",
+        width=2,
+    )
     iris_draw.ellipse(
         (center_x - iris_x - halo, center_y - iris_y - halo, center_x + iris_x + halo, center_y + iris_y + halo),
         fill=view.expression.color + "58",
@@ -253,6 +270,23 @@ def render_expression_layers(view: RobotArm3DView, size: int = 72) -> tuple[Imag
         outline="#082f49",
         width=max(2, round(view.pupil_outline_width)),
     )
+    gaze_angle = math.atan2(gaze_y, gaze_x) if abs(gaze_x) + abs(gaze_y) > 0.05 else 0.0
+    reticle_base = max(iris_x, iris_y)
+    reticle_phase = math.degrees(gaze_angle * 0.18 + view.pulse_phase * 0.025)
+    reticle_patterns = ((16.0, 12.0), (10.0, 17.0), (5.0, 22.0))
+    for ring_index, (arc_length, gap_length) in enumerate(reticle_patterns):
+        ring_radius = reticle_base + 2.0 + ring_index * 3.0 + pulse * (0.35 + ring_index * 0.2)
+        step = arc_length + gap_length
+        angle = reticle_phase + ring_index * 11.0
+        while angle < reticle_phase + 360.0:
+            iris_draw.arc(
+                (center_x - ring_radius, center_y - ring_radius, center_x + ring_radius, center_y + ring_radius),
+                start=angle,
+                end=angle + arc_length,
+                fill=view.expression.color + ("e0" if ring_index == 0 else "a8"),
+                width=2 if ring_index == 0 else 1,
+            )
+            angle += step
     pupil_radius = max(4.2, min(iris_x, iris_y) * 0.34)
     pupil_draw = ImageDraw.Draw(pupil)
     pupil_draw.ellipse(
@@ -261,9 +295,13 @@ def render_expression_layers(view: RobotArm3DView, size: int = 72) -> tuple[Imag
         outline="#d7f5ff",
         width=1,
     )
+    lens_highlight_angle = gaze_angle * 0.12 - 2.25
+    highlight_x = center_x + math.cos(lens_highlight_angle) * pupil_radius * 0.30
+    highlight_y = center_y + math.sin(lens_highlight_angle) * pupil_radius * 0.30
+    highlight_radius = pupil_radius * 0.24
     pupil_draw.ellipse(
-        (center_x - pupil_radius * 0.35, center_y - pupil_radius * 0.45, center_x + pupil_radius * 0.05, center_y - pupil_radius * 0.05),
-        fill="#ffffffb8",
+        (highlight_x - highlight_radius, highlight_y - highlight_radius, highlight_x + highlight_radius, highlight_y + highlight_radius),
+        fill="#ffffffc8",
     )
     upper_y, lower_y = visible_eyelid_offsets(view.upper_y, view.lower_y)
     eyelid_draw = ImageDraw.Draw(eyelid)
@@ -274,7 +312,7 @@ def render_expression_layers(view: RobotArm3DView, size: int = 72) -> tuple[Imag
         polygon = [(size * 0.5 + points[index], size * 0.5 + points[index + 1]) for index in range(0, len(points), 2)]
         eyelid_draw.polygon(polygon, fill="#475569", outline="#0f172a")
     eyelid_draw.ellipse((margin, margin, size - margin, size - margin), outline="#0f172a", width=4)
-    return layers
+    return iris, sclera, pupil, eyelid
 
 
 def render_expression_texture(view: RobotArm3DView, size: int = 72) -> Image.Image:
