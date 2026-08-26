@@ -19,7 +19,7 @@ engram-custom-overlay = "engram_overlay.__main__:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"engram_overlay.overlays" = ["assets/robot_arm_3d_v2/*.png"]
+"engram_overlay.overlays" = ["assets/robot_arm_3d_v2/*.png", "assets/rabbit_2d/*.png"]
 
 [tool.setuptools.dynamic]
 version = {attr = "engram_overlay._version.__version__"}

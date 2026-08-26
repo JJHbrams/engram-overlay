@@ -31,10 +31,26 @@ LLM으로 개인 overlay를 만들 때는 [LLM authoring guide](docs/llm-overlay
 
 | id | backend | 설명 |
 | --- | --- | --- |
+| `rabbit-2d` | Tk sprite grid | 손그림 토끼 5개 상태를 Engram 의미 이벤트에 맞춰 고정·랜덤 회전하는 2D 캐릭터 |
 | `xeyes` | Tk | 화면 전체의 mouse pointer를 따라보는 두 눈. 첫 API/입력 smoke 구현 |
 | `robot-arm` | Tk | 천장 root에서 Z 자세로 내려오며 iris·LED·ambient 표정을 재생하는 단안 3-link arm |
 | `robot-arm-3d` | Tk software 3D | 고정 카메라에서 독립적인 XYZ 운동을 원근 투영·depth sort·면 조명으로 렌더링하는 단안 3-link arm |
 | `robot-arm-3d-v2` | Tk textured software 3D | 생성형 material atlas를 quad 세분 면에 샘플링하고 적층 외장·케이블 레일을 확장한 산업형 단안 arm |
+
+### Rabbit 상태 grid
+
+`rabbit-2d`는 `docs/컨셉아트/rabbit.jpg`의 다섯 포즈를 투명 3×2 atlas로 정리해 사용한다.
+Engram 기본 sprite grid처럼 한 time bucket 안에서는 프레임을 고정하고, 다음 bucket에서
+직전 프레임을 제외한 후보를 무작위로 고른다.
+
+| display hint | rabbit 상태 |
+| --- | --- |
+| `idle`, `default` | 졸림·놀람·울먹임·궁금함·화남 5종 shuffle |
+| `hover`, `success` | 놀람 |
+| `click` | 놀람 또는 화남 |
+| `input` | 궁금함 |
+| `generating`, `search`, `thought`, `memory` | 의미별 2종 random |
+| `provider_error`, `error` | 울먹임 또는 화남 |
 
 ## 설치와 릴리스
 

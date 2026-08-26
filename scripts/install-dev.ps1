@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("xeyes", "robot-arm", "robot-arm-3d", "robot-arm-3d-v2")]
+    [ValidateSet("xeyes", "rabbit-2d", "robot-arm", "robot-arm-3d", "robot-arm-3d-v2")]
     [string]$Overlay = "xeyes",
     [ValidateSet("observer", "replace")]
     [string]$Mode = "replace"
@@ -30,6 +30,7 @@ New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 $manifestPath = Join-Path $installDir "manifest.yaml"
 $launcherYaml = $launcher.Replace("\", "/").Replace('"', '\"')
 $overlayName = switch ($Overlay) {
+    "rabbit-2d" { "Rabbit" }
     "robot-arm" { "Engram 3-Link Robot Arm" }
     "robot-arm-3d" { "Engram 3D Robot Arm" }
     "robot-arm-3d-v2" { "Engram Textured 3D Robot Arm V2" }
