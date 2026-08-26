@@ -11,6 +11,7 @@ from engram_overlay.overlays.robot_arm_3d_v3 import (
     draw_ground_and_covers,
     draw_party,
     point_in_gaze_cone,
+    opposite_corner_origin,
     scene_layout,
 )
 from engram_overlay.registry import OVERLAYS, overlay_ids
@@ -28,6 +29,10 @@ class RobotArm3DV3Tests(unittest.TestCase):
         self.assertFalse(point_in_gaze_cone((50.0, 30.0), (0.0, 0.0), (100.0, 0.0), half_angle_degrees=15.0))
         self.assertFalse(point_in_gaze_cone((-20.0, 0.0), (0.0, 0.0), (100.0, 0.0)))
         self.assertFalse(point_in_gaze_cone((130.0, 0.0), (0.0, 0.0), (100.0, 0.0)))
+
+    def test_scene_uses_opposite_corner_with_negative_monitor_coordinates(self) -> None:
+        self.assertEqual(opposite_corner_origin(-420.0, -2560.0, 0.0, 640.0), ("left", -2560.0))
+        self.assertEqual(opposite_corner_origin(-2200.0, -2560.0, 0.0, 640.0), ("right", -640.0))
 
     def test_seen_party_evades_toward_nearest_cover_then_hides(self) -> None:
         covers = (Cover(50.0, 100.0, 20.0), Cover(180.0, 100.0, 20.0))

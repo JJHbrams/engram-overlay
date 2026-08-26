@@ -56,6 +56,14 @@ def scene_layout(width: float) -> tuple[tuple[Cover, ...], WandererParty]:
     return covers, WandererParty(width * 0.31, GROUND_Y)
 
 
+def opposite_corner_origin(root_center_x: float, work_left: float, work_right: float, scene_width: float) -> tuple[str, float]:
+    """Place the scene in the work-area corner farthest from the robot."""
+    midpoint = work_left + (work_right - work_left) * 0.5
+    if root_center_x >= midpoint:
+        return "left", work_left
+    return "right", work_right - scene_width
+
+
 DEFAULT_COVERS, _DEFAULT_PARTY = scene_layout(420.0)
 
 
@@ -274,8 +282,7 @@ class TinyWandererDisplay:
         work_width = work[2] - work[0]
         new_width = min(MAX_SCENE_WIDTH, work_width)
         root_center = self.root.winfo_rootx() + self.root.winfo_width() * 0.5
-        new_corner = "left" if root_center >= work[0] + work_width * 0.5 else "right"
-        new_origin_x = work[0] if new_corner == "left" else work[2] - new_width
+        new_corner, new_origin_x = opposite_corner_origin(root_center, work[0], work[2], new_width)
         size_changed = new_width != self.width
         if changed or size_changed:
             self.width = new_width
