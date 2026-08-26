@@ -432,17 +432,9 @@ def display_work_area_for_window(window: tk.Misc) -> tuple[int, int, int, int] |
     previous_context = _push_physical_dpi_context()
     try:
         user32 = ctypes.windll.user32
-        # Tk may expose an inner wrapper HWND whose owning monitor lags behind
-        # after a cross-display drag. The physical window center is the stable
-        # source of truth shared with our canvas pointer mapping.
-        point = wintypes.POINT(
-            round(window.winfo_rootx() + window.winfo_width() * 0.5),
-            round(window.winfo_rooty() + window.winfo_height() * 0.5),
-        )
-        monitor_from_point = user32.MonitorFromPoint
-        monitor_from_point.argtypes = (wintypes.POINT, wintypes.DWORD)
-        monitor_from_point.restype = wintypes.HANDLE
-        monitor = monitor_from_point(point, 2)
+        window_id = window.winfo_id()
+        root_hwnd = user32.GetParent(window_id) or window_id
+        monitor = user32.MonitorFromWindow(root_hwnd, 2)
         if not monitor:
             return None
         info = _MonitorInfo()

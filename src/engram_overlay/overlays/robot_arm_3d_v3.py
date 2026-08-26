@@ -6,12 +6,15 @@ import math
 import sys
 import tkinter as tk
 import ctypes
+import time
 from dataclasses import dataclass
 
 from PIL import Image, ImageDraw, ImageTk
 
 from ..backends.tk import TkOverlayHost
 from ..protocol import JsonlTransport
+from .robot_arm import ALARM_EXPRESSION, expression_for_hint
+from .robot_arm_3d import RobotArm3DView
 from .robot_arm_3d_v2 import (
     RobotArm3DV2View,
     TRANSPARENT,
@@ -44,6 +47,34 @@ class WandererParty:
     state: str = "walk"
     state_time: float = 0.0
     stride: float = 0.0
+
+
+@dataclass(frozen=True)
+class ArticulatedPose:
+    left_arm: tuple[tuple[float, float], ...]
+    right_arm: tuple[tuple[float, float], ...]
+    left_leg: tuple[tuple[float, float], ...]
+    right_leg: tuple[tuple[float, float], ...]
+
+
+def walking_limb_pose(x: float, ground: float, direction: float, phase: float, crouch: float = 0.0) -> ArticulatedPose:
+    """Return two-segment arm and leg joints for a readable silhouette walk."""
+    hip = (x, ground - 10.0 + crouch * 0.55)
+    shoulder = (x + direction * 0.5, ground - 24.0 + crouch)
+    swing = math.sin(phase)
+    lift = max(0.0, math.cos(phase)) * 1.6
+
+    def leg(sign: float) -> tuple[tuple[float, float], ...]:
+        knee = (hip[0] + direction * swing * 4.2 * sign, hip[1] + 5.2 - lift * sign)
+        foot = (knee[0] + direction * swing * 4.0 * sign, ground - lift * sign)
+        return hip, knee, foot
+
+    def arm(sign: float) -> tuple[tuple[float, float], ...]:
+        elbow = (shoulder[0] - direction * swing * 3.5 * sign, shoulder[1] + 5.0)
+        hand = (elbow[0] - direction * swing * 3.0 * sign, elbow[1] + 5.0)
+        return shoulder, elbow, hand
+
+    return ArticulatedPose(left_arm=arm(1.0), right_arm=arm(-1.0), left_leg=leg(1.0), right_leg=leg(-1.0))
 
 
 def scene_layout(width: float) -> tuple[tuple[Cover, ...], WandererParty]:
@@ -144,39 +175,55 @@ def draw_wanderer(
     role: int,
 ) -> None:
     """Paint an original hooded carrier silhouette with role-specific gear."""
-    crouch = 5.0 if state == "hide" else 2.0 if state == "peek" else 0.0
-    bob = 0.0 if crouch else math.sin(stride + role * 1.7) * 1.2
-    height = (22.0, 18.0, 24.0)[role]
+    crouch = 6.0 if state == "hide" else 2.5 if state == "peek" else 0.0
+    phase = stride + role * 0.72
+    bob = 0.0 if crouch else math.sin(phase * 2.0) * 0.8
+    height = (34.0, 31.0, 36.0)[role]
     head_y = ground - height + crouch + bob
     facing = direction
-    cloak_width = (6.5, 6.0, 7.0)[role]
-    cloak = [(x - cloak_width, ground - 2.0), (x + cloak_width, ground - 2.0), (x + facing * 3.0, head_y + 5.0)]
-    draw.polygon(cloak, fill="#101114", outline="#494139")
-    draw.ellipse((x - 3.7, head_y - 3.7, x + 3.7, head_y + 3.7), fill="#141518", outline="#5f5549")
+    pose = walking_limb_pose(x, ground, facing, phase, crouch)
+    limb_color = "#111216"
+    for limb in (pose.left_leg, pose.right_leg, pose.left_arm, pose.right_arm):
+        draw.line(limb, fill="#51483e", width=4, joint="curve")
+        draw.line(limb, fill=limb_color, width=3, joint="curve")
+
+    shoulder_y = head_y + 5.0
+    hip_y = ground - 10.0 + crouch * 0.55
     draw.polygon(
-        [(x - 5.0, head_y), (x + 5.0, head_y), (x + facing * 1.5, head_y - 6.5)],
+        [(x - 4.2, shoulder_y), (x + 4.2, shoulder_y), (x + 3.1, hip_y), (x - 3.1, hip_y)],
+        fill="#111216",
+        outline="#51483e",
+    )
+    # A short wind-swept cape keeps the traveler silhouette without turning
+    # the entire body into a triangular icon.
+    cape_back = x - facing * (7.5 + role)
+    draw.polygon(
+        [(x - facing * 3.2, shoulder_y + 1.0), (cape_back, hip_y - 1.0), (x - facing * 2.2, hip_y + 1.0)],
+        fill="#17171a",
+        outline="#494139",
+    )
+    draw.ellipse((x - 2.8, head_y - 2.8, x + 2.8, head_y + 2.8), fill="#141518", outline="#665b4e")
+    draw.polygon(
+        [(x - 3.4, head_y), (x + 3.4, head_y), (x + facing * 1.0, head_y - 4.5)],
         fill="#17171a",
         outline="#665b4e",
     )
     if role == 0:
-        staff_x = x + facing * 7.0
-        draw.line((staff_x, head_y + 2.0, staff_x + facing * 1.5, ground + 1.0), fill="#736452", width=2)
+        hand_x, hand_y = pose.left_arm[-1]
+        staff_x = hand_x + facing * 1.5
+        draw.line((staff_x, head_y - 1.0, staff_x + facing * 2.0, ground + 1.0), fill="#806e59", width=2)
     elif role == 1:
         pack_x = x - facing * 5.0
         draw.ellipse((pack_x - 3.0, head_y + 4.0, pack_x + 3.0, head_y + 11.0), fill="#242124")
         ember_x = x + facing * 6.0
         draw.ellipse((ember_x - 1.5, head_y + 6.0, ember_x + 1.5, head_y + 9.0), fill="#d27a2e")
     else:
-        draw.line((x - facing * 4.0, head_y + 5.0, x - facing * 8.0, head_y + 11.0), fill="#5b5045", width=2)
-    if state != "hide":
-        foot = math.sin(stride + role * 1.7) * 2.2
-        draw.line((x - 2.0, ground - 2.0, x - 3.0 - foot, ground + 1.0), fill="#71685b", width=1)
-        draw.line((x + 2.0, ground - 2.0, x + 3.0 + foot, ground + 1.0), fill="#71685b", width=1)
+        draw.ellipse((x - facing * 9.0 - 3.0, head_y + 5.0, x - facing * 9.0 + 3.0, head_y + 13.0), fill="#242124")
 
 
 def draw_party(draw: ImageDraw.ImageDraw, party: WandererParty) -> None:
     """Draw a tight three-person procession that keeps formation."""
-    offsets = (-15.0, 0.0, 15.0)
+    offsets = (-20.0, 0.0, 20.0)
     for role, offset in enumerate(offsets):
         draw_wanderer(
             draw,
@@ -248,6 +295,7 @@ class TinyWandererDisplay:
         self.width = min(MAX_SCENE_WIDTH, self.bounds[2])
         self.window = tk.Toplevel(root)
         self.window.withdraw()
+        self.window.title("Engram V3 Wanderer Strip")
         self.window.overrideredirect(True)
         self.window.attributes("-topmost", True)
         try:
@@ -309,7 +357,7 @@ class TinyWandererDisplay:
         source_canvas: tk.Canvas,
         gaze_start: tuple[float, float],
         gaze_end: tuple[float, float],
-    ) -> None:
+    ) -> str:
         self._place()
         source_x, source_y = source_canvas.winfo_rootx(), source_canvas.winfo_rooty()
         start = source_x + gaze_start[0] - self.origin_x, source_y + gaze_start[1] - self.origin_y
@@ -318,9 +366,12 @@ class TinyWandererDisplay:
         reach = math.hypot(self.width, self.bounds[3] - self.bounds[1]) * 2.0
         end = start[0] + direction_x / length * reach, start[1] + direction_y / length * reach
 
-        target = Image.new("RGBA", (self.width, STRIP_HEIGHT), (0, 0, 0, 0))
+        # A secondary Windows color-key Toplevel can discard an RGBA
+        # PhotoImage as fully transparent. Paint an opaque key-color RGB frame
+        # instead; Tk removes only #010203 and keeps every silhouette pixel.
+        target = Image.new("RGB", (self.width, STRIP_HEIGHT), TRANSPARENT)
         draw = ImageDraw.Draw(target)
-        member_points = tuple((self.party.x + offset * self.party.direction, self.party.y - 12.0) for offset in (-15.0, 0.0, 15.0))
+        member_points = tuple((self.party.x + offset * self.party.direction, self.party.y - 15.0) for offset in (-20.0, 0.0, 20.0))
         seen = any(point_in_gaze_cone(point, start, end) for point in member_points)
         advance_party(
             self.party,
@@ -333,6 +384,7 @@ class TinyWandererDisplay:
         self.photo = ImageTk.PhotoImage(target, master=self.canvas)
         self.canvas.delete("wanderers")
         self.canvas.create_image(0, 0, image=self.photo, anchor=tk.NW, tags=("wanderers",))
+        return self.party.state
 
 
 class RobotArm3DV3View(RobotArm3DV2View):
@@ -344,17 +396,49 @@ class RobotArm3DV3View(RobotArm3DV2View):
     def __init__(self, *, eye_emission_enabled: bool = False) -> None:
         super().__init__(eye_emission_enabled=eye_emission_enabled)
         self.wanderer_display: TinyWandererDisplay | None = None
+        self.party_tracking_active = False
+        self.was_party_tracking = False
 
     def mount(self, canvas: tk.Canvas) -> None:
         super().mount(canvas)
         self.wanderer_display = TinyWandererDisplay(canvas.winfo_toplevel())
+
+    def tick(self, pointer_x: int, pointer_y: int, window_x: int, window_y: int) -> None:
+        """Let an alarmed arm pursue the party until it reaches cover."""
+        now = time.monotonic()
+        display = self.wanderer_display
+        if self.party_tracking_active and display is not None:
+            self.random_expressions_enabled = False
+            self.explorer_active = False
+            self.last_pointer_motion_at = now
+            if self.expression.name != ALARM_EXPRESSION.name:
+                self._set_expression(ALARM_EXPRESSION, now)
+            party_screen_x = display.origin_x + display.party.x
+            party_screen_y = display.origin_y + display.party.y - 15.0
+            RobotArm3DView.tick(self, round(party_screen_x), round(party_screen_y), window_x, window_y)
+            self.was_party_tracking = True
+            return
+
+        if self.was_party_tracking:
+            restored = expression_for_hint(self.active_hint)
+            self.random_expressions_enabled = restored is None
+            self.explorer_active = False
+            self.last_pointer_motion_at = now
+            if restored is not None:
+                self._set_expression(restored, now)
+            else:
+                self.next_expression_at = now
+                self.explore_hold_until = now + 0.35
+            self.was_party_tracking = False
+        super().tick(pointer_x, pointer_y, window_x, window_y)
 
     def _draw_surface_overlays(self) -> None:
         if self.surface_image is None or self.canvas is None or self.wanderer_display is None:
             return
         if self.expression_plane is not None:
             start, end = eye_emission_projection(self, self.expression_plane, self.camera)
-            self.wanderer_display.update(self.canvas, (start.x, start.y), (end.x, end.y))
+            party_state = self.wanderer_display.update(self.canvas, (start.x, start.y), (end.x, end.y))
+            self.party_tracking_active = party_state == "evade"
 
 
 def create_robot_arm_3d_v3(

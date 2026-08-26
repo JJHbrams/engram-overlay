@@ -13,6 +13,7 @@ from engram_overlay.overlays.robot_arm_3d_v3 import (
     point_in_gaze_cone,
     opposite_corner_origin,
     scene_layout,
+    walking_limb_pose,
 )
 from engram_overlay.registry import OVERLAYS, overlay_ids
 
@@ -33,6 +34,14 @@ class RobotArm3DV3Tests(unittest.TestCase):
     def test_scene_uses_opposite_corner_with_negative_monitor_coordinates(self) -> None:
         self.assertEqual(opposite_corner_origin(-420.0, -2560.0, 0.0, 640.0), ("left", -2560.0))
         self.assertEqual(opposite_corner_origin(-2200.0, -2560.0, 0.0, 640.0), ("right", -640.0))
+
+    def test_walking_pose_moves_opposite_limbs_through_two_segments(self) -> None:
+        first = walking_limb_pose(50.0, 80.0, 1.0, 0.0)
+        quarter = walking_limb_pose(50.0, 80.0, 1.0, 1.57)
+        self.assertEqual(len(first.left_arm), 3)
+        self.assertEqual(len(first.left_leg), 3)
+        self.assertNotEqual(first.left_leg[-1], quarter.left_leg[-1])
+        self.assertLess(quarter.left_arm[-1][0], quarter.right_arm[-1][0])
 
     def test_seen_party_evades_toward_nearest_cover_then_hides(self) -> None:
         covers = (Cover(50.0, 100.0, 20.0), Cover(180.0, 100.0, 20.0))
@@ -68,7 +77,27 @@ class RobotArm3DV3Tests(unittest.TestCase):
         self.assertAlmostEqual(party.x, 640.0 * 0.31)
         self.assertEqual(covers[0].kind, "tower")
         self.assertIsNone(view.wanderer_display)
+        self.assertFalse(view.party_tracking_active)
         self.assertFalse(view.eye_emission_enabled)
+
+    def test_party_detection_forces_alarm_tracking_then_restores_idle(self) -> None:
+        class FakeDisplay:
+            origin_x = 100.0
+            origin_y = 700.0
+            party = WandererParty(200.0, 82.0)
+
+        view = RobotArm3DV3View()
+        view.wanderer_display = FakeDisplay()  # type: ignore[assignment]
+        view.party_tracking_active = True
+        view.tick(0, 0, 100, 100)
+        self.assertEqual(view.expression.name, "alarm")
+        self.assertFalse(view.random_expressions_enabled)
+        self.assertTrue(view.was_party_tracking)
+
+        view.party_tracking_active = False
+        view.tick(0, 0, 100, 100)
+        self.assertTrue(view.random_expressions_enabled)
+        self.assertFalse(view.was_party_tracking)
 
 
 if __name__ == "__main__":
