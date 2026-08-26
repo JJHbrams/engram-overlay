@@ -523,32 +523,34 @@ class EyeEmissionDisplay:
         self.window.deiconify()
         self.window.update_idletasks()
         self._make_click_through()
-        self._restore_overlay_stack()
+        self._position_display(restore_stack=True)
         self.frame = 0
 
-    def _restore_overlay_stack(self) -> None:
-        """Keep the filter above apps and the robot above the filter."""
+    def _position_display(self, *, restore_stack: bool = False) -> None:
+        """Anchor the filter without churning the robot window's z-order."""
         if sys.platform == "win32" and self.hwnd:
-            root_id = self.root.winfo_id()
             previous_context = _push_physical_dpi_context()
             try:
                 user32 = ctypes.windll.user32
-                root_hwnd = user32.GetParent(root_id) or root_id
                 user32.SetWindowPos(
                     self.hwnd,
-                    -1,
+                    -1 if restore_stack else 0,
                     round(self.origin_x),
                     round(self.origin_y),
                     round(self.width),
                     round(self.height),
-                    0x0010,
+                    0x0010 if restore_stack else 0x0010 | 0x0004,
                 )
-                user32.SetWindowPos(root_hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
+                if restore_stack:
+                    root_id = self.root.winfo_id()
+                    root_hwnd = user32.GetParent(root_id) or root_id
+                    user32.SetWindowPos(root_hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
             finally:
                 _pop_dpi_context(previous_context)
             return
-        self.window.lift()
-        self.root.lift()
+        if restore_stack:
+            self.window.lift()
+            self.root.lift()
 
     def _make_click_through(self) -> None:
         if sys.platform != "win32":
@@ -573,14 +575,16 @@ class EyeEmissionDisplay:
         if self.frame % 2:
             return
         bounds = display_bounds_for_window(self.root)
-        if bounds is not None and bounds != self.bounds:
+        bounds_changed = bounds is not None and bounds != self.bounds
+        if bounds_changed:
             self.bounds = bounds
             self.origin_x, self.origin_y = bounds[0], bounds[1]
             self.width, self.height = bounds[2] - bounds[0], bounds[3] - bounds[1]
             self.window.geometry(f"{self.width}x{self.height}{self.origin_x:+d}{self.origin_y:+d}")
             self.canvas.configure(width=self.width, height=self.height)
-        self._restore_overlay_stack()
-        self.window.update_idletasks()
+        self._position_display(restore_stack=bounds_changed)
+        if bounds_changed:
+            self.window.update_idletasks()
         source_origin = source_canvas.winfo_rootx(), source_canvas.winfo_rooty()
         target_origin = self.canvas.winfo_rootx(), self.canvas.winfo_rooty()
         start = (
