@@ -1,7 +1,9 @@
+import queue
 import unittest
 from unittest.mock import Mock
 
 from engram_overlay.backends.tk import TkOverlayHost
+from engram_overlay.state import OverlayState
 
 
 class TkOverlayHostObserverTests(unittest.TestCase):
@@ -35,6 +37,39 @@ class TkOverlayHostObserverTests(unittest.TestCase):
         sent_types = [call.args[0]["type"] for call in host.transport.send.call_args_list]
         self.assertIn("pointer.action", sent_types)
         self.assertIn("overlay.geometry_changed", sent_types)
+
+    def test_position_echo_is_ignored_while_local_drag_is_active(self):
+        host = self._host(mode="replace")
+        host.state = OverlayState()
+        host.view = Mock()
+        host.inbox = queue.Queue()
+        host._drag_origin = (10, 20, 100, 200)
+        host.inbox.put({
+            "schema_version": 1,
+            "type": "overlay.set_position",
+            "payload": {"x": 80, "y": 90},
+        })
+
+        host._drain_messages()
+
+        host.root.geometry.assert_not_called()
+        self.assertIsNone(host.state.x)
+        self.assertIsNone(host.state.y)
+
+    def test_position_ack_is_applied_after_drag_finishes(self):
+        host = self._host(mode="replace")
+        host.state = OverlayState()
+        host.view = Mock()
+        host.inbox = queue.Queue()
+        host.inbox.put({
+            "schema_version": 1,
+            "type": "overlay.set_position",
+            "payload": {"x": 115, "y": 215},
+        })
+
+        host._drain_messages()
+
+        host.root.geometry.assert_called_once_with("+115+215")
 
 
 if __name__ == "__main__":
