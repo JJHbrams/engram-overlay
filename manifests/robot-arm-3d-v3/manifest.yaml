@@ -7,4 +7,5 @@ command:
   - "robot-arm-3d-v3"
   - "--mode"
   - "replace"
+  - "--eye-emission"
 supported_modes: [observer, replace]
