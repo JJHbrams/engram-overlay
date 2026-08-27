@@ -100,7 +100,10 @@ class TkOverlayHost:
                 return
             self.state.apply(message)
             if self.state.x is not None and self.state.y is not None:
-                self.root.geometry(f"+{self.state.x}+{self.state.y}")
+                # Local pointer motion is newer than queued host echoes.  Let
+                # drag_end reconcile the final authoritative position.
+                if self._drag_origin is None:
+                    self.root.geometry(f"+{self.state.x}+{self.state.y}")
                 self.state.x = self.state.y = None
             self.view.apply_state(self.state)
         self.root.after(20, self._drain_messages)
@@ -141,7 +144,8 @@ class TkOverlayHost:
                 target_x, target_y = self._drag_target(event)
                 self.root.geometry(f"+{target_x}+{target_y}")
                 self._send_pointer("drag_end", x=target_x, y=target_y)
-                self._send_geometry()
+                if self.mode == "observer":
+                    self._send_geometry()
             else:
                 self._send_pointer("left_click")
         self._drag_origin = None

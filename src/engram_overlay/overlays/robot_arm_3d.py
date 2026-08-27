@@ -455,6 +455,9 @@ class RobotArm3DView:
         self.status_id = canvas.create_oval(326, 15, 340, 29, fill=self.expression.color, outline="")
         self._draw()
 
+    def _exploration_target(self) -> tuple[float, float]:
+        return exploration_target(self.rng, self.width)
+
     def apply_state(self, state: OverlayState) -> None:
         hint = state.display_hint
         if hint == self.active_hint:
@@ -492,13 +495,13 @@ class RobotArm3DView:
                     min(max(local_pointer[1], 250.0), 350.0),
                 )
                 self.explore_from = self.explorer_pointer
-                self.explore_to = exploration_target(self.rng, self.width)
+                self.explore_to = self._exploration_target()
                 self.explore_started_at = now
                 self.explore_duration = exploration_duration(self.explore_from, self.explore_to, self.rng)
                 self.explore_hold_until = now + self.explore_duration + self.rng.uniform(0.25, 0.7)
             elif route_finished and now >= self.explore_hold_until:
                 self.explore_from = self.explorer_pointer
-                self.explore_to = exploration_target(self.rng, self.width)
+                self.explore_to = self._exploration_target()
                 self.explore_started_at = now
                 self.explore_duration = exploration_duration(self.explore_from, self.explore_to, self.rng)
                 self.explore_hold_until = now + self.explore_duration + self.rng.uniform(0.25, 0.7)
