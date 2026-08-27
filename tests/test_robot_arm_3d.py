@@ -9,6 +9,7 @@ from engram_overlay.overlays.robot_arm_3d import (
     cable_hardware_faces,
     constrain_target_reach,
     continuous_posture_hints,
+    critically_damped_target,
     depth_at_phase,
     eye_shading_from_link,
     eased_exploration_point,
@@ -69,6 +70,47 @@ class RobotArm3DTests(unittest.TestCase):
         self.assertNotEqual(view.target_depth, 0.0)
         self.assertNotEqual(depth_at_phase(math.pi * 0.5), depth_at_phase(math.pi * 1.5))
 
+    def test_target_controller_converges_without_overshoot(self) -> None:
+        target = Vec3(100.0, -40.0, 25.0)
+        current = Vec3(0.0, 0.0, 0.0)
+        velocity = Vec3(0.0, 0.0, 0.0)
+        positions = []
+        for _ in range(45):
+            current, velocity = critically_damped_target(current, velocity, target)
+            positions.append(current)
+        self.assertTrue(all(earlier.x <= later.x <= target.x for earlier, later in zip(positions, positions[1:])))
+        self.assertTrue(all(target.y <= later.y <= earlier.y for earlier, later in zip(positions, positions[1:])))
+        self.assertLess((positions[-1] - target).length, 0.05)
+
+    def test_gaze_settles_at_constrained_goal_instead_of_following_outside_pointer(self) -> None:
+        view = RobotArm3DView()
+        view.random_expressions_enabled = False
+        outside_pointer = (5000.0, 5000.0)
+        constrained_goal = constrain_target_reach(
+            view.base,
+            target_from_pointer(
+                *outside_pointer,
+                view.width,
+                view.height,
+                camera=view.camera,
+                depth=view.target_depth,
+            ),
+            view.lengths,
+        )
+        view.target = constrained_goal
+        view.joints = solve_z_posture_3d(
+            view.base,
+            view.target,
+            view.lengths,
+            elbow_hint=view.elbow_hint,
+            wrist_hint=view.wrist_hint,
+        )
+        view.mouse_gaze = (0.0, 0.0)
+
+        view.tick(round(outside_pointer[0]), round(outside_pointer[1]), 0, 0)
+
+        self.assertLess(math.hypot(*view.mouse_gaze), 0.01)
+
     def test_workspace_allows_wider_root_and_elbow_motion(self) -> None:
         camera = Camera(180.0, 190.0, yaw=-0.38, pitch=-0.10, focal_length=650.0)
         left = camera.project(target_from_pointer(-100.0, 300.0, 360.0, 430.0, camera=camera, depth=0.0))
@@ -80,6 +122,15 @@ class RobotArm3DTests(unittest.TestCase):
         near_scale = camera.project(camera.unproject(180.0, 300.0, -30.0)).scale
         far_scale = camera.project(camera.unproject(180.0, 300.0, 30.0)).scale
         self.assertLess(near_scale / far_scale, 1.11)
+
+    def test_workspace_raises_only_the_eye_height_limit(self) -> None:
+        camera = Camera(180.0, 190.0, yaw=-0.38, pitch=-0.10, focal_length=650.0)
+        center = camera.project(target_from_pointer(180.0, 0.0, 360.0, 430.0, camera=camera, depth=0.0))
+        left = camera.project(target_from_pointer(55.0, 0.0, 360.0, 430.0, camera=camera, depth=0.0))
+        right = camera.project(target_from_pointer(305.0, 0.0, 360.0, 430.0, camera=camera, depth=0.0))
+        self.assertAlmostEqual(center.y, 220.0)
+        self.assertAlmostEqual(left.y, 220.0)
+        self.assertAlmostEqual(right.y, 220.0)
 
     def test_reach_constraint_avoids_a_fully_straight_configuration(self) -> None:
         view = RobotArm3DView()

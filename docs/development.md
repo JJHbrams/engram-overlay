@@ -17,7 +17,7 @@ master (문서 기준선)
 2. stdin JSONL을 별도 reader에서 파싱한다.
 3. `display_hint`를 renderer 내부의 시각 상태로 매핑한다.
 4. `overlay.set_position`으로 창 위치를 동기화한다.
-5. replace 모드에서 geometry와 pointer action을 stdout으로 보낸다.
+5. replace에서는 geometry와 pointer action을 stdout으로 보낸다. interactive observer도 geometry와 pointer action을 보내면 같은 bubble session의 클릭 앵커가 된다.
 6. 프로토콜 로그는 stderr로만 출력한다.
 7. parser와 outbound envelope을 UI 없이 테스트할 수 있게 분리한다.
 

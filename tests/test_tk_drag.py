@@ -30,7 +30,7 @@ class TkDragTests(unittest.TestCase):
 
         host.root.geometry.assert_called_once_with("+160+130")
         host._send_pointer.assert_called_once_with("drag_end", x=160, y=130)
-        host._send_geometry.assert_called_once_with()
+        host._send_geometry.assert_not_called()
         self.assertIsNone(host._drag_origin)
 
 

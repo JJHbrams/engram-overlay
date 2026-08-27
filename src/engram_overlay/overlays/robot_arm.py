@@ -232,8 +232,11 @@ def tracked_gaze(
         mouse_x = mouse_y = 0.0
     else:
         strength = min(distance / response_distance, 1.0)
-        mouse_x = dx / distance * max_x * strength
-        mouse_y = dy / distance * max_y * strength
+        direction_x = dx / distance
+        direction_y = dy / distance
+        boundary_radius = 1.0 / math.hypot(direction_x / max_x, direction_y / max_y)
+        mouse_x = direction_x * boundary_radius * strength
+        mouse_y = direction_y * boundary_radius * strength
     gaze_x = bias[0] + mouse_x
     gaze_y = bias[1] + mouse_y
     ellipse_length = math.hypot(gaze_x / max_x, gaze_y / max_y)

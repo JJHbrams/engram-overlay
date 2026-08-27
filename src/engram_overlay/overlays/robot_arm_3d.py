@@ -131,7 +131,7 @@ def target_from_pointer(
 ) -> Vec3:
     """Unproject a pointer onto an independently selected camera-depth plane."""
     clamped_x = min(max(pointer_x, 55.0), width - 55.0)
-    clamped_y = min(max(pointer_y, 250.0), min(height - 80.0, 350.0))
+    clamped_y = min(max(pointer_y, 220.0), min(height - 80.0, 350.0))
     return camera.unproject(clamped_x, clamped_y, depth)
 
 
@@ -205,6 +205,26 @@ def constrain_target_reach(base: Vec3, target: Vec3, lengths: Sequence[float], *
     if offset.length <= maximum_distance:
         return target
     return base + offset.normalized() * maximum_distance
+
+
+def critically_damped_target(
+    current: Vec3,
+    velocity: Vec3,
+    desired: Vec3,
+    *,
+    frequency: float = 2.2,
+    timestep: float = 1.0 / 60.0,
+) -> tuple[Vec3, Vec3]:
+    """Advance a no-overshoot second-order target controller."""
+    if frequency <= 0.0 or timestep <= 0.0:
+        raise ValueError("frequency and timestep must be positive")
+    angular_frequency = math.tau * frequency
+    decay = math.exp(-angular_frequency * timestep)
+    error = current - desired
+    temporary = (velocity + error * angular_frequency) * timestep
+    next_target = desired + (error + temporary) * decay
+    next_velocity = (velocity - temporary * angular_frequency) * decay
+    return next_target, next_velocity
 
 
 def quadratic_curve(start: Vec3, control: Vec3, end: Vec3, *, steps: int = 6) -> list[Vec3]:
@@ -365,6 +385,9 @@ def eased_exploration_point(
 
 
 class RobotArm3DView:
+    EYE_VISUAL_SCALE = 1.0
+    DRAW_VECTOR_EYE = True
+
     width = 360
     height = 430
     background = TRANSPARENT
@@ -390,6 +413,7 @@ class RobotArm3DView:
             ),
             self.lengths,
         )
+        self.target_velocity = Vec3(0.0, 0.0, 0.0)
         self.elbow_hint, self.wrist_hint = continuous_posture_hints(self.width * 0.5, self.width, self.camera)
         self.joints = solve_z_posture_3d(
             self.base,
@@ -431,6 +455,9 @@ class RobotArm3DView:
         self.status_id = canvas.create_oval(326, 15, 340, 29, fill=self.expression.color, outline="")
         self._draw()
 
+    def _exploration_target(self) -> tuple[float, float]:
+        return exploration_target(self.rng, self.width)
+
     def apply_state(self, state: OverlayState) -> None:
         hint = state.display_hint
         if hint == self.active_hint:
@@ -468,13 +495,13 @@ class RobotArm3DView:
                     min(max(local_pointer[1], 250.0), 350.0),
                 )
                 self.explore_from = self.explorer_pointer
-                self.explore_to = exploration_target(self.rng, self.width)
+                self.explore_to = self._exploration_target()
                 self.explore_started_at = now
                 self.explore_duration = exploration_duration(self.explore_from, self.explore_to, self.rng)
                 self.explore_hold_until = now + self.explore_duration + self.rng.uniform(0.25, 0.7)
             elif route_finished and now >= self.explore_hold_until:
                 self.explore_from = self.explorer_pointer
-                self.explore_to = exploration_target(self.rng, self.width)
+                self.explore_to = self._exploration_target()
                 self.explore_started_at = now
                 self.explore_duration = exploration_duration(self.explore_from, self.explore_to, self.rng)
                 self.explore_hold_until = now + self.explore_duration + self.rng.uniform(0.25, 0.7)
@@ -497,8 +524,12 @@ class RobotArm3DView:
             ),
             self.lengths,
         )
-        target_smoothing = 0.11
-        self.target = self.target + (desired_target - self.target) * target_smoothing
+        self.target, self.target_velocity = critically_damped_target(
+            self.target,
+            self.target_velocity,
+            desired_target,
+        )
+        projected_goal = self.camera.project(desired_target)
         desired_elbow, desired_wrist = continuous_posture_hints(motion_pointer[0], self.width, self.camera)
         self.elbow_hint = (self.elbow_hint * 0.89 + desired_elbow * 0.11).normalized(desired_elbow)
         self.wrist_hint = (self.wrist_hint * 0.89 + desired_wrist * 0.11).normalized(desired_wrist)
@@ -513,9 +544,10 @@ class RobotArm3DView:
         projected_eye = self.camera.project(self.joints[-1])
         # During autonomous exploration the arm follows the interpolated virtual
         # pointer, while the pupil looks ahead to its current interest point.
-        # Looking at motion_pointer here makes the gaze almost disappear because
-        # the eye endpoint is solving toward that same position.
-        gaze_pointer = self.explore_to if self.explorer_active else local_pointer
+        # During pointer tracking, use the constrained IK goal instead of the raw
+        # pointer.  The pupil therefore shows the remaining control error and
+        # settles with the arm at the edge of its reachable workspace.
+        gaze_pointer = self.explore_to if self.explorer_active else (projected_goal.x, projected_goal.y)
         desired_mouse_gaze = tracked_gaze(gaze_pointer, (projected_eye.x, projected_eye.y), max_x=7.0, max_y=5.0)
         gaze_smoothing = 0.16
         self.mouse_gaze = (
@@ -583,6 +615,29 @@ class RobotArm3DView:
         faces.extend(sphere_faces(self.joints[-1], 34.0, color="#d8d6cf", rings=5, segments=10, z_scale=0.72))
         return faces
 
+    def _begin_surface_frame(self) -> None:
+        """Allow renderer variants to prepare a frame-wide surface buffer."""
+
+    def _end_surface_frame(self) -> None:
+        """Allow renderer variants to publish a completed surface buffer."""
+
+    def _draw_projected_face(
+        self,
+        face: Face3D,
+        coordinates: tuple[float, ...],
+        projected: tuple[object, ...] | None = None,
+    ) -> None:
+        """Draw one projected face; renderer variants may override its surface treatment."""
+        if self.canvas is None:
+            return
+        self.canvas.create_polygon(
+            *coordinates,
+            fill=lit_face_color(face),
+            outline=face.outline,
+            width=1,
+            tags=("scene3d",),
+        )
+
     @staticmethod
     def _scaled_polygon(points: Sequence[float], center: tuple[float, float], scale: float) -> tuple[float, ...]:
         scaled: list[float] = []
@@ -612,20 +667,16 @@ class RobotArm3DView:
                 capstyle=tk.ROUND,
                 tags=("scene3d",),
             )
-        projected_faces: list[tuple[float, Face3D, tuple[float, ...]]] = []
+        projected_faces: list[tuple[float, Face3D, tuple[float, ...], tuple[object, ...]]] = []
         for face in self._scene_faces():
             projected = tuple(self.camera.project(vertex) for vertex in face.vertices)
             coordinates = tuple(coordinate for point in projected for coordinate in (point.x, point.y))
             depth = sum(point.depth for point in projected) / len(projected)
-            projected_faces.append((depth, face, coordinates))
-        for _, face, coordinates in sorted(projected_faces, key=lambda item: item[0], reverse=True):
-            self.canvas.create_polygon(
-                *coordinates,
-                fill=lit_face_color(face),
-                outline=face.outline,
-                width=1,
-                tags=("scene3d",),
-            )
+            projected_faces.append((depth, face, coordinates, projected))
+        self._begin_surface_frame()
+        for _, face, coordinates, projected in sorted(projected_faces, key=lambda item: item[0], reverse=True):
+            self._draw_projected_face(face, coordinates, projected)
+        self._end_surface_frame()
 
         hub = self.camera.project(first_link_hub_center(self.joints[0], self.joints[1]))
         hub_radius = 14.0 * hub.scale
@@ -724,9 +775,13 @@ class RobotArm3DView:
                     tags=("scene3d",),
                 )
 
+        if not self.DRAW_VECTOR_EYE:
+            self.canvas.tag_lower("scene3d")
+            return
+
         eye = self.camera.project(self.joints[-1])
         center = (eye.x, eye.y)
-        scale = eye.scale
+        scale = eye.scale * self.EYE_VISUAL_SCALE
         radius = 30.0 * scale
         camera_link = self.camera.camera_space(self.joints[-2] - self.joints[-1])
         shade_x, shade_y, shade_angle, shade_strength = eye_shading_from_link(camera_link)

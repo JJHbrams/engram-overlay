@@ -69,8 +69,9 @@ class TkOverlayHost:
 
     def run(self) -> None:
         threading.Thread(target=self._read_messages, name="engram-jsonl-reader", daemon=True).start()
-        if self.mode == "replace":
-            self.root.after_idle(self._send_geometry)
+        # Geometry is optional for a passive observer.  Interactive observers
+        # emit it so Engram can use this window as a transient bubble anchor.
+        self.root.after_idle(self._send_geometry)
         self.root.after(20, self._drain_messages)
         self.root.after(self.FRAME_MS, self._tick)
         self.root.mainloop()
@@ -99,7 +100,10 @@ class TkOverlayHost:
                 return
             self.state.apply(message)
             if self.state.x is not None and self.state.y is not None:
-                self.root.geometry(f"+{self.state.x}+{self.state.y}")
+                # Local pointer motion is newer than queued host echoes.  Let
+                # drag_end reconcile the final authoritative position.
+                if self._drag_origin is None:
+                    self.root.geometry(f"+{self.state.x}+{self.state.y}")
                 self.state.x = self.state.y = None
             self.view.apply_state(self.state)
         self.root.after(20, self._drain_messages)
@@ -110,8 +114,7 @@ class TkOverlayHost:
         self.root.after(self.FRAME_MS, self._tick)
 
     def _send_pointer(self, action: str, *, x: int | None = None, y: int | None = None) -> None:
-        if self.mode == "replace":
-            self.transport.send(pointer_message(action, screen_x=x, screen_y=y))
+        self.transport.send(pointer_message(action, screen_x=x, screen_y=y))
 
     def _send_geometry(self) -> None:
         self.root.update_idletasks()
@@ -123,7 +126,7 @@ class TkOverlayHost:
         self._drag_origin = (event.x_root, event.y_root, self.root.winfo_x(), self.root.winfo_y())
 
     def _drag_move(self, event: tk.Event) -> None:
-        if self.mode != "replace" or self._drag_origin is None:
+        if self._drag_origin is None:
             return
         target_x, target_y = self._drag_target(event)
         self.root.geometry(f"+{target_x}+{target_y}")
@@ -132,9 +135,6 @@ class TkOverlayHost:
         self._send_pointer("drag_move", x=target_x, y=target_y)
 
     def _drag_end(self, event: tk.Event) -> None:
-        if self.mode != "replace":
-            self._drag_origin = None
-            return
         if self._drag_origin is None:
             self._send_pointer("left_click")
         else:
@@ -144,7 +144,8 @@ class TkOverlayHost:
                 target_x, target_y = self._drag_target(event)
                 self.root.geometry(f"+{target_x}+{target_y}")
                 self._send_pointer("drag_end", x=target_x, y=target_y)
-                self._send_geometry()
+                if self.mode == "observer":
+                    self._send_geometry()
             else:
                 self._send_pointer("left_click")
         self._drag_origin = None
