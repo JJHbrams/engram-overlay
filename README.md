@@ -1,6 +1,12 @@
-# Engram Custom Overlay
+# Engram Custom Overlay Toolkit
 
-Engram의 External Overlay Event API v1을 사용하는 독립 커스텀 오버레이 프로젝트다.
+이미 Engram을 사용하는 사람이 자신의 overlay renderer를 직접 만들고 연동하기 위한
+source-first 개발 템플릿이다. 독립 실행형 완제품이 아니며, 포함된 Rabbit/CCTV 등의
+overlay는 Event API와 구현 방식을 보여주는 샘플이다.
+
+Release의 주 산출물은 안정된 Git tag와 GitHub Source archive다. 사용자는 release 소스를
+clone/fork해 샘플을 수정하거나 `create-engram-overlay` skill로 새 renderer를 만든다.
+wheel과 sdist는 샘플 실행 및 패키징 검증을 위한 보조 산출물이다.
 
 이 저장소는 다음 브랜치 정책을 사용한다.
 
@@ -9,7 +15,92 @@ Engram의 External Overlay Event API v1을 사용하는 독립 커스텀 오버�
 - `feat/*`: 실제 기능 개발 브랜치이며 검증 후 `dev`에 병합한다.
 
 현재 단계의 목표는 Engram이 제공하는 metadata-only 이벤트를 받아 시각 상태로 표현하고,
-필요한 포인터 입력과 창 geometry를 Engram에 돌려주는 최소 renderer를 만드는 것이다.
+필요한 포인터 입력과 창 geometry를 Engram에 돌려주는 개인 renderer 제작 기반을 제공하는 것이다.
+
+## 빠른 시작
+
+준비물은 Engram, Git, Windows PowerShell, Python 3.11 이상이다.
+
+### 1. Release 소스 준비
+
+```powershell
+git clone https://github.com/JJHbrams/engram-overlay.git
+cd engram-overlay
+git checkout v1.0.1.77
+```
+
+직접 개발을 이어갈 때는 tag에서 개인 branch를 만들거나 저장소를 fork한다.
+
+### 2. 샘플 설치와 manifest 등록
+
+다음 명령은 `.venv` 생성, editable install, launcher 절대 경로가 들어간 manifest 생성을
+한 번에 수행한다.
+
+```powershell
+.\scripts\install-dev.ps1 -Overlay rabbit-2d -Mode replace
+```
+
+생성되는 파일은 `%USERPROFILE%\.engram\overlays\rabbit-2d\manifest.yaml`이다.
+Engram의 `Settings > Overlay`에서 `Rabbit`을 선택하고 Engram을 재시작한다. 이 스크립트는
+현재 선택을 자동으로 바꾸지 않는다.
+
+다른 포함 샘플도 같은 방식으로 등록할 수 있다.
+
+```powershell
+.\scripts\install-dev.ps1 -Overlay xeyes -Mode observer
+.\scripts\install-dev.ps1 -Overlay robot-arm-3d-v3 -Mode replace -EyeEmission
+```
+
+manifest의 핵심 형태는 다음과 같다. `command`의 첫 항목은 실제 checkout의 launcher
+절대 경로여야 하며, Engram은 검증된 manifest의 argv만 실행한다.
+
+```yaml
+schema_version: 1
+id: rabbit-2d
+name: Rabbit
+command:
+  - "C:/path/to/engram-overlay/.venv/Scripts/engram-custom-overlay.exe"
+  - "--overlay"
+  - "rabbit-2d"
+  - "--mode"
+  - "replace"
+supported_modes: [observer, replace]
+```
+
+### 3. 자신의 overlay 만들기
+
+Codex/Claude 같은 coding agent에는 저장소의 `create-engram-overlay` skill을 사용하도록
+요청한다. 이 skill은 backend 선택, module/registry, manifest, focused test, Event API 검증을
+한 작업 흐름으로 묶는다.
+
+```text
+create-engram-overlay skill을 사용해서 <원하는 동작과 디자인> overlay를 만들어줘.
+```
+
+직접 시작하려면 scaffold를 dry-run한 뒤 적용한다.
+
+```powershell
+python scripts/scaffold-overlay.py my-overlay --name "My Overlay" --dry-run
+python scripts/scaffold-overlay.py my-overlay --name "My Overlay"
+```
+
+scaffold가 만든 `manifests/my-overlay/manifest.yaml`의 launcher placeholder를 현재 `.venv`의
+절대 경로로 바꾸고 `%USERPROFILE%\.engram\overlays\my-overlay\manifest.yaml`에 복사한다.
+그 뒤 Engram 설정에서 `My Overlay`를 선택하고 재시작한다.
+
+### 4. 검증
+
+```powershell
+$env:PYTHONPATH = (Join-Path (Get-Location) "src")
+.\.venv\Scripts\python.exe -m unittest discover -s tests
+@() | .\.venv\Scripts\engram-custom-overlay.exe --overlay rabbit-2d --mode replace --headless
+```
+
+실제 Engram source와 설치한 manifest의 계약을 함께 확인하려면 다음 검증기를 사용한다.
+
+```powershell
+python scripts/verify-engram.py --engram-source <engram-source> --manifest "$HOME\.engram\overlays\rabbit-2d\manifest.yaml"
+```
 
 ## API 핵심
 
@@ -53,16 +144,10 @@ Engram 기본 sprite grid처럼 한 time bucket 안에서는 프레임을 고정
 | `generating`, `search`, `thought`, `memory` | 의미별 2종 random |
 | `provider_error`, `error` | 울먹임 또는 화남 |
 
-## 설치와 릴리스
+## 패키징과 릴리스
 
-GitHub Release의 wheel을 내려받아 설치하거나 저장소에서 editable install을 사용할 수 있다.
-
-V2/V3의 gaze emission을 함께 켜서 개발 설치하려면
-`./scripts/install-dev.ps1 -Overlay robot-arm-3d-v3 -EyeEmission`을 사용한다. 기본값은 off다.
-
-```powershell
-python -m pip install .\engram_custom_overlay-1.0.0.<build>-py3-none-any.whl
-```
+overlay 작성자는 개발 중 editable install을 사용한다. wheel은 저장소를 사용하는 필수 조건이
+아니며, 완성한 renderer를 Python 패키지로 공유하거나 release 패키징을 검증할 때 사용한다.
 
 버전은 `Major.Minor.Patch.Build` 형식이다. `VERSION`은 앞 세 자리를 관리하고,
 Build는 공식 빌드 시 고정한 Git revision count를 사용한다. 재현 가능한 로컬 패키지는 다음처럼 만든다.
