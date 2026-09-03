@@ -1,13 +1,17 @@
 """Pack the 1254x1254 bolttagu sprite pack into small aligned overlay atlases.
 
-The upstream pack ships one full-canvas PNG per frame (~21 MB total), which is far
+The upstream pack ships one full-canvas PNG per frame (~26 MB for v8), which is far
 too large to commit.  Every frame shares the same canvas and feet anchor, so a
 single crop rectangle keeps all poses aligned while removing the empty margin.
 The crop is the union of every shipped frame's alpha bounding box, downscaled by
 a fixed factor and written as horizontal sheets.
 
+The idle pose is layered rather than baked: the three blink frames are the base and
+the 24 steam frames composite over them at runtime, so blink and steam stay
+independent loops the way ``idle-animation.js`` describes.
+
 Usage:
-    python scripts/build-bolttagu-assets.py --pack <sprite-pack-v7 directory>
+    python scripts/build-bolttagu-assets.py --pack <sprite-pack-v8 directory>
 """
 
 from __future__ import annotations
@@ -19,18 +23,26 @@ from pathlib import Path
 from PIL import Image
 
 SCALE = 0.25
+SOURCE_CANVAS = (1254, 1254)
+SOURCE_FEET_ANCHOR = (750, 1080)
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = REPO_ROOT / "src" / "engram_overlay" / "overlays" / "assets" / "bolttagu_2d"
 
 # Cell order inside each generated sheet.  The overlay indexes these by name.
-STILLS = ("states/idle.png", "states/alert_aha.png", "states/wondering.png")
+# idle holds the pre-composited blink states; the pack's own states/idle.png is
+# skipped because it bakes in the static steam that v8 split out.
+IDLE = ("animations/idle_blink/open.png", "animations/idle_blink/half.png", "animations/idle_blink/closed.png")
+STEAM = tuple(f"animations/idle_steam/{index:02d}.png" for index in range(1, 25))
+ALERT = ("states/alert_aha.png",)
 WONDERING = tuple(f"animations/wondering/{index:02d}.png" for index in range(1, 9))
 ENTER = tuple(f"animations/enter/{index:02d}.png" for index in range(1, 4))
 EXIT = tuple(f"animations/exit/{index:02d}.png" for index in range(1, 4))
 FLOOR = ("layers/floor_base.png", "layers/floor_with_coffee.png")
 
 SHEETS = {
-    "bolttagu-stills.png": STILLS,
+    "bolttagu-idle.png": IDLE,
+    "bolttagu-steam.png": STEAM,
+    "bolttagu-alert.png": ALERT,
     "bolttagu-wondering.png": WONDERING,
     "bolttagu-enter.png": ENTER,
     "bolttagu-exit.png": EXIT,
@@ -45,7 +57,10 @@ def source_images(pack: Path) -> dict[str, Image.Image]:
             path = pack / name
             if not path.is_file():
                 raise SystemExit(f"missing source frame: {path}")
-            images[name] = Image.open(path).convert("RGBA")
+            image = Image.open(path).convert("RGBA")
+            if image.size != SOURCE_CANVAS:
+                raise SystemExit(f"{name} must be {SOURCE_CANVAS}, got {image.size}")
+            images[name] = image
     return images
 
 
@@ -86,10 +101,10 @@ def build(pack: Path) -> dict[str, object]:
         sheet.save(target, optimize=True)
         written[sheet_name] = target.stat().st_size
 
-    anchor_x, anchor_y = 750, 1080
+    anchor_x, anchor_y = SOURCE_FEET_ANCHOR
     metadata = {
-        "source": "sprite-pack-v7",
-        "sourceCanvas": [1254, 1254],
+        "source": pack.name,
+        "sourceCanvas": list(SOURCE_CANVAS),
         "crop": list(crop),
         "scale": SCALE,
         "cell": list(cell),
@@ -105,14 +120,14 @@ def build(pack: Path) -> dict[str, object]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--pack", required=True, type=Path, help="sprite-pack-v7 directory")
+    parser.add_argument("--pack", required=True, type=Path, help="sprite-pack-v8 directory")
     arguments = parser.parse_args()
     result = build(arguments.pack.expanduser())
-    total = sum(result["bytes"].values())  # type: ignore[union-attr]
+    written: dict[str, int] = result["bytes"]  # type: ignore[assignment]
     print(f"crop={result['crop']} cell={result['cell']}")
-    for name, size in result["bytes"].items():  # type: ignore[union-attr]
+    for name, size in written.items():
         print(f"  {name}: {size / 1024:.0f} KiB")
-    print(f"total: {total / 1024:.0f} KiB")
+    print(f"total: {sum(written.values()) / 1024:.0f} KiB")
 
 
 if __name__ == "__main__":

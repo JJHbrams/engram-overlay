@@ -20,6 +20,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="enable gaze-directed mood glow for robot-arm-3d-v2/v3 (default: off)",
     )
+    parser.add_argument(
+        "--no-face-pointer",
+        action="store_true",
+        help="stop bolttagu-2d from mirroring itself toward the pointer (default: it faces the pointer)",
+    )
     return parser
 
 
@@ -34,6 +39,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.eye_emission and args.overlay not in {"robot-arm-3d-v2", "robot-arm-3d-v3"}:
         parser.error("--eye-emission is only supported by robot-arm-3d-v2 and robot-arm-3d-v3")
+    if args.no_face_pointer and args.overlay != "bolttagu-2d":
+        parser.error("--no-face-pointer is only supported by bolttagu-2d")
     transport = JsonlTransport(sys.stdin, sys.stdout, sys.stderr)
     # The API requires this to be the renderer's first stdout line. Send it
     # before constructing a window or starting the reader.
@@ -41,7 +48,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.headless:
         run_headless(transport)
     else:
-        create_overlay(args.overlay, transport, args.mode, eye_emission=args.eye_emission).run()
+        create_overlay(
+            args.overlay,
+            transport,
+            args.mode,
+            eye_emission=args.eye_emission,
+            face_pointer=not args.no_face_pointer,
+        ).run()
     return 0
 
 

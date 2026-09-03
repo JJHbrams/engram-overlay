@@ -64,6 +64,7 @@ def create_overlay(
     mode: str,
     *,
     eye_emission: bool = False,
+    face_pointer: bool = True,
 ) -> OverlayRunner:
     try:
         spec = OVERLAYS[overlay_id]
@@ -75,4 +76,8 @@ def create_overlay(
         return factory(transport, mode, eye_emission=eye_emission)
     if eye_emission:
         raise ValueError("eye emission is only supported by robot-arm-3d-v2 and robot-arm-3d-v3")
+    if overlay_id == "bolttagu-2d":
+        return factory(transport, mode, face_pointer=face_pointer)
+    if not face_pointer:
+        raise ValueError("pointer facing is only supported by bolttagu-2d")
     return factory(transport, mode)

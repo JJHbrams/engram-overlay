@@ -1,5 +1,5 @@
 {
-  "source": "sprite-pack-v7",
+  "source": "sprite-pack-v8",
   "sourceCanvas": [
     1254,
     1254
@@ -20,10 +20,39 @@
     267
   ],
   "sheets": {
-    "bolttagu-stills.png": [
-      "states/idle.png",
-      "states/alert_aha.png",
-      "states/wondering.png"
+    "bolttagu-idle.png": [
+      "animations/idle_blink/open.png",
+      "animations/idle_blink/half.png",
+      "animations/idle_blink/closed.png"
+    ],
+    "bolttagu-steam.png": [
+      "animations/idle_steam/01.png",
+      "animations/idle_steam/02.png",
+      "animations/idle_steam/03.png",
+      "animations/idle_steam/04.png",
+      "animations/idle_steam/05.png",
+      "animations/idle_steam/06.png",
+      "animations/idle_steam/07.png",
+      "animations/idle_steam/08.png",
+      "animations/idle_steam/09.png",
+      "animations/idle_steam/10.png",
+      "animations/idle_steam/11.png",
+      "animations/idle_steam/12.png",
+      "animations/idle_steam/13.png",
+      "animations/idle_steam/14.png",
+      "animations/idle_steam/15.png",
+      "animations/idle_steam/16.png",
+      "animations/idle_steam/17.png",
+      "animations/idle_steam/18.png",
+      "animations/idle_steam/19.png",
+      "animations/idle_steam/20.png",
+      "animations/idle_steam/21.png",
+      "animations/idle_steam/22.png",
+      "animations/idle_steam/23.png",
+      "animations/idle_steam/24.png"
+    ],
+    "bolttagu-alert.png": [
+      "states/alert_aha.png"
     ],
     "bolttagu-wondering.png": [
       "animations/wondering/01.png",

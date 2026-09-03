@@ -122,7 +122,7 @@ LLM으로 개인 overlay를 만들 때는 [LLM authoring guide](docs/llm-overlay
 
 | id | backend | 설명 |
 | --- | --- | --- |
-| `bolttagu-2d` (`Bolttagu`) | Tk sprite sheet | sprite-pack-v7의 idle·아하·wondering 포즈와 8프레임 wondering 루프, 등장·퇴장 one-shot을 재생하는 2D 캐릭터 |
+| `bolttagu-2d` (`Bolttagu`) | Tk sprite sheet | sprite-pack-v8 레이어를 합성해 랜덤 눈깜빡임·커피 김·wondering 루프·등장/퇴장 one-shot을 재생하고 포인터 쪽으로 돌아보는 2D 캐릭터 |
 | `rabbit-2d` | Tk sprite grid | 손그림 토끼 5개 상태를 Engram 의미 이벤트에 맞춰 고정·랜덤 회전하는 2D 캐릭터 |
 | `xeyes` | Tk | 화면 전체의 mouse pointer를 따라보는 두 눈. 첫 API/입력 smoke 구현 |
 | `robot-arm` | Tk | 천장 root에서 Z 자세로 내려오며 iris·LED·ambient 표정을 재생하는 단안 3-link arm |
@@ -132,25 +132,35 @@ LLM으로 개인 overlay를 만들 때는 [LLM authoring guide](docs/llm-overlay
 
 ### Bolttagu 애니메이션 clip
 
-`bolttagu-2d`는 `sprite-pack-v7`의 1254×1254 전체 캔버스 PNG를 그대로 담지 않는다.
+`bolttagu-2d`는 `sprite-pack-v8`의 1254×1254 전체 캔버스 PNG를 그대로 담지 않는다.
 `scripts/build-bolttagu-assets.py`가 모든 프레임의 알파 bounding box 합집합으로 한 번 crop하고
 0.25배로 축소해 가로 sheet로 묶으므로, 모든 포즈가 같은 발 기준점에 정렬된 채 270×302 셀이 된다.
 crop·배율·발 기준점은 `assets/bolttagu_2d/atlas.json`에 기록되고 overlay가 이 값을 읽어 사용한다.
 원본 팩을 갱신했으면 스크립트를 다시 실행한다.
 
 ```powershell
-python scripts/build-bolttagu-assets.py --pack <sprite-pack-v7>
+python scripts/build-bolttagu-assets.py --pack <sprite-pack-v8>
 ```
 
-display hint는 항상 반복 clip에 대응하고, 한 번만 재생되는 clip은 그 위에 덧씌워진 뒤
-끝나면 현재 hint의 clip으로 돌아간다. 프레임 선택은 순수 시각 계산이라 창 없이 테스트한다.
+프레임은 아래에서 위로 합성하는 `(sheet, cell)` 레이어 recipe로 표현한다. idle이 서로 독립적인
+두 루프의 합성이라 단일 프레임으로는 표현되지 않기 때문이다. 합성은 눈에 보이는 프레임이
+바뀔 때만 수행하므로 미리 조합을 캐싱하지 않는다.
 
-| display hint | clip |
+| display hint | recipe |
 | --- | --- |
-| `idle`, `default`, `input`, `success` | idle 정지 포즈 |
+| `idle`, `default`, `input`, `success` | idle 눈 상태 + 커피 김 |
 | `hover`, `click`, `error` | 아하 alert 정지 포즈 |
 | `generating`, `search`, `thought`, `memory` | wondering 8프레임 10fps 반복 |
 | `provider_error` | 뒷모습 퇴장 3프레임 one-shot 후 alert 유지 |
+
+- **눈깜빡임**: 반감김 50ms → 닫힘 90ms → 반감김 70ms → 열림. 다음 깜빡임은 완료 후
+  2.5~6초에서 무작위로 정한다. 난수원은 주입 가능해서 테스트에서는 고정된다.
+  idle로 다시 들어올 때와 등장 인사가 끝날 때 재무장한다.
+- **커피 김**: 24프레임 10fps(2.4초) 반복. 캐릭터가 들고 있는 머그의 김이라 바닥 레이어를
+  꺼도 나온다. 깜빡임과 위상이 독립이다.
+- **포인터 방향**: 원본이 볼따구와 머그를 화면 왼쪽으로 두고 그려져 이미 왼쪽을 보므로,
+  포인터가 창 중심보다 오른쪽에 있을 때만 좌우반전한다. 중심 ±24px는 deadzone으로
+  두어 경계에서 깜빡이며 뒤집히지 않는다. 끄려면 `--no-face-pointer`를 넘긴다.
 
 renderer가 열릴 때 등장 인사 3프레임(200/300/220ms)이 한 번 재생된다.
 불투명 타원 바닥과 쏟은 커피는 `Bolttagu2dView(show_floor=True)`로 켤 수 있고 기본값은 꺼짐이다.
