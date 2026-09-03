@@ -122,12 +122,38 @@ LLM으로 개인 overlay를 만들 때는 [LLM authoring guide](docs/llm-overlay
 
 | id | backend | 설명 |
 | --- | --- | --- |
+| `bolttagu-2d` (`Bolttagu`) | Tk sprite sheet | sprite-pack-v7의 idle·아하·wondering 포즈와 8프레임 wondering 루프, 등장·퇴장 one-shot을 재생하는 2D 캐릭터 |
 | `rabbit-2d` | Tk sprite grid | 손그림 토끼 5개 상태를 Engram 의미 이벤트에 맞춰 고정·랜덤 회전하는 2D 캐릭터 |
 | `xeyes` | Tk | 화면 전체의 mouse pointer를 따라보는 두 눈. 첫 API/입력 smoke 구현 |
 | `robot-arm` | Tk | 천장 root에서 Z 자세로 내려오며 iris·LED·ambient 표정을 재생하는 단안 3-link arm |
 | `robot-arm-3d` | Tk software 3D | 고정 카메라에서 독립적인 XYZ 운동을 원근 투영·depth sort·면 조명으로 렌더링하는 단안 3-link arm |
 | `robot-arm-3d-v2` | Tk textured software 3D | 생성형 material atlas를 quad 세분 면에 샘플링하고 적층 외장·케이블 레일을 확장한 산업형 단안 arm |
 | `robot-arm-3d-v3` (`CCTV`) | Tk textured software 3D + 2D actors | V2 arm의 실제 gaze를 감지해 엄폐·엿보기·이동하는 작은 순례자 실루엣을 합성한 감시 장면 |
+
+### Bolttagu 애니메이션 clip
+
+`bolttagu-2d`는 `sprite-pack-v7`의 1254×1254 전체 캔버스 PNG를 그대로 담지 않는다.
+`scripts/build-bolttagu-assets.py`가 모든 프레임의 알파 bounding box 합집합으로 한 번 crop하고
+0.25배로 축소해 가로 sheet로 묶으므로, 모든 포즈가 같은 발 기준점에 정렬된 채 270×302 셀이 된다.
+crop·배율·발 기준점은 `assets/bolttagu_2d/atlas.json`에 기록되고 overlay가 이 값을 읽어 사용한다.
+원본 팩을 갱신했으면 스크립트를 다시 실행한다.
+
+```powershell
+python scripts/build-bolttagu-assets.py --pack <sprite-pack-v7>
+```
+
+display hint는 항상 반복 clip에 대응하고, 한 번만 재생되는 clip은 그 위에 덧씌워진 뒤
+끝나면 현재 hint의 clip으로 돌아간다. 프레임 선택은 순수 시각 계산이라 창 없이 테스트한다.
+
+| display hint | clip |
+| --- | --- |
+| `idle`, `default`, `input`, `success` | idle 정지 포즈 |
+| `hover`, `click`, `error` | 아하 alert 정지 포즈 |
+| `generating`, `search`, `thought`, `memory` | wondering 8프레임 10fps 반복 |
+| `provider_error` | 뒷모습 퇴장 3프레임 one-shot 후 alert 유지 |
+
+renderer가 열릴 때 등장 인사 3프레임(200/300/220ms)이 한 번 재생된다.
+불투명 타원 바닥과 쏟은 커피는 `Bolttagu2dView(show_floor=True)`로 켤 수 있고 기본값은 꺼짐이다.
 
 ### Rabbit 상태 grid
 

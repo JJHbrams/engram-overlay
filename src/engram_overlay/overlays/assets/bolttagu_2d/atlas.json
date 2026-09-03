@@ -1,0 +1,53 @@
+{
+  "source": "sprite-pack-v7",
+  "sourceCanvas": [
+    1254,
+    1254
+  ],
+  "crop": [
+    87,
+    13,
+    1167,
+    1219
+  ],
+  "scale": 0.25,
+  "cell": [
+    270,
+    302
+  ],
+  "feetAnchor": [
+    166,
+    267
+  ],
+  "sheets": {
+    "bolttagu-stills.png": [
+      "states/idle.png",
+      "states/alert_aha.png",
+      "states/wondering.png"
+    ],
+    "bolttagu-wondering.png": [
+      "animations/wondering/01.png",
+      "animations/wondering/02.png",
+      "animations/wondering/03.png",
+      "animations/wondering/04.png",
+      "animations/wondering/05.png",
+      "animations/wondering/06.png",
+      "animations/wondering/07.png",
+      "animations/wondering/08.png"
+    ],
+    "bolttagu-enter.png": [
+      "animations/enter/01.png",
+      "animations/enter/02.png",
+      "animations/enter/03.png"
+    ],
+    "bolttagu-exit.png": [
+      "animations/exit/01.png",
+      "animations/exit/02.png",
+      "animations/exit/03.png"
+    ],
+    "bolttagu-floor.png": [
+      "layers/floor_base.png",
+      "layers/floor_with_coffee.png"
+    ]
+  }
+}

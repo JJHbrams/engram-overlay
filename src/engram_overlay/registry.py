@@ -30,6 +30,9 @@ class OverlaySpec:
 
 
 OVERLAYS: dict[str, OverlaySpec] = {
+    "bolttagu-2d": OverlaySpec(
+        "bolttagu-2d", "tk-sprite-sheet", "engram_overlay.overlays.bolttagu_2d", "create_bolttagu_2d"
+    ),
     "rabbit-2d": OverlaySpec("rabbit-2d", "tk-sprite-grid", "engram_overlay.overlays.rabbit_2d", "create_rabbit_2d"),
     "robot-arm": OverlaySpec("robot-arm", "tk", "engram_overlay.overlays.robot_arm", "create_robot_arm"),
     "robot-arm-3d": OverlaySpec(
