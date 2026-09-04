@@ -41,15 +41,15 @@ def event_frames(state: str, count: int = 3) -> tuple[str, ...]:
     return tuple(f"animations/{state}/{index:02d}.png" for index in range(1, count + 1))
 
 
-# Only states the overlay can actually reach are packed. The pack also ships
-# "exit", which no lifecycle hook drives yet -- add it here the moment the Event
-# API grows a shutdown notice.
+# Only states the overlay can actually reach are packed. Every state the pack
+# ships is reachable now that Engram's launcher drives show and hide.
 SHEETS = {
     "bolttagu-idle.png": IDLE,
     "bolttagu-steam.png": STEAM,
     "bolttagu-alert.png": ALERT,
     "bolttagu-wondering.png": event_frames("wondering"),
     "bolttagu-enter.png": event_frames("enter"),
+    "bolttagu-exit.png": event_frames("exit"),
     "bolttagu-searching.png": event_frames("searching"),
     "bolttagu-writing.png": event_frames("writing"),
     "bolttagu-speaking.png": event_frames("speaking"),

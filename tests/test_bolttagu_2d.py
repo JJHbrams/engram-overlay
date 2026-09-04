@@ -83,9 +83,9 @@ class ClipCellTests(unittest.TestCase):
                 self.assertEqual(CLIPS[state].durations_ms, durations)
                 self.assertEqual(CLIPS[state].cells, (0, 1, 2))
 
-    def test_only_success_and_enter_are_one_shots(self) -> None:
+    def test_one_shots_are_the_flourish_and_the_two_transitions(self) -> None:
         one_shots = {name for name, clip in CLIPS.items() if not clip.loop}
-        self.assertEqual(one_shots, {"success", "enter"})
+        self.assertEqual(one_shots, {"success", "enter", "exit"})
 
     def test_enter_uses_pack_durations_then_retires(self) -> None:
         clip = CLIPS["enter"]
@@ -368,6 +368,33 @@ class AnimatorTests(unittest.TestCase):
         self.assertEqual(settled[0][0], "idle")
         self.assertIsNone(animator.oneshot)
 
+    def test_lifecycle_clip_outranks_a_hint_one_shot(self) -> None:
+        """A launcher collapse must win over the success flourish."""
+        animator = self.animator()
+        animator.apply_hint("success", 1_000)
+        self.assertEqual(animator.resolve(1_000), (("success", 0),))
+        self.assertEqual(animator.play_lifecycle("exit", 1_100), 700)
+        self.assertEqual(animator.resolve(1_100), (("exit", 0),))
+
+    def test_lifecycle_clip_reports_its_own_duration(self) -> None:
+        animator = self.animator()
+        self.assertEqual(animator.play_lifecycle("enter", 0), 720)
+        self.assertEqual(animator.play_lifecycle("exit", 0), 700)
+
+    def test_lifecycle_rejects_an_unknown_clip(self) -> None:
+        with self.assertRaises(ValueError):
+            self.animator().play_lifecycle("pirouette", 0)
+
+    def test_arrival_settles_into_the_current_hint(self) -> None:
+        animator = self.animator()
+        animator.apply_hint("thought", 0)
+        animator.play_lifecycle("enter", 0)
+        self.assertEqual(animator.resolve(0), (("enter", 0),))
+        # The arrival retires after 720 ms and hands back to the hint's own loop,
+        # which has been running since the hint arrived rather than restarting.
+        self.assertEqual(animator.resolve(800)[0][0], "wondering")
+        self.assertIsNone(animator.oneshot)
+
     def test_hover_and_click_use_the_alert_pose(self) -> None:
         animator = self.animator()
         animator.apply_hint("hover", 0)
@@ -484,6 +511,17 @@ class ViewTests(unittest.TestCase):
         self.assertTrue(view.mirrored)
         view.tick(-10_000, 0, 0, 0)
         self.assertFalse(view.mirrored)
+
+    def test_launcher_managed_view_skips_the_mount_arrival(self) -> None:
+        """With a launcher, the bow belongs to overlay.show, not to process start."""
+        managed = self.view(launcher_managed=True)
+        self.assertIsNone(managed.animator.oneshot)
+        self.assertEqual(self.view().animator.oneshot, "enter")
+
+    def test_transition_hooks_return_the_clip_durations(self) -> None:
+        view = self.view(launcher_managed=True)
+        self.assertEqual(view.begin_enter(), 720)
+        self.assertEqual(view.begin_exit(), 700)
 
     def test_face_pointer_can_be_disabled(self) -> None:
         view = self.view(face_pointer=False)

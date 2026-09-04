@@ -6,7 +6,7 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-from .protocol import DISPLAY_HINTS, TOOL_CATEGORIES
+from .protocol import DISPLAY_HINTS, HIDE_MESSAGE, SHOW_MESSAGE, TOOL_CATEGORIES
 
 PALETTE = {
     "default": ("#86a8e7", "READY"),
@@ -32,6 +32,8 @@ class OverlayState:
     width: int | None = None
     height: int | None = None
     tool_category: str | None = None
+    # None until Engram speaks about presentation at all.
+    presentation: str | None = None
 
     def apply(self, message: dict[str, Any]) -> None:
         message_type = message.get("type")
@@ -45,6 +47,10 @@ class OverlayState:
             # semantic event without one clears it rather than leaving it stale.
             category = payload.get("category") if isinstance(payload, dict) else None
             self.tool_category = category if category in TOOL_CATEGORIES else None
+        if message_type == SHOW_MESSAGE:
+            self.presentation = "shown"
+        elif message_type == HIDE_MESSAGE:
+            self.presentation = "hidden"
         if message_type == "overlay.set_position" and isinstance(payload, dict):
             x = payload.get("x")
             y = payload.get("y")

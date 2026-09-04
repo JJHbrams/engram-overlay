@@ -3,6 +3,7 @@ import json
 import unittest
 
 from engram_overlay.protocol import (
+    PRESENTATION_CAPABILITY,
     TOOL_CATEGORIES,
     JsonlTransport,
     ProtocolError,
@@ -10,6 +11,7 @@ from engram_overlay.protocol import (
     hello_message,
     parse_message,
     pointer_message,
+    visibility_message,
 )
 from engram_overlay.state import OverlayState
 
@@ -101,6 +103,37 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(state.tool_category, "write")
         state.apply({"schema_version": 1, "type": "tool.completed", "display_hint": "generating", "payload": {}})
         self.assertIsNone(state.tool_category)
+
+    def test_visibility_ack_carries_a_boolean(self) -> None:
+        self.assertEqual(
+            visibility_message(False),
+            {"schema_version": 1, "type": "overlay.visibility_changed", "payload": {"visible": False}},
+        )
+        self.assertIs(visibility_message(1)["payload"]["visible"], True)
+
+    def test_presentation_capability_is_named_once(self) -> None:
+        """Engram keys the launcher off this exact string."""
+        self.assertEqual(PRESENTATION_CAPABILITY, "overlay.presentation")
+        self.assertEqual(
+            hello_message(capabilities=[PRESENTATION_CAPABILITY])["payload"]["capabilities"],
+            ["overlay.presentation"],
+        )
+
+    def test_show_and_hide_set_the_requested_presentation(self) -> None:
+        state = OverlayState()
+        self.assertIsNone(state.presentation)
+        state.apply({"schema_version": 1, "type": "overlay.show", "payload": {}})
+        self.assertEqual(state.presentation, "shown")
+        state.apply({"schema_version": 1, "type": "overlay.hide", "payload": {}})
+        self.assertEqual(state.presentation, "hidden")
+
+    def test_presentation_is_independent_of_the_display_hint(self) -> None:
+        state = OverlayState()
+        state.apply({"schema_version": 1, "type": "overlay.hide", "payload": {}})
+        state.apply({"schema_version": 1, "type": "generation.started", "display_hint": "generating", "payload": {}})
+        # A hint arriving while collapsed updates the pose but must not reveal it.
+        self.assertEqual(state.display_hint, "generating")
+        self.assertEqual(state.presentation, "hidden")
 
     def test_geometry_messages_leave_the_category_alone(self) -> None:
         """set_position/set_size carry no display_hint, so they are not semantic events."""
