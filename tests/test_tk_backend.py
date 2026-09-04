@@ -99,6 +99,115 @@ class TkOverlayHostObserverTests(unittest.TestCase):
         actions = [call.args[0]["payload"]["action"] for call in host.transport.send.call_args_list]
         self.assertEqual(actions, ["menu_dismiss", "right_click", "menu_dismiss", "left_click"])
 
+class TkOverlayHostPresentationTests(unittest.TestCase):
+    """Engram's launcher owns whether the character is on screen.
+
+    The host owns the window, the view owns the transition animation, and the
+    visibility ack is sent only once that animation has finished.
+    """
+
+    def _host(self, *, start_hidden=True, enter_ms=720, exit_ms=700):
+        host = object.__new__(TkOverlayHost)
+        host.mode = "replace"
+        host.transport = Mock()
+        host.root = Mock()
+        host.root.after.return_value = "after#1"
+        host.root.winfo_x.return_value = 100
+        host.root.winfo_y.return_value = 200
+        host.root.winfo_width.return_value = 270
+        host.root.winfo_height.return_value = 302
+        host.view = Mock()
+        host.view.begin_enter.return_value = enter_ms
+        host.view.begin_exit.return_value = exit_ms
+        host.visible = not start_hidden
+        host._dismiss_after = None
+        host._drag_origin = None
+        return host
+
+    def _sent(self, host):
+        return [call.args[0] for call in host.transport.send.call_args_list]
+
+    def test_show_deiconifies_then_plays_the_arrival(self):
+        host = self._host()
+        host._apply_presentation(True)
+        host.root.deiconify.assert_called_once()
+        host.view.begin_enter.assert_called_once()
+        self.assertTrue(host.visible)
+        # Engram needs the geometry to anchor a bubble; a collapsed renderer
+        # never reported any.
+        sent = self._sent(host)
+        self.assertEqual([m["type"] for m in sent],
+                         ["overlay.geometry_changed", "overlay.visibility_changed"])
+        self.assertEqual(sent[-1]["payload"], {"visible": True})
+
+    def test_hide_withdraws_only_after_the_farewell_finishes(self):
+        host = self._host(start_hidden=False)
+        host._apply_presentation(False)
+        host.view.begin_exit.assert_called_once()
+        # Still on screen while the animation runs, and nothing acked yet.
+        host.root.withdraw.assert_not_called()
+        self.assertEqual(self._sent(host), [])
+        host.root.after.assert_called_once_with(700, host._finish_dismiss)
+
+        host._finish_dismiss()
+        host.root.withdraw.assert_called_once()
+        self.assertEqual(self._sent(host)[-1]["payload"], {"visible": False})
+
+    def test_repeated_launcher_clicks_do_not_replay_the_animation(self):
+        host = self._host(start_hidden=False)
+        host._apply_presentation(True)
+        host.view.begin_enter.assert_not_called()
+        self.assertEqual(self._sent(host), [])
+
+    def test_hiding_twice_is_a_no_op(self):
+        host = self._host()
+        host._apply_presentation(False)
+        host.view.begin_exit.assert_not_called()
+        host.root.withdraw.assert_not_called()
+
+    def test_show_during_a_running_hide_keeps_the_window_up(self):
+        host = self._host(start_hidden=False)
+        host._apply_presentation(False)
+        pending = host._dismiss_after
+        self.assertIsNotNone(pending)
+
+        host._apply_presentation(True)
+        host.root.after_cancel.assert_called_once_with(pending)
+        self.assertIsNone(host._dismiss_after)
+        host.root.withdraw.assert_not_called()
+        host.view.begin_enter.assert_called_once()
+        self.assertTrue(host.visible)
+
+    def test_a_view_without_transition_hooks_still_collapses(self):
+        host = self._host(start_hidden=False)
+        host.view = Mock(spec=[])  # no begin_enter/begin_exit
+        host._apply_presentation(False)
+        host.root.withdraw.assert_called_once()
+        self.assertEqual(self._sent(host)[-1]["payload"], {"visible": False})
+
+    def test_a_failing_transition_hook_does_not_take_the_renderer_down(self):
+        host = self._host(start_hidden=False)
+        host.view.begin_exit.side_effect = RuntimeError("artwork missing")
+        host._apply_presentation(False)
+        host.transport.log.assert_called_once()
+        host.root.withdraw.assert_called_once()
+
+    def test_collapsed_window_is_not_redrawn(self):
+        host = self._host()
+        host.FRAME_MS = 16
+        host._tick()
+        host.view.tick.assert_not_called()
+        host.root.after.assert_called_once_with(16, host._tick)
+
+    def test_visible_window_is_redrawn(self):
+        host = self._host(start_hidden=False)
+        host.FRAME_MS = 16
+        host.root.winfo_pointerxy.return_value = (5, 6)
+        host.root.winfo_x.return_value = 1
+        host.root.winfo_y.return_value = 2
+        host._tick()
+        host.view.tick.assert_called_once_with(5, 6, 1, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

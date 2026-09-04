@@ -24,6 +24,13 @@ DISPLAY_HINTS = frozenset(
         "error",
     }
 )
+# Engram's launcher icon owns whether the character is on screen. A renderer that
+# advertises this capability starts collapsed and is shown or hidden by the host;
+# one that does not keeps the always-visible behaviour.
+PRESENTATION_CAPABILITY = "overlay.presentation"
+SHOW_MESSAGE = "overlay.show"
+HIDE_MESSAGE = "overlay.hide"
+
 # The only tool information Engram publishes: a category, never a tool name.
 TOOL_CATEGORIES = frozenset(
     {"memory", "search", "read", "write", "execute", "communication", "other"}
@@ -62,6 +69,15 @@ def geometry_message(x: int, y: int, width: int, height: int) -> dict[str, Any]:
         "schema_version": SCHEMA_VERSION,
         "type": "overlay.geometry_changed",
         "payload": {"x": int(x), "y": int(y), "width": int(width), "height": int(height)},
+    }
+
+
+def visibility_message(visible: bool) -> dict[str, Any]:
+    """Reported once the show or hide animation has finished, not when it starts."""
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "type": "overlay.visibility_changed",
+        "payload": {"visible": bool(visible)},
     }
 
 

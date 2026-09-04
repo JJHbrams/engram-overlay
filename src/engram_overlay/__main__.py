@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from .protocol import JsonlTransport, hello_message
+from .protocol import PRESENTATION_CAPABILITY, JsonlTransport, hello_message
 from .registry import create_overlay, format_catalog, overlay_ids
 from .state import OverlayState
 
@@ -36,6 +36,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=1.0,
         help="resize the bolttagu-2d window; 1.0 is the artwork's own 270x302",
     )
+    parser.add_argument(
+        "--presentation",
+        action="store_true",
+        help="let Engram's launcher icon show and hide bolttagu-2d; start collapsed",
+    )
     return parser
 
 
@@ -59,10 +64,17 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--no-face-pointer is only supported by bolttagu-2d")
     if args.scale != 1.0 and args.overlay != "bolttagu-2d":
         parser.error("--scale is only supported by bolttagu-2d")
+    if args.presentation and args.overlay != "bolttagu-2d":
+        parser.error("--presentation is only supported by bolttagu-2d")
     transport = JsonlTransport(sys.stdin, sys.stdout, sys.stderr)
     # The API requires this to be the renderer's first stdout line. Send it
     # before constructing a window or starting the reader.
-    transport.send(hello_message(capabilities=["overlay.set_size"] if args.overlay == "bolttagu-2d" else None))
+    capabilities = ["overlay.set_size"] if args.overlay == "bolttagu-2d" else []
+    if args.presentation:
+        # Advertised only when the manifest opts in, so an Engram without the
+        # launcher never leaves a collapsed renderer with no way to appear.
+        capabilities.append(PRESENTATION_CAPABILITY)
+    transport.send(hello_message(capabilities=capabilities or None))
     if args.headless:
         run_headless(transport)
     else:
@@ -73,6 +85,7 @@ def main(argv: list[str] | None = None) -> int:
             eye_emission=args.eye_emission,
             face_pointer=not args.no_face_pointer,
             scale=args.scale,
+            launcher_managed=args.presentation,
         ).run()
     return 0
 

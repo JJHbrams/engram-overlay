@@ -32,6 +32,7 @@ Recipe = tuple[tuple[str, int], ...]
 
 # Frame timings are the pack's own, from sprites.json. Every event set is three frames.
 ENTER_DURATIONS_MS = (200, 300, 220)
+EXIT_DURATIONS_MS = (220, 220, 260)
 EVENT_DURATIONS_MS: dict[str, tuple[int, int, int]] = {
     "wondering": (320, 260, 320),
     "searching": (650, 500, 650),
@@ -88,6 +89,8 @@ def _event_clip(state: str, *, loop: bool) -> Clip:
 CLIPS: dict[str, Clip] = {
     "alert": Clip(sheet="alert", cells=(0,), durations_ms=(1000,), loop=True),
     "enter": Clip(sheet="enter", cells=(0, 1, 2), durations_ms=ENTER_DURATIONS_MS, loop=False),
+    # The rear-view farewell, played when Engram's launcher collapses the character.
+    "exit": Clip(sheet="exit", cells=(0, 1, 2), durations_ms=EXIT_DURATIONS_MS, loop=False),
     # The pack's only one-shot event: play once, then settle back to idle.
     "success": _event_clip("success", loop=False),
     **{state: _event_clip(state, loop=True) for state in LOOPING_EVENTS},
@@ -234,6 +237,14 @@ class BolttaguAnimator:
     def pose(self) -> str:
         return pose_for(self.display_hint, self.tool_category)
 
+    def play_lifecycle(self, clip: str, now_ms: int) -> int:
+        """Start a show/hide transition, overriding any hint one-shot in flight."""
+        if clip not in CLIPS:
+            raise ValueError(f"unknown lifecycle clip: {clip}")
+        self.oneshot = clip
+        self.oneshot_started_ms = now_ms
+        return CLIPS[clip].total_ms
+
     def apply_hint(self, hint: str, now_ms: int, category: str | None = None) -> None:
         resolved = hint if hint in STATE_POSES else "idle"
         if (resolved, category) == (self.display_hint, self.tool_category):
@@ -297,6 +308,7 @@ class Bolttagu2dView:
         *,
         scale: float = 1.0,
         face_pointer: bool = True,
+        launcher_managed: bool = False,
         show_floor: bool = False,
         coffee: bool = True,
         rng: random.Random | None = None,
@@ -310,7 +322,13 @@ class Bolttagu2dView:
         self.floor = sheets["floor"][1 if coffee else 0] if show_floor else None
         self.sheets = sheets
         self.face_pointer = face_pointer
-        self.animator = BolttaguAnimator(started_ms=self._now_ms(), rng=rng)
+        # When Engram's launcher owns presentation, the arrival bow belongs to
+        # overlay.show rather than to process start.
+        self.animator = BolttaguAnimator(
+            started_ms=self._now_ms(),
+            intro=None if launcher_managed else "enter",
+            rng=rng,
+        )
         self.mirrored = False
         self.canvas: tk.Canvas | None = None
         self.image_id: int | None = None
@@ -348,6 +366,12 @@ class Bolttagu2dView:
         self.drawn = None
         return self.width, self.height
 
+    def begin_enter(self) -> int:
+        return self.animator.play_lifecycle("enter", self._now_ms())
+
+    def begin_exit(self) -> int:
+        return self.animator.play_lifecycle("exit", self._now_ms())
+
     def tick(self, pointer_x: int, pointer_y: int, window_x: int, window_y: int) -> None:
         if self.face_pointer:
             self.mirrored = facing_mirrored(pointer_x, window_x, self.width, current=self.mirrored)
@@ -371,6 +395,9 @@ def create_bolttagu_2d(
     *,
     face_pointer: bool = True,
     scale: float = 1.0,
+    launcher_managed: bool = False,
 ) -> TkOverlayHost:
-    view = Bolttagu2dView(face_pointer=face_pointer, scale=scale)
-    return TkOverlayHost(transport, view, mode=mode, title="Bolttagu")
+    view = Bolttagu2dView(face_pointer=face_pointer, scale=scale, launcher_managed=launcher_managed)
+    return TkOverlayHost(
+        transport, view, mode=mode, title="Bolttagu", start_hidden=launcher_managed
+    )

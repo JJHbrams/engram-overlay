@@ -64,6 +64,11 @@
       "animations/enter/02.png",
       "animations/enter/03.png"
     ],
+    "bolttagu-exit.png": [
+      "animations/exit/01.png",
+      "animations/exit/02.png",
+      "animations/exit/03.png"
+    ],
     "bolttagu-searching.png": [
       "animations/searching/01.png",
       "animations/searching/02.png",

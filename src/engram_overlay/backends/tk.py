@@ -7,7 +7,7 @@ import threading
 import tkinter as tk
 from typing import Any, Protocol
 
-from ..protocol import JsonlTransport, geometry_message, pointer_message
+from ..protocol import JsonlTransport, geometry_message, pointer_message, visibility_message
 from ..state import OverlayState
 
 
@@ -38,6 +38,7 @@ class TkOverlayHost:
         *,
         mode: str = "observer",
         title: str = "Engram Custom Overlay",
+        start_hidden: bool = False,
     ) -> None:
         self.transport = transport
         self.view = view
@@ -65,13 +66,19 @@ class TkOverlayHost:
         self.canvas.pack(fill="both", expand=True)
         self.view.mount(self.canvas)
         self._drag_origin: tuple[int, int, int, int] | None = None
+        # Engram's launcher owns presentation when the renderer starts collapsed.
+        self.visible = not start_hidden
+        self._dismiss_after: str | None = None
+        if start_hidden:
+            self.root.withdraw()
         self._bind_pointer_events()
 
     def run(self) -> None:
         threading.Thread(target=self._read_messages, name="engram-jsonl-reader", daemon=True).start()
         # Geometry is optional for a passive observer.  Interactive observers
         # emit it so Engram can use this window as a transient bubble anchor.
-        self.root.after_idle(self._send_geometry)
+        if self.visible:
+            self.root.after_idle(self._send_geometry)
         self.root.after(20, self._drain_messages)
         self.root.after(self.FRAME_MS, self._tick)
         self.root.mainloop()
@@ -115,11 +122,56 @@ class TkOverlayHost:
                     self._send_geometry()
                 self.state.width = self.state.height = None
             self.view.apply_state(self.state)
+            if self.state.presentation is not None:
+                self._apply_presentation(self.state.presentation == "shown")
+                self.state.presentation = None
         self.root.after(20, self._drain_messages)
 
+    def _apply_presentation(self, visible: bool) -> None:
+        """Show or collapse the window, letting the view animate the transition."""
+        if visible == self.visible:
+            return  # repeated launcher clicks must not replay the animation
+        self.visible = visible
+        if self._dismiss_after is not None:
+            # A show during a running hide keeps the window up.
+            self.root.after_cancel(self._dismiss_after)
+            self._dismiss_after = None
+        if visible:
+            self.root.deiconify()
+            self.root.attributes("-topmost", True)
+            self._begin("begin_enter")
+            # A collapsed renderer never reported geometry, so Engram has nowhere
+            # to anchor a bubble until the character is actually on screen.
+            self._send_geometry()
+            self.transport.send(visibility_message(True))
+            return
+        hold_ms = self._begin("begin_exit")
+        if hold_ms <= 0:
+            self._finish_dismiss()
+        else:
+            self._dismiss_after = self.root.after(hold_ms, self._finish_dismiss)
+
+    def _begin(self, hook: str) -> int:
+        """Run one optional view transition hook, returning how long it lasts."""
+        begin = getattr(self.view, hook, None)
+        if not callable(begin):
+            return 0
+        try:
+            return max(0, int(begin()))
+        except Exception:  # noqa: BLE001 - a renderer must not die on artwork
+            self.transport.log(f"{hook} failed")
+            return 0
+
+    def _finish_dismiss(self) -> None:
+        self._dismiss_after = None
+        self.root.withdraw()
+        self.transport.send(visibility_message(False))
+
     def _tick(self) -> None:
-        pointer_x, pointer_y = self.root.winfo_pointerxy()
-        self.view.tick(pointer_x, pointer_y, self.root.winfo_x(), self.root.winfo_y())
+        # A collapsed window has nothing to redraw; the launcher icon is Engram's.
+        if self.visible:
+            pointer_x, pointer_y = self.root.winfo_pointerxy()
+            self.view.tick(pointer_x, pointer_y, self.root.winfo_x(), self.root.winfo_y())
         self.root.after(self.FRAME_MS, self._tick)
 
     def _send_pointer(self, action: str, *, x: int | None = None, y: int | None = None) -> None:

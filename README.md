@@ -33,6 +33,7 @@ git checkout v1.1.0.89
 - manifest 위치는 `%USERPROFILE%\.engram\overlays\<id>\manifest.yaml`이다.
 - 등록 뒤 Engram `Settings > Overlay`에서 고르고 재시작한다. 스크립트는 현재 선택을 바꾸지 않는다.
 - `-Mode observer|replace` (기본 `replace`), `-Scale`(bolttagu-2d), `-EyeEmission`(robot-arm-3d-v2/v3).
+- Engram 런처가 캐릭터 표시를 소유하게 하려면 manifest argv에 `--presentation`을 넣는다.
 - `-All`은 overlay별 옵션과 같이 못 쓴다. 그 옵션이 필요한 preset은 따로 등록한다.
 - 설치 없이 목록만 보려면 `engram-custom-overlay --list-overlays`.
 - preset 목록의 단일 출처는 `engram_overlay.registry`다. overlay를 추가해도 스크립트는 손대지 않는다.
@@ -107,6 +108,7 @@ python scripts/verify-engram.py --engram-source <engram-source> --manifest "$HOM
 | privacy | 대화·thinking·도구 payload·파일 경로를 받지 않는 `metadata_only` |
 | modes | `observer`는 번들 캐릭터와 공존, `replace`는 번들을 대체 |
 | sizing | `overlay.set_size`를 advertise한 `replace` renderer만 크기 요청을 받는다 |
+| presentation | `overlay.presentation`을 advertise한 renderer는 Engram 런처가 show/hide로 표시를 소유한다 |
 | fallback | handshake·JSONL·child 오류 시 Engram 번들 renderer 복구 |
 
 - 세부 계약: [Event API v1](docs/event-api-v1.md)
