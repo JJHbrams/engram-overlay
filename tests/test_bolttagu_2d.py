@@ -55,6 +55,14 @@ class ClipTests(unittest.TestCase):
             Clip(sheet="enter", cells=(0,), durations_ms=(0,), loop=False)
 
 
+class BolttaguResizeTests(unittest.TestCase):
+    def test_host_height_resize_preserves_atlas_aspect_and_bounds(self) -> None:
+        view = bolttagu_2d.Bolttagu2dView()
+        width, height = view.resize(9999, 9999)
+        self.assertEqual((width, height), scaled_cell(view.cell, SCALE_RANGE[1]))
+        self.assertAlmostEqual(width / height, view.cell[0] / view.cell[1], places=2)
+
+
 class ClipCellTests(unittest.TestCase):
     def test_wondering_advances_at_ten_fps_and_wraps(self) -> None:
         clip = CLIPS["wondering"]
