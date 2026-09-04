@@ -36,6 +36,17 @@ git checkout v1.0.1.77
 다음 명령은 `.venv` 생성, editable install, launcher 절대 경로가 들어간 manifest 생성을
 한 번에 수행한다.
 
+먼저 어떤 preset이 들어있는지 본다.
+
+```powershell
+.\scripts\install-dev.ps1 -List
+```
+
+`id` / 표시 이름 / backend / 한 줄 설명이 나온다. 설치 없이 목록만 보려면
+`.\.venv\Scripts\engram-custom-overlay.exe --list-overlays`도 같은 것을 출력한다.
+
+하나만 등록한다.
+
 ```powershell
 .\scripts\install-dev.ps1 -Overlay rabbit-2d -Mode replace
 ```
@@ -44,12 +55,23 @@ git checkout v1.0.1.77
 Engram의 `Settings > Overlay`에서 `Rabbit`을 선택하고 Engram을 재시작한다. 이 스크립트는
 현재 선택을 자동으로 바꾸지 않는다.
 
-다른 포함 샘플도 같은 방식으로 등록할 수 있다.
+**포함된 preset을 한 번에 전부 등록**하려면 `-All`을 쓴다. 이후에는 Engram 설정에서 고르기만
+하면 되므로 preset을 번갈아 볼 때 편하다.
+
+```powershell
+.\scripts\install-dev.ps1 -All -Mode replace
+```
+
+`-All`은 overlay별 옵션(`-EyeEmission`, `-Scale`)과 함께 쓸 수 없다. 그 옵션이 필요한 preset은
+따로 등록한다.
 
 ```powershell
 .\scripts\install-dev.ps1 -Overlay xeyes -Mode observer
 .\scripts\install-dev.ps1 -Overlay robot-arm-3d-v3 -Mode replace -EyeEmission
 ```
+
+preset 목록은 `engram_overlay.registry`가 단일 출처다. 스크립트가 자체 목록을 들고 있지 않으므로
+overlay를 추가해도 스크립트를 고칠 필요가 없다.
 
 manifest의 핵심 형태는 다음과 같다. `command`의 첫 항목은 실제 checkout의 launcher
 절대 경로여야 하며, Engram은 검증된 manifest의 argv만 실행한다.
