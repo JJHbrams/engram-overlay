@@ -41,8 +41,9 @@ asset path.
 3. Manifest commands are argv arrays with an absolute installed executable. They are not shell strings.
 4. `screen_x` and `screen_y` on drag events describe the window's top-left position, not the raw cursor.
 5. `observer` keeps its local visual position and reports geometry; `replace` participates in Engram-owned positioning.
-6. Convert between physical screen, Tk client, and logical canvas coordinates explicitly on mixed-DPI Windows systems.
-7. A failed renderer must be safe for Engram to terminate and replace with the bundled renderer.
+6. A renderer may advertise `"overlay.set_size"` in `overlay.hello.payload.capabilities`. Only an opted-in `replace` renderer then receives physical `width`/`height` requests; preserve its artwork aspect ratio, bound the result, and emit `overlay.geometry_changed` after applying it. Old renderers and observer mode receive no size request.
+7. Convert between physical screen, Tk client, and logical canvas coordinates explicitly on mixed-DPI Windows systems.
+8. A failed renderer must be safe for Engram to terminate and replace with the bundled renderer.
 
 ## State and personalization
 

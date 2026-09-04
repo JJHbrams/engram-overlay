@@ -46,8 +46,6 @@ BLINK_INTERVAL_MS = (2500, 6000)
 # so the sprite already looks left and is mirrored only to turn right.
 POINTER_DEADZONE_PX = 24
 
-# Engram's "캐릭터 높이 비율" only sizes its bundled renderer; the Event API carries no
-# size toward a renderer, so an external overlay owns its own window size.
 SCALE_RANGE = (0.2, 4.0)
 
 
@@ -309,6 +307,14 @@ class Bolttagu2dView:
 
     def apply_state(self, state: OverlayState) -> None:
         self.animator.apply_hint(state.display_hint, self._now_ms())
+
+    def resize(self, requested_width: int, requested_height: int) -> tuple[int, int]:
+        """Apply host physical height within the safe scale range without stretching art."""
+        del requested_width
+        scale = min(SCALE_RANGE[1], max(SCALE_RANGE[0], float(requested_height) / self.cell[1]))
+        self.width, self.height = scaled_cell(self.cell, scale)
+        self.drawn = None
+        return self.width, self.height
 
     def tick(self, pointer_x: int, pointer_y: int, window_x: int, window_y: int) -> None:
         if self.face_pointer:

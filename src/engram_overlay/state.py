@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,6 +29,8 @@ class OverlayState:
     display_hint: str = "idle"
     x: int | None = None
     y: int | None = None
+    width: int | None = None
+    height: int | None = None
 
     def apply(self, message: dict[str, Any]) -> None:
         message_type = message.get("type")
@@ -40,6 +43,13 @@ class OverlayState:
             y = payload.get("y")
             if isinstance(x, (int, float)) and isinstance(y, (int, float)):
                 self.x, self.y = int(x), int(y)
+        if message_type == "overlay.set_size" and isinstance(payload, dict):
+            width, height = payload.get("width"), payload.get("height")
+            if (
+                isinstance(width, (int, float)) and isinstance(height, (int, float))
+                and math.isfinite(width) and math.isfinite(height) and width > 0 and height > 0
+            ):
+                self.width, self.height = int(width), int(height)
 
     @property
     def appearance(self) -> tuple[str, str]:

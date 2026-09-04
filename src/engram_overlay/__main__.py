@@ -52,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
     transport = JsonlTransport(sys.stdin, sys.stdout, sys.stderr)
     # The API requires this to be the renderer's first stdout line. Send it
     # before constructing a window or starting the reader.
-    transport.send(hello_message())
+    transport.send(hello_message(capabilities=["overlay.set_size"] if args.overlay == "bolttagu-2d" else None))
     if args.headless:
         run_headless(transport)
     else:
