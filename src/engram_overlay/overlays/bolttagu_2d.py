@@ -1,4 +1,4 @@
-"""Bolttagu sprite overlay driven by the sprite-pack-v8 animation set.
+"""Bolttagu sprite overlay driven by the bolttagu sprite pack.
 
 The upstream pack is a set of full-canvas 1254x1254 PNGs.  ``scripts/build-bolttagu-assets.py``
 crops them to a shared rectangle and packs them into the horizontal sheets bundled here, so every
@@ -34,7 +34,7 @@ WONDERING_FRAME_MS = 100  # sprites.json declares 10 fps for the 8-frame loop
 ENTER_DURATIONS_MS = (200, 300, 220)
 EXIT_DURATIONS_MS = (220, 220, 260)
 
-# v8 idle: steam is a 24-frame 10 fps loop, blink is a fixed 210 ms sequence that
+# idle: steam is a 24-frame 10 fps loop, blink is a fixed 210 ms sequence that
 # re-arms itself 2.5-6 s after it finishes.
 STEAM_FRAME_MS = 100
 STEAM_CELLS = 24

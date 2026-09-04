@@ -1,6 +1,6 @@
 """Pack the 1254x1254 bolttagu sprite pack into small aligned overlay atlases.
 
-The upstream pack ships one full-canvas PNG per frame (~26 MB for v8), which is far
+The upstream pack ships one full-canvas PNG per frame (~27 MB), which is far
 too large to commit.  Every frame shares the same canvas and feet anchor, so a
 single crop rectangle keeps all poses aligned while removing the empty margin.
 The crop is the union of every shipped frame's alpha bounding box, downscaled by
@@ -11,7 +11,7 @@ the 24 steam frames composite over them at runtime, so blink and steam stay
 independent loops the way ``idle-animation.js`` describes.
 
 Usage:
-    python scripts/build-bolttagu-assets.py --pack <sprite-pack-v8 directory>
+    python scripts/build-bolttagu-assets.py --pack <sprite-pack directory>
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ OUTPUT_DIR = REPO_ROOT / "src" / "engram_overlay" / "overlays" / "assets" / "bol
 
 # Cell order inside each generated sheet.  The overlay indexes these by name.
 # idle holds the pre-composited blink states; the pack's own states/idle.png is
-# skipped because it bakes in the static steam that v8 split out.
+# skipped because it bakes in the static steam the pack split out in v8.
 IDLE = ("animations/idle_blink/open.png", "animations/idle_blink/half.png", "animations/idle_blink/closed.png")
 STEAM = tuple(f"animations/idle_steam/{index:02d}.png" for index in range(1, 25))
 ALERT = ("states/alert_aha.png",)
@@ -120,7 +120,7 @@ def build(pack: Path) -> dict[str, object]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--pack", required=True, type=Path, help="sprite-pack-v8 directory")
+    parser.add_argument("--pack", required=True, type=Path, help="sprite-pack-vN directory")
     arguments = parser.parse_args()
     result = build(arguments.pack.expanduser())
     written: dict[str, int] = result["bytes"]  # type: ignore[assignment]
