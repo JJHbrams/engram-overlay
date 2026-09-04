@@ -87,7 +87,7 @@ python scripts/verify-engram.py --engram-source <engram-source> --manifest "$HOM
 
 | id | 이름 | backend | 설명 |
 | --- | --- | --- | --- |
-| `bolttagu-2d` | Bolttagu | Tk sprite sheet | 랜덤 눈깜빡임·커피 김을 합성하고 포인터 쪽으로 도는 2D 캐릭터 |
+| `bolttagu-2d` | Bolttagu | Tk sprite sheet | 검색·작성·응답·실패 등 상태별 애니메이션과 랜덤 눈깜빡임·커피 김을 합성하는 2D 캐릭터 |
 | `rabbit-2d` | Rabbit | Tk sprite grid | 손그림 토끼 5개 포즈를 의미 이벤트에 맞춰 회전 |
 | `xeyes` | Engram XEyes | Tk | mouse pointer를 따라보는 두 눈. 첫 API/입력 smoke |
 | `robot-arm` | Engram 3-Link Robot Arm | Tk | 천장에서 내려오는 iris·LED 표정의 단안 3-link arm |

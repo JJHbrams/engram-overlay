@@ -30,9 +30,18 @@ ASSET_DIR = Path(__file__).parent / "assets" / "bolttagu_2d"
 
 Recipe = tuple[tuple[str, int], ...]
 
-WONDERING_FRAME_MS = 100  # sprites.json declares 10 fps for the 8-frame loop
+# Frame timings are the pack's own, from sprites.json. Every event set is three frames.
 ENTER_DURATIONS_MS = (200, 300, 220)
-EXIT_DURATIONS_MS = (220, 220, 260)
+EVENT_DURATIONS_MS: dict[str, tuple[int, int, int]] = {
+    "wondering": (320, 260, 320),
+    "searching": (650, 500, 650),
+    "writing": (320, 320, 420),
+    "speaking": (220, 220, 260),
+    "listening": (420, 420, 420),
+    "success": (280, 360, 360),
+    "error": (260, 300, 420),
+}
+LOOPING_EVENTS = ("wondering", "searching", "writing", "speaking", "listening", "error")
 
 # idle: steam is a 24-frame 10 fps loop, blink is a fixed 210 ms sequence that
 # re-arms itself 2.5-6 s after it finishes.
@@ -71,37 +80,41 @@ class Clip:
         return sum(self.durations_ms)
 
 
+def _event_clip(state: str, *, loop: bool) -> Clip:
+    return Clip(sheet=state, cells=(0, 1, 2), durations_ms=EVENT_DURATIONS_MS[state], loop=loop)
+
+
 CLIPS: dict[str, Clip] = {
     "alert": Clip(sheet="alert", cells=(0,), durations_ms=(1000,), loop=True),
-    "wondering": Clip(
-        sheet="wondering",
-        cells=tuple(range(8)),
-        durations_ms=(WONDERING_FRAME_MS,) * 8,
-        loop=True,
-    ),
     "enter": Clip(sheet="enter", cells=(0, 1, 2), durations_ms=ENTER_DURATIONS_MS, loop=False),
-    "exit": Clip(sheet="exit", cells=(0, 1, 2), durations_ms=EXIT_DURATIONS_MS, loop=False),
+    # The pack's only one-shot event: play once, then settle back to idle.
+    "success": _event_clip("success", loop=False),
+    **{state: _event_clip(state, loop=True) for state in LOOPING_EVENTS},
 }
 
 # "idle" is the layered blink+steam pose; the rest name a looping clip above.
+# The mapping follows the intent the pack states in its own event-map.json.
 IDLE_POSE = "idle"
 STATE_POSES: dict[str, str] = {
     "default": IDLE_POSE,
     "idle": IDLE_POSE,
-    "input": IDLE_POSE,
+    # The success one-shot plays over this pose and settles back into it.
     "success": IDLE_POSE,
     "hover": "alert",
     "click": "alert",
-    "error": "alert",
-    "provider_error": "alert",
-    "generating": "wondering",
-    "search": "wondering",
+    "input": "listening",
+    "generating": "speaking",
     "thought": "wondering",
-    "memory": "wondering",
+    "search": "searching",
+    # Engram's memory category covers note reads and writes alike. "writing" keeps
+    # it distinct from "search", which is the reason the two hints exist at all.
+    "memory": "writing",
+    "error": "error",
+    "provider_error": "error",
 }
 
 # A hint that warrants a one-shot the moment the renderer enters it.
-HINT_ONESHOTS: dict[str, str] = {"provider_error": "exit"}
+HINT_ONESHOTS: dict[str, str] = {"success": "success"}
 
 
 def clip_cell(clip: Clip, elapsed_ms: int) -> int | None:

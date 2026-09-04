@@ -1,5 +1,5 @@
 {
-  "source": "sprite-pack-v9",
+  "source": "sprite-pack-v10",
   "sourceCanvas": [
     1254,
     1254
@@ -57,22 +57,42 @@
     "bolttagu-wondering.png": [
       "animations/wondering/01.png",
       "animations/wondering/02.png",
-      "animations/wondering/03.png",
-      "animations/wondering/04.png",
-      "animations/wondering/05.png",
-      "animations/wondering/06.png",
-      "animations/wondering/07.png",
-      "animations/wondering/08.png"
+      "animations/wondering/03.png"
     ],
     "bolttagu-enter.png": [
       "animations/enter/01.png",
       "animations/enter/02.png",
       "animations/enter/03.png"
     ],
-    "bolttagu-exit.png": [
-      "animations/exit/01.png",
-      "animations/exit/02.png",
-      "animations/exit/03.png"
+    "bolttagu-searching.png": [
+      "animations/searching/01.png",
+      "animations/searching/02.png",
+      "animations/searching/03.png"
+    ],
+    "bolttagu-writing.png": [
+      "animations/writing/01.png",
+      "animations/writing/02.png",
+      "animations/writing/03.png"
+    ],
+    "bolttagu-speaking.png": [
+      "animations/speaking/01.png",
+      "animations/speaking/02.png",
+      "animations/speaking/03.png"
+    ],
+    "bolttagu-listening.png": [
+      "animations/listening/01.png",
+      "animations/listening/02.png",
+      "animations/listening/03.png"
+    ],
+    "bolttagu-success.png": [
+      "animations/success/01.png",
+      "animations/success/02.png",
+      "animations/success/03.png"
+    ],
+    "bolttagu-error.png": [
+      "animations/error/01.png",
+      "animations/error/02.png",
+      "animations/error/03.png"
     ],
     "bolttagu-floor.png": [
       "layers/floor_base.png",
