@@ -34,18 +34,28 @@ OUTPUT_DIR = REPO_ROOT / "src" / "engram_overlay" / "overlays" / "assets" / "bol
 IDLE = ("animations/idle_blink/open.png", "animations/idle_blink/half.png", "animations/idle_blink/closed.png")
 STEAM = tuple(f"animations/idle_steam/{index:02d}.png" for index in range(1, 25))
 ALERT = ("states/alert_aha.png",)
-WONDERING = tuple(f"animations/wondering/{index:02d}.png" for index in range(1, 9))
-ENTER = tuple(f"animations/enter/{index:02d}.png" for index in range(1, 4))
-EXIT = tuple(f"animations/exit/{index:02d}.png" for index in range(1, 4))
 FLOOR = ("layers/floor_base.png", "layers/floor_with_coffee.png")
 
+
+def event_frames(state: str, count: int = 3) -> tuple[str, ...]:
+    return tuple(f"animations/{state}/{index:02d}.png" for index in range(1, count + 1))
+
+
+# Only states the overlay can actually reach are packed. The pack also ships
+# "waiting" (queue/rate-limit) and "exit", which no display hint or lifecycle
+# hook drives yet -- add them here the moment something can trigger them.
 SHEETS = {
     "bolttagu-idle.png": IDLE,
     "bolttagu-steam.png": STEAM,
     "bolttagu-alert.png": ALERT,
-    "bolttagu-wondering.png": WONDERING,
-    "bolttagu-enter.png": ENTER,
-    "bolttagu-exit.png": EXIT,
+    "bolttagu-wondering.png": event_frames("wondering"),
+    "bolttagu-enter.png": event_frames("enter"),
+    "bolttagu-searching.png": event_frames("searching"),
+    "bolttagu-writing.png": event_frames("writing"),
+    "bolttagu-speaking.png": event_frames("speaking"),
+    "bolttagu-listening.png": event_frames("listening"),
+    "bolttagu-success.png": event_frames("success"),
+    "bolttagu-error.png": event_frames("error"),
     "bolttagu-floor.png": FLOOR,
 }
 

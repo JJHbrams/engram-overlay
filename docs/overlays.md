@@ -21,16 +21,25 @@ python scripts/build-bolttagu-assets.py --pack <sprite-pack-vN>
 
 프레임은 아래에서 위로 합성하는 `(sheet, cell)` 레이어 recipe다. idle이 독립된 두 루프의 합성이라 단일 프레임으로 표현되지 않기 때문이다.
 
-| display hint | recipe |
-| --- | --- |
-| `idle`, `default`, `input`, `success` | idle 눈 상태 + 커피 김 |
-| `hover`, `click`, `error` | 아하 alert 정지 포즈 |
-| `generating`, `search`, `thought`, `memory` | wondering 8프레임 10fps 반복 |
-| `provider_error` | 뒷모습 퇴장 3프레임 one-shot 후 alert 유지 |
+매핑은 팩이 `event-map.json`에 밝혀둔 의도를 따른다. 타이밍도 팩의 `sprites.json` 값 그대로다.
 
+| display hint | 상태 | 프레임 · 타이밍 |
+| --- | --- | --- |
+| `idle`, `default` | idle | 눈 상태 3 + 김 24 레이어 합성 |
+| `success` | success → idle | 280/360/360ms **1회** 재생 후 idle 복귀 |
+| `hover`, `click` | alert | 아하 정지 포즈 |
+| `input` | listening | 420/420/420ms 반복 |
+| `generating` | speaking | 220/220/260ms 반복 |
+| `thought` | wondering | 320/260/320ms 반복 |
+| `search` | searching | 650/500/650ms 반복 |
+| `memory` | writing | 320/320/420ms 반복 |
+| `error`, `provider_error` | error | 260/300/420ms 반복 |
+
+- `memory`가 `writing`인 것은 판단이다. Engram의 memory 범주는 노트 읽기와 쓰기를 함께 덮는데, `search`가 이미 "찾아보기"를 가져갔다. 두 hint를 눈으로 구분할 수 있게 하는 것이 애초에 두 hint가 따로 있는 이유라 갈랐다.
+- 실패 상태는 **반복**한다. 한 번 재생하고 사라지면 실패가 화면에 남지 않는다.
 - 합성은 눈에 보이는 프레임이 바뀔 때만 한다. 조합을 미리 캐싱하지 않는다. 전부 캐싱하면 배율에 따라 수십 MB가 된다.
 - renderer가 열릴 때 등장 인사 3프레임(200/300/220ms)이 한 번 재생된다.
-- 종료 애니메이션은 종료 시점에 재생되지 않는다. Event API에 종료 예고가 없어 `provider_error`에 붙여둔 것이다.
+- 팩에는 `waiting`(큐·재시도·rate limit)과 `exit`도 있지만 이를 띄울 display hint나 lifecycle 훅이 없어 **패킹하지 않는다.** 트리거가 생기면 빌드 스크립트에 한 줄 추가하면 된다.
 
 ### 애니메이션
 

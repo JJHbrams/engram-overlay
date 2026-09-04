@@ -7,6 +7,7 @@ from engram_overlay.overlays.bolttagu_2d import (
     ASSET_DIR,
     BLINK_INTERVAL_MS,
     CLIPS,
+    EVENT_DURATIONS_MS,
     EYE_CELLS,
     HINT_ONESHOTS,
     IDLE_POSE,
@@ -64,14 +65,25 @@ class BolttaguResizeTests(unittest.TestCase):
 
 
 class ClipCellTests(unittest.TestCase):
-    def test_wondering_advances_at_ten_fps_and_wraps(self) -> None:
+    def test_wondering_uses_pack_durations_and_wraps(self) -> None:
         clip = CLIPS["wondering"]
-        self.assertEqual(clip.total_ms, 800)
+        self.assertEqual(clip.durations_ms, (320, 260, 320))
+        self.assertEqual(clip.total_ms, 900)
         self.assertEqual(clip_cell(clip, 0), 0)
-        self.assertEqual(clip_cell(clip, 99), 0)
-        self.assertEqual(clip_cell(clip, 100), 1)
-        self.assertEqual(clip_cell(clip, 750), 7)
-        self.assertEqual(clip_cell(clip, 800), 0)
+        self.assertEqual(clip_cell(clip, 319), 0)
+        self.assertEqual(clip_cell(clip, 320), 1)
+        self.assertEqual(clip_cell(clip, 580), 2)
+        self.assertEqual(clip_cell(clip, 900), 0)
+
+    def test_every_event_clip_matches_the_pack_timings(self) -> None:
+        for state, durations in EVENT_DURATIONS_MS.items():
+            with self.subTest(state=state):
+                self.assertEqual(CLIPS[state].durations_ms, durations)
+                self.assertEqual(CLIPS[state].cells, (0, 1, 2))
+
+    def test_only_success_and_enter_are_one_shots(self) -> None:
+        one_shots = {name for name, clip in CLIPS.items() if not clip.loop}
+        self.assertEqual(one_shots, {"success", "enter"})
 
     def test_enter_uses_pack_durations_then_retires(self) -> None:
         clip = CLIPS["enter"]
@@ -240,19 +252,41 @@ class AnimatorTests(unittest.TestCase):
         animator.resolve(800)
         self.assertEqual(rng.calls, 2)
 
-    def test_thinking_hints_run_the_wondering_loop(self) -> None:
+    def test_thought_runs_the_wondering_loop(self) -> None:
         animator = self.animator()
         animator.apply_hint("thought", 5_000)
         self.assertEqual(animator.resolve(5_000), (("wondering", 0),))
-        self.assertEqual(animator.resolve(5_300), (("wondering", 3),))
-        self.assertEqual(animator.resolve(5_800), (("wondering", 0),))
+        self.assertEqual(animator.resolve(5_320), (("wondering", 1),))
+        self.assertEqual(animator.resolve(5_900), (("wondering", 0),))
+
+    def test_each_working_hint_gets_its_own_animation(self) -> None:
+        """The pack ships a distinct set per activity; hints must not collapse onto one."""
+        expected = {
+            "search": "searching",
+            "memory": "writing",
+            "generating": "speaking",
+            "input": "listening",
+            "thought": "wondering",
+            "error": "error",
+            "provider_error": "error",
+        }
+        for hint, sheet in expected.items():
+            with self.subTest(hint=hint):
+                animator = self.animator()
+                animator.apply_hint(hint, 0)
+                self.assertEqual(animator.resolve(0), ((sheet, 0),))
+
+    def test_working_hints_are_visually_distinguishable(self) -> None:
+        sheets = {STATE_POSES[h] for h in ("search", "memory", "generating", "input", "thought")}
+        self.assertEqual(len(sheets), 5)
 
     def test_hint_restart_is_ignored_while_unchanged(self) -> None:
         animator = self.animator()
         animator.apply_hint("search", 1_000)
         animator.apply_hint("search", 1_400)
         self.assertEqual(animator.state_started_ms, 1_000)
-        self.assertEqual(animator.resolve(1_400), (("wondering", 4),))
+        # 400 ms into searching's (650, 500, 650) is still its first frame.
+        self.assertEqual(animator.resolve(1_400), (("searching", 0),))
 
     def test_unknown_hint_falls_back_to_idle(self) -> None:
         animator = self.animator()
@@ -277,12 +311,25 @@ class AnimatorTests(unittest.TestCase):
         self.assertEqual(animator.pose, IDLE_POSE)
         self.assertEqual(rng.calls, 1)
 
-    def test_provider_error_plays_the_exit_wave_then_holds_alert(self) -> None:
+    def test_both_failure_hints_loop_the_error_animation(self) -> None:
+        for hint in ("error", "provider_error"):
+            with self.subTest(hint=hint):
+                animator = self.animator()
+                animator.apply_hint(hint, 2_000)
+                self.assertEqual(animator.resolve(2_000), (("error", 0),))
+                self.assertEqual(animator.resolve(2_260), (("error", 1),))
+                # It loops rather than retiring, so the failure stays visible.
+                self.assertEqual(animator.resolve(2_980), (("error", 0),))
+
+    def test_success_plays_once_then_settles_into_idle(self) -> None:
         animator = self.animator()
-        animator.apply_hint("provider_error", 2_000)
-        self.assertEqual(animator.resolve(2_000), (("exit", 0),))
-        self.assertEqual(animator.resolve(2_450), (("exit", 2),))
-        self.assertEqual(animator.resolve(2_700), (("alert", 0),))
+        animator.apply_hint("success", 1_000)
+        self.assertEqual(animator.resolve(1_000), (("success", 0),))
+        self.assertEqual(animator.resolve(1_280), (("success", 1),))
+        self.assertEqual(animator.resolve(1_640), (("success", 2),))
+        settled = animator.resolve(2_100)
+        self.assertEqual(settled[0][0], "idle")
+        self.assertIsNone(animator.oneshot)
 
     def test_hover_and_click_use_the_alert_pose(self) -> None:
         animator = self.animator()
@@ -298,10 +345,11 @@ class AtlasTests(unittest.TestCase):
         self.assertEqual(cell, (270, 302))
         self.assertEqual(len(sheets["idle"]), len(EYE_CELLS))
         self.assertEqual(len(sheets["steam"]), STEAM_CELLS)
+        for state in EVENT_DURATIONS_MS:
+            with self.subTest(state=state):
+                self.assertEqual(len(sheets[state]), 3)
         self.assertEqual(len(sheets["alert"]), 1)
-        self.assertEqual(len(sheets["wondering"]), 8)
         self.assertEqual(len(sheets["enter"]), 3)
-        self.assertEqual(len(sheets["exit"]), 3)
         self.assertEqual(len(sheets["floor"]), 2)
         for name, frames in sheets.items():
             with self.subTest(sheet=name):
@@ -326,8 +374,24 @@ class AtlasTests(unittest.TestCase):
         self.assertEqual(metadata["feetAnchor"], [166, 267])
 
     def test_bundled_assets_stay_small(self) -> None:
+        """Guards the packing, not the artwork: the raw pack is over 30 MB."""
         total = sum(path.stat().st_size for path in ASSET_DIR.glob("*.png"))
-        self.assertLess(total, 1_500_000)
+        self.assertLess(total, 2_000_000)
+
+    def test_every_pose_and_clip_has_a_bundled_sheet(self) -> None:
+        sheets, _ = load_atlas()
+        for pose in set(STATE_POSES.values()):
+            with self.subTest(pose=pose):
+                self.assertIn(pose, sheets)
+        for name, clip in CLIPS.items():
+            with self.subTest(clip=name):
+                self.assertIn(clip.sheet, sheets)
+
+    def test_no_unused_sheet_is_shipped(self) -> None:
+        """Only what the overlay can display is packed; the pack ships more."""
+        sheets, _ = load_atlas()
+        used = {clip.sheet for clip in CLIPS.values()} | {"idle", "steam", "floor"}
+        self.assertEqual(set(sheets), used)
 
 
 class ViewTests(unittest.TestCase):
