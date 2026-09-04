@@ -7,13 +7,14 @@
 
 ### 에셋
 
-- 원본 `sprite-pack-v8`은 1254×1254 전체 캔버스 PNG 26MB다. 그대로 담지 않는다.
+- 원본 sprite pack은 1254×1254 전체 캔버스 PNG 27MB다. 그대로 담지 않는다.
+- 현재 반영 버전은 `atlas.json`의 `source`에 기록된다 (`sprite-pack-v9`).
 - `scripts/build-bolttagu-assets.py`가 모든 프레임의 알파 bbox 합집합으로 한 번 crop하고 0.25배로 축소해 가로 sheet로 묶는다. 결과는 270×302 셀, 총 549 KiB.
 - 한 crop을 공유하므로 모든 포즈가 같은 발 기준점에 정렬된다.
 - crop·배율·발 기준점은 `assets/bolttagu_2d/atlas.json`에 기록되고 overlay가 그 값을 읽는다. 코드에 하드코딩하지 않는다.
 
 ```powershell
-python scripts/build-bolttagu-assets.py --pack <sprite-pack-v8>
+python scripts/build-bolttagu-assets.py --pack <sprite-pack-vN>
 ```
 
 ### 상태 매핑
