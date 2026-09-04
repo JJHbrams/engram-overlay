@@ -46,6 +46,10 @@ BLINK_INTERVAL_MS = (2500, 6000)
 # so the sprite already looks left and is mirrored only to turn right.
 POINTER_DEADZONE_PX = 24
 
+# Engram's "캐릭터 높이 비율" only sizes its bundled renderer; the Event API carries no
+# size toward a renderer, so an external overlay owns its own window size.
+SCALE_RANGE = (0.2, 4.0)
+
 
 @dataclass(frozen=True)
 class Clip:
@@ -116,6 +120,16 @@ def clip_cell(clip: Clip, elapsed_ms: int) -> int | None:
         if elapsed_ms < cursor:
             return clip.cells[index]
     return clip.cells[-1]
+
+
+def scaled_cell(cell: tuple[int, int], scale: float) -> tuple[int, int]:
+    """Window size for an atlas cell, or the cell itself at 1.0."""
+    low, high = SCALE_RANGE
+    if not low <= scale <= high:
+        raise ValueError(f"scale must be between {low} and {high}, got {scale}")
+    if scale == 1.0:
+        return cell
+    return (max(1, round(cell[0] * scale)), max(1, round(cell[1] * scale)))
 
 
 def steam_cell(elapsed_ms: int) -> int:
@@ -251,13 +265,18 @@ class Bolttagu2dView:
     def __init__(
         self,
         *,
+        scale: float = 1.0,
         face_pointer: bool = True,
         show_floor: bool = False,
         coffee: bool = True,
         rng: random.Random | None = None,
     ) -> None:
         sheets, cell = load_atlas()
-        self.width, self.height = cell
+        self.cell = cell
+        self.scale = scale
+        # Resize the finished frame rather than every cell, so memory stays flat
+        # at any scale and only the <=12 redraws per second pay for it.
+        self.width, self.height = scaled_cell(cell, scale)
         self.floor = sheets["floor"][1 if coffee else 0] if show_floor else None
         self.sheets = sheets
         self.face_pointer = face_pointer
@@ -277,6 +296,8 @@ class Bolttagu2dView:
             image = Image.alpha_composite(image, self.sheets[sheet][cell])
         if mirrored:
             image = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+        if (self.width, self.height) != self.cell:
+            image = image.resize((self.width, self.height), Image.Resampling.LANCZOS)
         return image
 
     def mount(self, canvas: tk.Canvas) -> None:
@@ -306,5 +327,12 @@ class Bolttagu2dView:
         return int(time.monotonic() * 1000)
 
 
-def create_bolttagu_2d(transport: JsonlTransport, mode: str, *, face_pointer: bool = True) -> TkOverlayHost:
-    return TkOverlayHost(transport, Bolttagu2dView(face_pointer=face_pointer), mode=mode, title="Bolttagu")
+def create_bolttagu_2d(
+    transport: JsonlTransport,
+    mode: str,
+    *,
+    face_pointer: bool = True,
+    scale: float = 1.0,
+) -> TkOverlayHost:
+    view = Bolttagu2dView(face_pointer=face_pointer, scale=scale)
+    return TkOverlayHost(transport, view, mode=mode, title="Bolttagu")

@@ -165,6 +165,27 @@ python scripts/build-bolttagu-assets.py --pack <sprite-pack-v8>
 renderer가 열릴 때 등장 인사 3프레임(200/300/220ms)이 한 번 재생된다.
 불투명 타원 바닥과 쏟은 커피는 `Bolttagu2dView(show_floor=True)`로 켤 수 있고 기본값은 꺼짐이다.
 
+#### 크기
+
+Engram 설정의 **캐릭터 높이 비율(`overlay.char_height_ratio`)은 번들 renderer에만 적용된다.**
+Event API에는 Engram에서 renderer로 가는 크기 필드가 없고, `overlay.geometry_changed`는 renderer가
+자기 크기를 보고하는 방향뿐이라 외부 overlay는 자기 창 크기를 스스로 소유한다. 그래서 크기는
+manifest argv의 `--scale`로 지정한다. 기본값 1.0이 원화 그대로의 270×302이고 허용 범위는 0.2~4.0이다.
+
+```yaml
+command:
+  - "C:/.../engram-custom-overlay.exe"
+  - "--overlay"
+  - "bolttagu-2d"
+  - "--mode"
+  - "replace"
+  - "--scale"
+  - "1.6"
+```
+
+셀을 미리 확대하지 않고 **완성된 프레임만** 리샘플링하므로 배율을 올려도 메모리는 그대로다.
+초당 12회 이하만 다시 그리므로 비용도 무시할 수준이다.
+
 ### Rabbit 상태 grid
 
 `rabbit-2d`는 `docs/컨셉아트/rabbit.jpg`의 다섯 포즈를 투명 3×2 atlas로 정리해 사용한다.

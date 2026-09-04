@@ -3,12 +3,19 @@ param(
     [string]$Overlay = "xeyes",
     [ValidateSet("observer", "replace")]
     [string]$Mode = "replace",
-    [switch]$EyeEmission
+    [switch]$EyeEmission,
+    [double]$Scale = 1.0
 )
 
 $ErrorActionPreference = "Stop"
 if ($EyeEmission -and $Overlay -notin @("robot-arm-3d-v2", "robot-arm-3d-v3")) {
     throw "Eye emission is only supported by robot-arm-3d-v2 and robot-arm-3d-v3"
+}
+if ($Scale -ne 1.0 -and $Overlay -ne "bolttagu-2d") {
+    throw "Scale is only supported by bolttagu-2d"
+}
+if ($Scale -lt 0.2 -or $Scale -gt 4.0) {
+    throw "Scale must be between 0.2 and 4.0"
 }
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $venvRoot = Join-Path $repoRoot ".venv"
@@ -43,12 +50,16 @@ $overlayName = switch ($Overlay) {
     default { "Engram XEyes" }
 }
 $eyeEmissionArg = if ($EyeEmission) { '  - "--eye-emission"' } else { $null }
+$scaleArgs = if ($Scale -ne 1.0) { @('  - "--scale"', ('  - "{0}"' -f $Scale)) } else { @() }
 $commandTail = @(
     '  - "--mode"'
     "  - `"$Mode`""
 )
 if ($eyeEmissionArg) {
     $commandTail += $eyeEmissionArg
+}
+if ($scaleArgs.Count -gt 0) {
+    $commandTail += $scaleArgs
 }
 $commandTailYaml = $commandTail -join "`n"
 $manifest = @"

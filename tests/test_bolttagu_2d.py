@@ -11,6 +11,7 @@ from engram_overlay.overlays.bolttagu_2d import (
     HINT_ONESHOTS,
     IDLE_POSE,
     STATE_POSES,
+    SCALE_RANGE,
     STEAM_CELLS,
     BlinkTimeline,
     BolttaguAnimator,
@@ -18,6 +19,7 @@ from engram_overlay.overlays.bolttagu_2d import (
     clip_cell,
     facing_mirrored,
     load_atlas,
+    scaled_cell,
     steam_cell,
 )
 from engram_overlay.protocol import DISPLAY_HINTS
@@ -130,6 +132,27 @@ class BlinkTests(unittest.TestCase):
             blink.reset(0)
             self.assertGreaterEqual(blink._next_blink_ms, low)
             self.assertLessEqual(blink._next_blink_ms, high)
+
+
+class ScaleTests(unittest.TestCase):
+    def test_identity_scale_returns_the_cell_untouched(self) -> None:
+        self.assertEqual(scaled_cell((270, 302), 1.0), (270, 302))
+
+    def test_scaling_rounds_both_axes(self) -> None:
+        self.assertEqual(scaled_cell((270, 302), 2.0), (540, 604))
+        self.assertEqual(scaled_cell((270, 302), 0.5), (135, 151))
+        self.assertEqual(scaled_cell((270, 302), 1.5), (405, 453))
+
+    def test_out_of_range_scales_are_rejected(self) -> None:
+        low, high = SCALE_RANGE
+        for bad in (0.0, -1.0, low - 0.01, high + 0.01):
+            with self.subTest(scale=bad), self.assertRaises(ValueError):
+                scaled_cell((270, 302), bad)
+
+    def test_range_bounds_themselves_are_allowed(self) -> None:
+        for good in SCALE_RANGE:
+            with self.subTest(scale=good):
+                self.assertGreater(scaled_cell((270, 302), good)[0], 0)
 
 
 class FacingTests(unittest.TestCase):
@@ -357,6 +380,31 @@ class ViewTests(unittest.TestCase):
         view.tick(10_000, 0, 0, 0)
         self.assertFalse(view.mirrored)
 
+    def test_scale_changes_the_window_and_the_composed_frame(self) -> None:
+        view = self.view(scale=2.0)
+        self.assertEqual((view.width, view.height), (540, 604))
+        self.assertEqual(view.cell, (270, 302))
+        self.assertEqual(view.compose((("alert", 0),), False).size, (540, 604))
+
+    def test_scale_does_not_resize_the_cached_cells(self) -> None:
+        # Only the finished frame is resized, so memory does not grow with scale.
+        view = self.view(scale=3.0)
+        self.assertEqual(view.sheets["alert"][0].size, (270, 302))
+
+    def test_default_scale_leaves_the_frame_at_native_size(self) -> None:
+        view = self.view()
+        self.assertEqual((view.width, view.height), (270, 302))
+        self.assertEqual(view.compose((("alert", 0),), False).size, (270, 302))
+
+    def test_scale_and_mirroring_compose_together(self) -> None:
+        view = self.view(scale=0.5)
+        frame = view.compose((("wondering", 0),), True)
+        self.assertEqual(frame.size, (135, 151))
+
+    def test_invalid_scale_is_rejected_at_construction(self) -> None:
+        with self.assertRaises(ValueError):
+            self.view(scale=99.0)
+
     def test_apply_state_is_safe_before_mount(self) -> None:
         view = self.view()
         state = OverlayState()
@@ -376,6 +424,19 @@ class RegistrationTests(unittest.TestCase):
     def test_face_pointer_is_rejected_for_other_overlays(self) -> None:
         with self.assertRaises(ValueError):
             create_overlay("xeyes", None, "observer", face_pointer=False)  # type: ignore[arg-type]
+
+    def test_scale_is_rejected_for_other_overlays(self) -> None:
+        with self.assertRaises(ValueError):
+            create_overlay("xeyes", None, "observer", scale=2.0)  # type: ignore[arg-type]
+
+    def test_cli_rejects_scale_for_other_overlays(self) -> None:
+        import contextlib
+        import io
+
+        from engram_overlay.__main__ import main
+
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            main(["--overlay", "xeyes", "--scale", "2.0"])
 
     def test_cli_rejects_no_face_pointer_for_other_overlays(self) -> None:
         import contextlib
