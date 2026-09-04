@@ -42,8 +42,8 @@ def event_frames(state: str, count: int = 3) -> tuple[str, ...]:
 
 
 # Only states the overlay can actually reach are packed. The pack also ships
-# "waiting" (queue/rate-limit) and "exit", which no display hint or lifecycle
-# hook drives yet -- add them here the moment something can trigger them.
+# "exit", which no lifecycle hook drives yet -- add it here the moment the Event
+# API grows a shutdown notice.
 SHEETS = {
     "bolttagu-idle.png": IDLE,
     "bolttagu-steam.png": STEAM,
@@ -54,6 +54,7 @@ SHEETS = {
     "bolttagu-writing.png": event_frames("writing"),
     "bolttagu-speaking.png": event_frames("speaking"),
     "bolttagu-listening.png": event_frames("listening"),
+    "bolttagu-waiting.png": event_frames("waiting"),
     "bolttagu-success.png": event_frames("success"),
     "bolttagu-error.png": event_frames("error"),
     "bolttagu-floor.png": FLOOR,

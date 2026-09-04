@@ -6,6 +6,7 @@ from engram_overlay.overlays import bolttagu_2d
 from engram_overlay.overlays.bolttagu_2d import (
     ASSET_DIR,
     BLINK_INTERVAL_MS,
+    CATEGORY_POSES,
     CLIPS,
     EVENT_DURATIONS_MS,
     EYE_CELLS,
@@ -20,6 +21,7 @@ from engram_overlay.overlays.bolttagu_2d import (
     clip_cell,
     facing_mirrored,
     load_atlas,
+    pose_for,
     scaled_cell,
     steam_cell,
 )
@@ -263,7 +265,7 @@ class AnimatorTests(unittest.TestCase):
         """The pack ships a distinct set per activity; hints must not collapse onto one."""
         expected = {
             "search": "searching",
-            "memory": "writing",
+            "memory": "searching",
             "generating": "speaking",
             "input": "listening",
             "thought": "wondering",
@@ -276,9 +278,44 @@ class AnimatorTests(unittest.TestCase):
                 animator.apply_hint(hint, 0)
                 self.assertEqual(animator.resolve(0), ((sheet, 0),))
 
-    def test_working_hints_are_visually_distinguishable(self) -> None:
-        sheets = {STATE_POSES[h] for h in ("search", "memory", "generating", "input", "thought")}
-        self.assertEqual(len(sheets), 5)
+    def test_tool_category_refines_the_generating_catch_all(self) -> None:
+        """Engram collapses every non-search, non-memory tool into "generating"."""
+        for category, sheet in CATEGORY_POSES.items():
+            with self.subTest(category=category):
+                animator = self.animator()
+                animator.apply_hint("generating", 0, category)
+                self.assertEqual(animator.resolve(0), ((sheet, 0),))
+
+    def test_generating_without_a_category_streams_an_answer(self) -> None:
+        animator = self.animator()
+        animator.apply_hint("generating", 0, None)
+        self.assertEqual(animator.resolve(0), (("speaking", 0),))
+
+    def test_unknown_category_falls_back_to_the_plain_hint(self) -> None:
+        animator = self.animator()
+        animator.apply_hint("generating", 0, "teleporting")
+        self.assertEqual(animator.resolve(0), (("speaking", 0),))
+
+    def test_category_never_overrides_a_specific_hint(self) -> None:
+        for hint in ("search", "thought", "input", "error", "hover"):
+            with self.subTest(hint=hint):
+                animator = self.animator()
+                animator.apply_hint(hint, 0, "write")
+                self.assertEqual(animator.pose, STATE_POSES[hint])
+
+    def test_a_finished_tool_stops_the_activity_animation(self) -> None:
+        """tool.completed carries no category, so the write pose must not persist."""
+        animator = self.animator()
+        animator.apply_hint("generating", 0, "write")
+        self.assertEqual(animator.pose, "writing")
+        animator.apply_hint("generating", 500, None)
+        self.assertEqual(animator.pose, "speaking")
+        self.assertEqual(animator.state_started_ms, 500)
+
+    def test_working_states_are_visually_distinguishable(self) -> None:
+        poses = {pose_for(h, None) for h in ("search", "generating", "input", "thought")}
+        poses |= {pose_for("generating", c) for c in CATEGORY_POSES}
+        self.assertEqual(len(poses), 6)
 
     def test_hint_restart_is_ignored_while_unchanged(self) -> None:
         animator = self.animator()

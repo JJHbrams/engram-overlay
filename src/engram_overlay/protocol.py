@@ -24,6 +24,10 @@ DISPLAY_HINTS = frozenset(
         "error",
     }
 )
+# The only tool information Engram publishes: a category, never a tool name.
+TOOL_CATEGORIES = frozenset(
+    {"memory", "search", "read", "write", "execute", "communication", "other"}
+)
 POINTER_ACTIONS = frozenset(
     {
         "left_click",

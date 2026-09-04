@@ -38,10 +38,11 @@ EVENT_DURATIONS_MS: dict[str, tuple[int, int, int]] = {
     "writing": (320, 320, 420),
     "speaking": (220, 220, 260),
     "listening": (420, 420, 420),
+    "waiting": (800, 800, 800),
     "success": (280, 360, 360),
     "error": (260, 300, 420),
 }
-LOOPING_EVENTS = ("wondering", "searching", "writing", "speaking", "listening", "error")
+LOOPING_EVENTS = ("wondering", "searching", "writing", "speaking", "listening", "waiting", "error")
 
 # idle: steam is a 24-frame 10 fps loop, blink is a fixed 210 ms sequence that
 # re-arms itself 2.5-6 s after it finishes.
@@ -106,15 +107,31 @@ STATE_POSES: dict[str, str] = {
     "generating": "speaking",
     "thought": "wondering",
     "search": "searching",
-    # Engram's memory category covers note reads and writes alike. "writing" keeps
-    # it distinct from "search", which is the reason the two hints exist at all.
-    "memory": "writing",
+    # Consulting stored notes reads the same as consulting documents.
+    "memory": "searching",
     "error": "error",
     "provider_error": "error",
 }
 
+# payload.category refines "generating", which is Engram's catch-all for every tool
+# that is neither a search nor a memory lookup. Without this, editing a file and
+# streaming an answer look identical.
+CATEGORY_POSES: dict[str, str] = {
+    "write": "writing",     # code, docs, artifacts: write/edit/patch/delete tools
+    "execute": "waiting",   # shell, build, test, run: work to wait on
+    "read": "searching",    # opening a document
+}
+
 # A hint that warrants a one-shot the moment the renderer enters it.
 HINT_ONESHOTS: dict[str, str] = {"success": "success"}
+
+
+def pose_for(hint: str, category: str | None) -> str:
+    """Pose for one hint, refined by the tool category when Engram supplied one."""
+    resolved = hint if hint in STATE_POSES else "idle"
+    if resolved == "generating" and category in CATEGORY_POSES:
+        return CATEGORY_POSES[category]
+    return STATE_POSES[resolved]
 
 
 def clip_cell(clip: Clip, elapsed_ms: int) -> int | None:
@@ -207,6 +224,7 @@ class BolttaguAnimator:
         if intro is not None and intro not in CLIPS:
             raise ValueError(f"unknown intro clip: {intro}")
         self.display_hint = "idle"
+        self.tool_category: str | None = None
         self.state_started_ms = started_ms
         self.oneshot = intro
         self.oneshot_started_ms = started_ms
@@ -214,14 +232,15 @@ class BolttaguAnimator:
 
     @property
     def pose(self) -> str:
-        return STATE_POSES[self.display_hint]
+        return pose_for(self.display_hint, self.tool_category)
 
-    def apply_hint(self, hint: str, now_ms: int) -> None:
+    def apply_hint(self, hint: str, now_ms: int, category: str | None = None) -> None:
         resolved = hint if hint in STATE_POSES else "idle"
-        if resolved == self.display_hint:
+        if (resolved, category) == (self.display_hint, self.tool_category):
             return
         was_idle = self.pose == IDLE_POSE
         self.display_hint = resolved
+        self.tool_category = category
         self.state_started_ms = now_ms
         if self.pose == IDLE_POSE and not was_idle:
             self.blink.reset(now_ms)
@@ -319,7 +338,7 @@ class Bolttagu2dView:
         self.drawn = target
 
     def apply_state(self, state: OverlayState) -> None:
-        self.animator.apply_hint(state.display_hint, self._now_ms())
+        self.animator.apply_hint(state.display_hint, self._now_ms(), state.tool_category)
 
     def resize(self, requested_width: int, requested_height: int) -> tuple[int, int]:
         """Apply host physical height within the safe scale range without stretching art."""
