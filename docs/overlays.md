@@ -31,15 +31,30 @@ python scripts/build-bolttagu-assets.py --pack <sprite-pack-vN>
 | `input` | listening | 420/420/420ms 반복 |
 | `generating` | speaking | 220/220/260ms 반복 |
 | `thought` | wondering | 320/260/320ms 반복 |
-| `search` | searching | 650/500/650ms 반복 |
-| `memory` | writing | 320/320/420ms 반복 |
+| `search`, `memory` | searching | 650/500/650ms 반복 |
 | `error`, `provider_error` | error | 260/300/420ms 반복 |
 
-- `memory`가 `writing`인 것은 판단이다. Engram의 memory 범주는 노트 읽기와 쓰기를 함께 덮는데, `search`가 이미 "찾아보기"를 가져갔다. 두 hint를 눈으로 구분할 수 있게 하는 것이 애초에 두 hint가 따로 있는 이유라 갈랐다.
+`generating`은 Engram이 search·memory가 아닌 **모든** 도구를 몰아넣는 catch-all이다. 그래서
+`tool.started`의 `payload.category`로 한 단계 더 갈라 쓴다. 이게 없으면 파일을 고치는 것과
+답변을 스트리밍하는 것이 똑같이 보인다.
+
+| category | 도구 예 | 상태 |
+| --- | --- | --- |
+| `write` | write·edit·patch·delete | **writing** — 코드·문서·아티팩트 수정 |
+| `execute` | shell·exec·build·test·run | **waiting** — 기다릴 일이 있는 작업 |
+| `read` | read·open | searching (문서 열람) |
+| 그 외 / 없음 | — | speaking (응답 스트리밍) |
+
+- category는 그 메시지에만 해당한다. `tool.completed`는 category 없이 오므로 상태가 초기화되고,
+  도구가 끝난 뒤에도 writing이 남아있지 않는다.
+- category는 `generating`만 세분한다. `search`·`thought` 같은 구체적 hint를 덮지 않는다.
+- 서브에이전트·백그라운드 태스크 대기는 아직 정확히 잡히지 않는다. Engram의 `tool_category`가
+  Task/Agent를 어느 패턴에도 매칭하지 않아 `other`로 떨어지기 때문이다. `execute`가 그 절반을
+  덮는다.
 - 실패 상태는 **반복**한다. 한 번 재생하고 사라지면 실패가 화면에 남지 않는다.
 - 합성은 눈에 보이는 프레임이 바뀔 때만 한다. 조합을 미리 캐싱하지 않는다. 전부 캐싱하면 배율에 따라 수십 MB가 된다.
 - renderer가 열릴 때 등장 인사 3프레임(200/300/220ms)이 한 번 재생된다.
-- 팩에는 `waiting`(큐·재시도·rate limit)과 `exit`도 있지만 이를 띄울 display hint나 lifecycle 훅이 없어 **패킹하지 않는다.** 트리거가 생기면 빌드 스크립트에 한 줄 추가하면 된다.
+- 팩의 `exit`는 종료 훅이 없어 **패킹하지 않는다.** Event API에 종료 예고가 생기면 빌드 스크립트에 한 줄 추가하면 된다.
 
 ### 애니메이션
 

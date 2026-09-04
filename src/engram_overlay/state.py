@@ -6,7 +6,7 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-from .protocol import DISPLAY_HINTS
+from .protocol import DISPLAY_HINTS, TOOL_CATEGORIES
 
 PALETTE = {
     "default": ("#86a8e7", "READY"),
@@ -31,6 +31,7 @@ class OverlayState:
     y: int | None = None
     width: int | None = None
     height: int | None = None
+    tool_category: str | None = None
 
     def apply(self, message: dict[str, Any]) -> None:
         message_type = message.get("type")
@@ -38,6 +39,12 @@ class OverlayState:
         hint = message.get("display_hint")
         if isinstance(hint, str):
             self.display_hint = hint if hint in DISPLAY_HINTS else "idle"
+            # display_hint collapses every non-search, non-memory tool into
+            # "generating"; payload.category is the only thing that says which
+            # kind of work it is. It describes the message that carried it, so a
+            # semantic event without one clears it rather than leaving it stale.
+            category = payload.get("category") if isinstance(payload, dict) else None
+            self.tool_category = category if category in TOOL_CATEGORIES else None
         if message_type == "overlay.set_position" and isinstance(payload, dict):
             x = payload.get("x")
             y = payload.get("y")

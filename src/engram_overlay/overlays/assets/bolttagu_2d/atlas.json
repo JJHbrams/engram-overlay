@@ -84,6 +84,11 @@
       "animations/listening/02.png",
       "animations/listening/03.png"
     ],
+    "bolttagu-waiting.png": [
+      "animations/waiting/01.png",
+      "animations/waiting/02.png",
+      "animations/waiting/03.png"
+    ],
     "bolttagu-success.png": [
       "animations/success/01.png",
       "animations/success/02.png",

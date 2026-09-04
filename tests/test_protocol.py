@@ -3,6 +3,7 @@ import json
 import unittest
 
 from engram_overlay.protocol import (
+    TOOL_CATEGORIES,
     JsonlTransport,
     ProtocolError,
     geometry_message,
@@ -74,6 +75,40 @@ class ProtocolTests(unittest.TestCase):
             state.apply({"schema_version": 1, "type": "overlay.set_size", "payload": {"width": width, "height": height}})
         self.assertIsNone(state.width)
         self.assertIsNone(state.height)
+
+    def tool_event(self, category: object) -> dict:
+        payload = {} if category is None else {"category": category}
+        return {"schema_version": 1, "type": "tool.started", "display_hint": "generating", "payload": payload}
+
+    def test_tool_category_is_captured(self) -> None:
+        state = OverlayState()
+        for category in TOOL_CATEGORIES:
+            with self.subTest(category=category):
+                state.apply(self.tool_event(category))
+                self.assertEqual(state.tool_category, category)
+
+    def test_unknown_tool_category_is_dropped(self) -> None:
+        state = OverlayState()
+        for category in ("future", "", 7, None):
+            with self.subTest(category=category):
+                state.apply(self.tool_event(category))
+                self.assertIsNone(state.tool_category)
+
+    def test_a_semantic_event_without_a_category_clears_the_previous_one(self) -> None:
+        """category describes its own message; tool.completed must not leave it stale."""
+        state = OverlayState()
+        state.apply(self.tool_event("write"))
+        self.assertEqual(state.tool_category, "write")
+        state.apply({"schema_version": 1, "type": "tool.completed", "display_hint": "generating", "payload": {}})
+        self.assertIsNone(state.tool_category)
+
+    def test_geometry_messages_leave_the_category_alone(self) -> None:
+        """set_position/set_size carry no display_hint, so they are not semantic events."""
+        state = OverlayState()
+        state.apply(self.tool_event("execute"))
+        state.apply({"schema_version": 1, "type": "overlay.set_position", "payload": {"x": 1, "y": 2}})
+        state.apply({"schema_version": 1, "type": "overlay.set_size", "payload": {"width": 10, "height": 20}})
+        self.assertEqual(state.tool_category, "execute")
 
 
 if __name__ == "__main__":
