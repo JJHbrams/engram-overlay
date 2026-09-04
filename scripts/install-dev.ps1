@@ -1,22 +1,14 @@
 param(
-    [ValidateSet("xeyes", "bolttagu-2d", "rabbit-2d", "robot-arm", "robot-arm-3d", "robot-arm-3d-v2", "robot-arm-3d-v3")]
     [string]$Overlay = "xeyes",
     [ValidateSet("observer", "replace")]
     [string]$Mode = "replace",
     [switch]$EyeEmission,
-    [double]$Scale = 1.0
+    [double]$Scale = 1.0,
+    [switch]$All,
+    [switch]$List
 )
 
 $ErrorActionPreference = "Stop"
-if ($EyeEmission -and $Overlay -notin @("robot-arm-3d-v2", "robot-arm-3d-v3")) {
-    throw "Eye emission is only supported by robot-arm-3d-v2 and robot-arm-3d-v3"
-}
-if ($Scale -ne 1.0 -and $Overlay -ne "bolttagu-2d") {
-    throw "Scale is only supported by bolttagu-2d"
-}
-if ($Scale -lt 0.2 -or $Scale -gt 4.0) {
-    throw "Scale must be between 0.2 and 4.0"
-}
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $venvRoot = Join-Path $repoRoot ".venv"
 $venvPython = Join-Path $venvRoot "Scripts\python.exe"
@@ -35,46 +27,88 @@ if (-not (Test-Path -LiteralPath $launcher)) {
     throw "Overlay launcher was not created: $launcher"
 }
 
+# The registry is the single source of truth for the preset roster. Reading it here
+# keeps this script from carrying its own copy that drifts when an overlay is added.
+$catalogJson = & $venvPython -c @"
+import json
+from engram_overlay.registry import overlay_catalog
+print(json.dumps([{'id': s.id, 'name': s.name, 'backend': s.backend, 'summary': s.summary} for s in overlay_catalog()]))
+"@
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not read the overlay catalog"
+}
+$catalog = $catalogJson | ConvertFrom-Json
+
+if ($List) {
+    & $launcher --list-overlays
+    exit 0
+}
+
+$known = $catalog | ForEach-Object { $_.id }
+if ($All) {
+    if ($EyeEmission -or $Scale -ne 1.0) {
+        throw "-EyeEmission and -Scale apply to a single overlay; drop -All or install that overlay on its own"
+    }
+    $targets = $known
+} else {
+    if ($known -notcontains $Overlay) {
+        throw "Unknown overlay '$Overlay'. Available: $($known -join ', ')"
+    }
+    if ($EyeEmission -and $Overlay -notin @("robot-arm-3d-v2", "robot-arm-3d-v3")) {
+        throw "Eye emission is only supported by robot-arm-3d-v2 and robot-arm-3d-v3"
+    }
+    if ($Scale -ne 1.0 -and $Overlay -ne "bolttagu-2d") {
+        throw "Scale is only supported by bolttagu-2d"
+    }
+    if ($Scale -lt 0.2 -or $Scale -gt 4.0) {
+        throw "Scale must be between 0.2 and 4.0"
+    }
+    $targets = @($Overlay)
+}
+
 $userProfilePath = [Environment]::GetFolderPath("UserProfile")
-$installDir = Join-Path $userProfilePath ".engram\overlays\$Overlay"
-New-Item -ItemType Directory -Force -Path $installDir | Out-Null
-$manifestPath = Join-Path $installDir "manifest.yaml"
 $launcherYaml = $launcher.Replace("\", "/").Replace('"', '\"')
-$overlayName = switch ($Overlay) {
-    "bolttagu-2d" { "Bolttagu" }
-    "rabbit-2d" { "Rabbit" }
-    "robot-arm" { "Engram 3-Link Robot Arm" }
-    "robot-arm-3d" { "Engram 3D Robot Arm" }
-    "robot-arm-3d-v2" { "Engram Textured 3D Robot Arm V2" }
-    "robot-arm-3d-v3" { "CCTV" }
-    default { "Engram XEyes" }
-}
-$eyeEmissionArg = if ($EyeEmission) { '  - "--eye-emission"' } else { $null }
-$scaleArgs = if ($Scale -ne 1.0) { @('  - "--scale"', ('  - "{0}"' -f $Scale)) } else { @() }
-$commandTail = @(
-    '  - "--mode"'
-    "  - `"$Mode`""
-)
-if ($eyeEmissionArg) {
-    $commandTail += $eyeEmissionArg
-}
-if ($scaleArgs.Count -gt 0) {
-    $commandTail += $scaleArgs
-}
-$commandTailYaml = $commandTail -join "`n"
-$manifest = @"
+$installed = @()
+
+foreach ($id in $targets) {
+    $spec = $catalog | Where-Object { $_.id -eq $id }
+    $installDir = Join-Path $userProfilePath ".engram\overlays\$id"
+    New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+    $manifestPath = Join-Path $installDir "manifest.yaml"
+
+    $commandTail = @(
+        '  - "--mode"'
+        "  - `"$Mode`""
+    )
+    if ($EyeEmission) {
+        $commandTail += '  - "--eye-emission"'
+    }
+    if ($Scale -ne 1.0) {
+        $commandTail += '  - "--scale"'
+        $commandTail += ('  - "{0}"' -f $Scale)
+    }
+    $commandTailYaml = $commandTail -join "`n"
+
+    $manifest = @"
 schema_version: 1
-id: $Overlay
-name: $overlayName
+id: $id
+name: $($spec.name)
 command:
   - "$launcherYaml"
   - "--overlay"
-  - "$Overlay"
+  - "$id"
 $commandTailYaml
 supported_modes: [observer, replace]
 "@
-[System.IO.File]::WriteAllText($manifestPath, $manifest, [System.Text.UTF8Encoding]::new($false))
+    [System.IO.File]::WriteAllText($manifestPath, $manifest, [System.Text.UTF8Encoding]::new($false))
+    $installed += [pscustomobject]@{ Id = $id; Name = $spec.name; Manifest = $manifestPath }
+}
 
-Write-Output "Installed: $manifestPath"
+$installed | Format-Table -AutoSize Id, Name, Manifest | Out-String | Write-Output
 Write-Output "Launcher: $launcher"
-Write-Output "Select '$overlayName' in Settings > Overlay and restart Engram."
+if ($installed.Count -eq 1) {
+    Write-Output "Select '$($installed[0].Name)' in Settings > Overlay and restart Engram."
+} else {
+    Write-Output "$($installed.Count) presets registered. Pick one in Settings > Overlay and restart Engram."
+}
+Write-Output "This script never changes the current selection."
