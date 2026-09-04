@@ -68,6 +68,7 @@ class TkOverlayHost:
         self._drag_origin: tuple[int, int, int, int] | None = None
         # Engram's launcher owns presentation when the renderer starts collapsed.
         self.visible = not start_hidden
+        self._show_after: str | None = None
         self._dismiss_after: str | None = None
         if start_hidden:
             self.root.withdraw()
@@ -132,6 +133,11 @@ class TkOverlayHost:
         if visible == self.visible:
             return  # repeated launcher clicks must not replay the animation
         self.visible = visible
+        if self._show_after is not None:
+            # A hide during the arrival must never acknowledge a renderer that
+            # is on its way back to the launcher.
+            self.root.after_cancel(self._show_after)
+            self._show_after = None
         if self._dismiss_after is not None:
             # A show during a running hide keeps the window up.
             self.root.after_cancel(self._dismiss_after)
@@ -139,11 +145,13 @@ class TkOverlayHost:
         if visible:
             self.root.deiconify()
             self.root.attributes("-topmost", True)
-            self._begin("begin_enter")
-            # A collapsed renderer never reported geometry, so Engram has nowhere
-            # to anchor a bubble until the character is actually on screen.
-            self._send_geometry()
-            self.transport.send(visibility_message(True))
+            hold_ms = self._begin("begin_enter")
+            if hold_ms <= 0:
+                self._finish_show()
+            else:
+                # The host contracts visibility only once the view's enter clip
+                # has completed: deiconify -> enter -> geometry -> visible ack.
+                self._show_after = self.root.after(hold_ms, self._finish_show)
             return
         hold_ms = self._begin("begin_exit")
         if hold_ms <= 0:
@@ -164,8 +172,18 @@ class TkOverlayHost:
 
     def _finish_dismiss(self) -> None:
         self._dismiss_after = None
+        if self.visible:
+            return
         self.root.withdraw()
         self.transport.send(visibility_message(False))
+
+    def _finish_show(self) -> None:
+        self._show_after = None
+        if not self.visible:
+            return
+        # A collapsed renderer has no usable anchor until its arrival is over.
+        self._send_geometry()
+        self.transport.send(visibility_message(True))
 
     def _tick(self) -> None:
         # A collapsed window has nothing to redraw; the launcher icon is Engram's.
