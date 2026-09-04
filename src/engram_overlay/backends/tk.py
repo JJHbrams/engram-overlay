@@ -105,6 +105,15 @@ class TkOverlayHost:
                 if self._drag_origin is None:
                     self.root.geometry(f"+{self.state.x}+{self.state.y}")
                 self.state.x = self.state.y = None
+            if self.mode == "replace" and self.state.width is not None and self.state.height is not None:
+                resize = getattr(self.view, "resize", None)
+                if callable(resize):
+                    width, height = resize(self.state.width, self.state.height)
+                    self.root.geometry(f"{width}x{height}")
+                    self.canvas.config(width=width, height=height)
+                    self.root.update_idletasks()
+                    self._send_geometry()
+                self.state.width = self.state.height = None
             self.view.apply_state(self.state)
         self.root.after(20, self._drain_messages)
 
@@ -123,6 +132,7 @@ class TkOverlayHost:
         )
 
     def _drag_begin(self, event: tk.Event) -> None:
+        self._send_pointer("menu_dismiss")
         self._drag_origin = (event.x_root, event.y_root, self.root.winfo_x(), self.root.winfo_y())
 
     def _drag_move(self, event: tk.Event) -> None:
@@ -136,6 +146,7 @@ class TkOverlayHost:
 
     def _drag_end(self, event: tk.Event) -> None:
         if self._drag_origin is None:
+            self._send_pointer("menu_dismiss")
             self._send_pointer("left_click")
         else:
             start_x, start_y, _, _ = self._drag_origin
@@ -157,5 +168,6 @@ class TkOverlayHost:
         return window_x + event.x_root - start_x, window_y + event.y_root - start_y
 
     def _right_click(self, event: tk.Event) -> None:
+        self._send_pointer("menu_dismiss")
         self._send_pointer("right_click", x=event.x_root, y=event.y_root)
 

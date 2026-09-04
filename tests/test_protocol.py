@@ -24,6 +24,9 @@ class ProtocolTests(unittest.TestCase):
             },
         )
 
+    def test_optional_capability_is_additive(self) -> None:
+        self.assertEqual(hello_message(capabilities=["overlay.set_size"])["payload"]["capabilities"], ["overlay.set_size"])
+
     def test_geometry_requires_positive_size(self) -> None:
         self.assertEqual(geometry_message(1, 2, 3, 4)["payload"]["width"], 3)
         with self.assertRaises(ProtocolError):
@@ -59,6 +62,18 @@ class ProtocolTests(unittest.TestCase):
         state = OverlayState()
         state.apply({"schema_version": 1, "type": "overlay.set_position", "payload": {"x": 31.5, "y": 42}})
         self.assertEqual((state.x, state.y), (31, 42))
+
+    def test_set_size_updates_pending_dimensions(self) -> None:
+        state = OverlayState()
+        state.apply({"schema_version": 1, "type": "overlay.set_size", "payload": {"width": 31.5, "height": 42}})
+        self.assertEqual((state.width, state.height), (31, 42))
+
+    def test_set_size_ignores_non_positive_and_non_finite_values(self) -> None:
+        state = OverlayState()
+        for width, height in ((0, 10), (-1, 10), (10, 0), (float("inf"), 10), (10, float("nan"))):
+            state.apply({"schema_version": 1, "type": "overlay.set_size", "payload": {"width": width, "height": height}})
+        self.assertIsNone(state.width)
+        self.assertIsNone(state.height)
 
 
 if __name__ == "__main__":

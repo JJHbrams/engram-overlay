@@ -20,6 +20,8 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "engram_overlay.overlays" = [
+    "assets/bolttagu_2d/*.png",
+    "assets/bolttagu_2d/atlas.json",
     "assets/rabbit_2d/*.png",
     "assets/robot_arm_3d_v2/*.png",
     "assets/robot_arm_3d_v3/*.png",

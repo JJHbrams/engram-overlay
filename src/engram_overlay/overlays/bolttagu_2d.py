@@ -1,0 +1,344 @@
+"""Bolttagu sprite overlay driven by the sprite-pack-v8 animation set.
+
+The upstream pack is a set of full-canvas 1254x1254 PNGs.  ``scripts/build-bolttagu-assets.py``
+crops them to a shared rectangle and packs them into the horizontal sheets bundled here, so every
+pose and frame stays aligned on the same feet anchor.
+
+Frames are described as recipes -- an ordered tuple of ``(sheet, cell)`` layers composited bottom
+up -- because idle is two independent loops at once: a random eye blink and the 24-frame steam
+rising off the mug.  Recipe selection is pure clock arithmetic over an injectable random source,
+so all of it is tested without a window.
+"""
+
+from __future__ import annotations
+
+import json
+import random
+import time
+import tkinter as tk
+from dataclasses import dataclass
+from pathlib import Path
+
+from PIL import Image, ImageTk
+
+from ..backends.tk import TkOverlayHost
+from ..protocol import JsonlTransport
+from ..state import OverlayState
+
+TRANSPARENT = "#010203"
+ASSET_DIR = Path(__file__).parent / "assets" / "bolttagu_2d"
+
+Recipe = tuple[tuple[str, int], ...]
+
+WONDERING_FRAME_MS = 100  # sprites.json declares 10 fps for the 8-frame loop
+ENTER_DURATIONS_MS = (200, 300, 220)
+EXIT_DURATIONS_MS = (220, 220, 260)
+
+# v8 idle: steam is a 24-frame 10 fps loop, blink is a fixed 210 ms sequence that
+# re-arms itself 2.5-6 s after it finishes.
+STEAM_FRAME_MS = 100
+STEAM_CELLS = 24
+EYE_CELLS = {"open": 0, "half": 1, "closed": 2}
+BLINK_SEQUENCE = (("half", 50), ("closed", 90), ("half", 70))
+BLINK_INTERVAL_MS = (2500, 6000)
+
+# The artwork is drawn with the long cheek and the mug toward the viewer's left,
+# so the sprite already looks left and is mirrored only to turn right.
+POINTER_DEADZONE_PX = 24
+
+SCALE_RANGE = (0.2, 4.0)
+
+
+@dataclass(frozen=True)
+class Clip:
+    """One animation drawn from a single horizontal sheet."""
+
+    sheet: str
+    cells: tuple[int, ...]
+    durations_ms: tuple[int, ...]
+    loop: bool
+
+    def __post_init__(self) -> None:
+        if not self.cells:
+            raise ValueError(f"clip {self.sheet} has no cells")
+        if len(self.cells) != len(self.durations_ms):
+            raise ValueError(f"clip {self.sheet} cell and duration counts differ")
+        if min(self.durations_ms) <= 0:
+            raise ValueError(f"clip {self.sheet} has a non-positive duration")
+
+    @property
+    def total_ms(self) -> int:
+        return sum(self.durations_ms)
+
+
+CLIPS: dict[str, Clip] = {
+    "alert": Clip(sheet="alert", cells=(0,), durations_ms=(1000,), loop=True),
+    "wondering": Clip(
+        sheet="wondering",
+        cells=tuple(range(8)),
+        durations_ms=(WONDERING_FRAME_MS,) * 8,
+        loop=True,
+    ),
+    "enter": Clip(sheet="enter", cells=(0, 1, 2), durations_ms=ENTER_DURATIONS_MS, loop=False),
+    "exit": Clip(sheet="exit", cells=(0, 1, 2), durations_ms=EXIT_DURATIONS_MS, loop=False),
+}
+
+# "idle" is the layered blink+steam pose; the rest name a looping clip above.
+IDLE_POSE = "idle"
+STATE_POSES: dict[str, str] = {
+    "default": IDLE_POSE,
+    "idle": IDLE_POSE,
+    "input": IDLE_POSE,
+    "success": IDLE_POSE,
+    "hover": "alert",
+    "click": "alert",
+    "error": "alert",
+    "provider_error": "alert",
+    "generating": "wondering",
+    "search": "wondering",
+    "thought": "wondering",
+    "memory": "wondering",
+}
+
+# A hint that warrants a one-shot the moment the renderer enters it.
+HINT_ONESHOTS: dict[str, str] = {"provider_error": "exit"}
+
+
+def clip_cell(clip: Clip, elapsed_ms: int) -> int | None:
+    """Sheet cell for ``elapsed_ms`` into ``clip``, or None once a one-shot has finished."""
+    if elapsed_ms < 0:
+        elapsed_ms = 0
+    if clip.loop:
+        elapsed_ms %= clip.total_ms
+    elif elapsed_ms >= clip.total_ms:
+        return None
+    cursor = 0
+    for index, duration in enumerate(clip.durations_ms):
+        cursor += duration
+        if elapsed_ms < cursor:
+            return clip.cells[index]
+    return clip.cells[-1]
+
+
+def scaled_cell(cell: tuple[int, int], scale: float) -> tuple[int, int]:
+    """Window size for an atlas cell, or the cell itself at 1.0."""
+    low, high = SCALE_RANGE
+    if not low <= scale <= high:
+        raise ValueError(f"scale must be between {low} and {high}, got {scale}")
+    if scale == 1.0:
+        return cell
+    return (max(1, round(cell[0] * scale)), max(1, round(cell[1] * scale)))
+
+
+def steam_cell(elapsed_ms: int) -> int:
+    if elapsed_ms < 0:
+        elapsed_ms = 0
+    return (elapsed_ms // STEAM_FRAME_MS) % STEAM_CELLS
+
+
+def facing_mirrored(pointer_x: int, window_x: int, width: int, *, current: bool) -> bool:
+    """Whether to mirror the sprite so it looks toward the pointer.
+
+    A deadzone around the window centre keeps the sprite from flipping back and forth
+    while the pointer hovers exactly on the seam.
+    """
+    offset = pointer_x - (window_x + width // 2)
+    if abs(offset) <= POINTER_DEADZONE_PX:
+        return current
+    return offset > 0
+
+
+class BlinkTimeline:
+    """Random eye blink on a millisecond clock and an injectable random source."""
+
+    def __init__(self, *, rng: random.Random, started_ms: int = 0) -> None:
+        self.rng = rng
+        self._blink_started_ms: int | None = None
+        self._next_blink_ms = started_ms + self._interval()
+
+    def _interval(self) -> int:
+        return self.rng.randint(*BLINK_INTERVAL_MS)
+
+    def reset(self, now_ms: int) -> None:
+        """Re-arm from scratch, as the pack's controller does on idle re-entry."""
+        self._blink_started_ms = None
+        self._next_blink_ms = now_ms + self._interval()
+
+    def eye(self, now_ms: int) -> str:
+        if self._blink_started_ms is None:
+            if now_ms < self._next_blink_ms:
+                return "open"
+            # Start from the scheduled instant, not from this tick, so a late
+            # frame does not stretch the blink itself.
+            self._blink_started_ms = self._next_blink_ms
+        elapsed = now_ms - self._blink_started_ms
+        cursor = 0
+        for name, duration in BLINK_SEQUENCE:
+            cursor += duration
+            if elapsed < cursor:
+                return name
+        self.reset(now_ms)
+        return "open"
+
+
+class BolttaguAnimator:
+    """Track the active hint, any one-shot override, and the idle sub-loops."""
+
+    def __init__(
+        self,
+        *,
+        started_ms: int = 0,
+        intro: str | None = "enter",
+        rng: random.Random | None = None,
+    ) -> None:
+        if intro is not None and intro not in CLIPS:
+            raise ValueError(f"unknown intro clip: {intro}")
+        self.display_hint = "idle"
+        self.state_started_ms = started_ms
+        self.oneshot = intro
+        self.oneshot_started_ms = started_ms
+        self.blink = BlinkTimeline(rng=rng or random.Random(), started_ms=started_ms)
+
+    @property
+    def pose(self) -> str:
+        return STATE_POSES[self.display_hint]
+
+    def apply_hint(self, hint: str, now_ms: int) -> None:
+        resolved = hint if hint in STATE_POSES else "idle"
+        if resolved == self.display_hint:
+            return
+        was_idle = self.pose == IDLE_POSE
+        self.display_hint = resolved
+        self.state_started_ms = now_ms
+        if self.pose == IDLE_POSE and not was_idle:
+            self.blink.reset(now_ms)
+        oneshot = HINT_ONESHOTS.get(resolved)
+        if oneshot is not None:
+            self.oneshot = oneshot
+            self.oneshot_started_ms = now_ms
+
+    def resolve(self, now_ms: int) -> Recipe:
+        """Layers to draw for this instant, retiring a finished one-shot on the way."""
+        if self.oneshot is not None:
+            clip = CLIPS[self.oneshot]
+            cell = clip_cell(clip, now_ms - self.oneshot_started_ms)
+            if cell is not None:
+                return ((clip.sheet, cell),)
+            self.oneshot = None
+            if self.pose == IDLE_POSE:
+                self.blink.reset(now_ms)
+        if self.pose == IDLE_POSE:
+            return (
+                ("idle", EYE_CELLS[self.blink.eye(now_ms)]),
+                ("steam", steam_cell(now_ms - self.state_started_ms)),
+            )
+        clip = CLIPS[self.pose]
+        cell = clip_cell(clip, now_ms - self.state_started_ms)
+        assert cell is not None  # looping clips never retire
+        return ((clip.sheet, cell),)
+
+
+def load_atlas() -> tuple[dict[str, tuple[Image.Image, ...]], tuple[int, int]]:
+    """Slice the bundled sheets into per-cell RGBA frames."""
+    metadata = json.loads((ASSET_DIR / "atlas.json").read_text(encoding="utf-8"))
+    cell_width, cell_height = (int(value) for value in metadata["cell"])
+    sheets: dict[str, tuple[Image.Image, ...]] = {}
+    for file_name, frames in metadata["sheets"].items():
+        key = Path(file_name).stem.removeprefix("bolttagu-")
+        sheet = Image.open(ASSET_DIR / file_name).convert("RGBA")
+        expected = (cell_width * len(frames), cell_height)
+        if sheet.size != expected:
+            raise ValueError(f"{file_name} must be {expected[0]}x{expected[1]}, got {sheet.size}")
+        sheets[key] = tuple(
+            sheet.crop((index * cell_width, 0, (index + 1) * cell_width, cell_height))
+            for index in range(len(frames))
+        )
+    return sheets, (cell_width, cell_height)
+
+
+class Bolttagu2dView:
+    background = TRANSPARENT
+    transparent_color = TRANSPARENT
+
+    def __init__(
+        self,
+        *,
+        scale: float = 1.0,
+        face_pointer: bool = True,
+        show_floor: bool = False,
+        coffee: bool = True,
+        rng: random.Random | None = None,
+    ) -> None:
+        sheets, cell = load_atlas()
+        self.cell = cell
+        self.scale = scale
+        # Resize the finished frame rather than every cell, so memory stays flat
+        # at any scale and only the <=12 redraws per second pay for it.
+        self.width, self.height = scaled_cell(cell, scale)
+        self.floor = sheets["floor"][1 if coffee else 0] if show_floor else None
+        self.sheets = sheets
+        self.face_pointer = face_pointer
+        self.animator = BolttaguAnimator(started_ms=self._now_ms(), rng=rng)
+        self.mirrored = False
+        self.canvas: tk.Canvas | None = None
+        self.image_id: int | None = None
+        self.photo: ImageTk.PhotoImage | None = None
+        self.drawn: tuple[Recipe, bool] | None = None
+
+    def compose(self, recipe: Recipe, mirrored: bool) -> Image.Image:
+        """Flatten one recipe. Cheap enough to redo per visible frame change."""
+        base = self.floor
+        frame = self.sheets[recipe[0][0]][recipe[0][1]]
+        image = Image.alpha_composite(base, frame) if base is not None else frame.copy()
+        for sheet, cell in recipe[1:]:
+            image = Image.alpha_composite(image, self.sheets[sheet][cell])
+        if mirrored:
+            image = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+        if (self.width, self.height) != self.cell:
+            image = image.resize((self.width, self.height), Image.Resampling.LANCZOS)
+        return image
+
+    def mount(self, canvas: tk.Canvas) -> None:
+        self.canvas = canvas
+        target = (self.animator.resolve(self._now_ms()), self.mirrored)
+        self.photo = ImageTk.PhotoImage(self.compose(*target), master=canvas)
+        self.image_id = canvas.create_image(0, 0, image=self.photo, anchor="nw")
+        self.drawn = target
+
+    def apply_state(self, state: OverlayState) -> None:
+        self.animator.apply_hint(state.display_hint, self._now_ms())
+
+    def resize(self, requested_width: int, requested_height: int) -> tuple[int, int]:
+        """Apply host physical height within the safe scale range without stretching art."""
+        del requested_width
+        scale = min(SCALE_RANGE[1], max(SCALE_RANGE[0], float(requested_height) / self.cell[1]))
+        self.width, self.height = scaled_cell(self.cell, scale)
+        self.drawn = None
+        return self.width, self.height
+
+    def tick(self, pointer_x: int, pointer_y: int, window_x: int, window_y: int) -> None:
+        if self.face_pointer:
+            self.mirrored = facing_mirrored(pointer_x, window_x, self.width, current=self.mirrored)
+        self._redraw((self.animator.resolve(self._now_ms()), self.mirrored))
+
+    def _redraw(self, target: tuple[Recipe, bool]) -> None:
+        if self.canvas is None or self.image_id is None or target == self.drawn:
+            return
+        self.photo = ImageTk.PhotoImage(self.compose(*target), master=self.canvas)
+        self.canvas.itemconfigure(self.image_id, image=self.photo)
+        self.drawn = target
+
+    @staticmethod
+    def _now_ms() -> int:
+        return int(time.monotonic() * 1000)
+
+
+def create_bolttagu_2d(
+    transport: JsonlTransport,
+    mode: str,
+    *,
+    face_pointer: bool = True,
+    scale: float = 1.0,
+) -> TkOverlayHost:
+    view = Bolttagu2dView(face_pointer=face_pointer, scale=scale)
+    return TkOverlayHost(transport, view, mode=mode, title="Bolttagu")

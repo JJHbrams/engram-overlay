@@ -71,6 +71,34 @@ class TkOverlayHostObserverTests(unittest.TestCase):
 
         host.root.geometry.assert_called_once_with("+115+215")
 
+    def test_replace_size_resizes_view_and_acknowledges_actual_geometry(self):
+        host = self._host(mode="replace")
+        host.state = OverlayState()
+        host.view = Mock()
+        host.view.resize.return_value = (120, 160)
+        host.canvas = Mock()
+        host.inbox = queue.Queue()
+        host.inbox.put({
+            "schema_version": 1,
+            "type": "overlay.set_size",
+            "payload": {"width": 300, "height": 400},
+        })
+
+        host._drain_messages()
+
+        host.view.resize.assert_called_once_with(300, 400)
+        host.root.geometry.assert_called_once_with("120x160")
+        host.canvas.config.assert_called_once_with(width=120, height=160)
+        sent = [call.args[0] for call in host.transport.send.call_args_list]
+        self.assertEqual(sent[-1]["type"], "overlay.geometry_changed")
+
+    def test_menu_dismiss_precedes_right_and_left_pointer_actions(self):
+        host = self._host(mode="replace")
+        host._right_click(Mock(x_root=12, y_root=13))
+        host._drag_end(Mock())
+        actions = [call.args[0]["payload"]["action"] for call in host.transport.send.call_args_list]
+        self.assertEqual(actions, ["menu_dismiss", "right_click", "menu_dismiss", "left_click"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,82 @@
+{
+  "source": "sprite-pack-v8",
+  "sourceCanvas": [
+    1254,
+    1254
+  ],
+  "crop": [
+    87,
+    13,
+    1167,
+    1219
+  ],
+  "scale": 0.25,
+  "cell": [
+    270,
+    302
+  ],
+  "feetAnchor": [
+    166,
+    267
+  ],
+  "sheets": {
+    "bolttagu-idle.png": [
+      "animations/idle_blink/open.png",
+      "animations/idle_blink/half.png",
+      "animations/idle_blink/closed.png"
+    ],
+    "bolttagu-steam.png": [
+      "animations/idle_steam/01.png",
+      "animations/idle_steam/02.png",
+      "animations/idle_steam/03.png",
+      "animations/idle_steam/04.png",
+      "animations/idle_steam/05.png",
+      "animations/idle_steam/06.png",
+      "animations/idle_steam/07.png",
+      "animations/idle_steam/08.png",
+      "animations/idle_steam/09.png",
+      "animations/idle_steam/10.png",
+      "animations/idle_steam/11.png",
+      "animations/idle_steam/12.png",
+      "animations/idle_steam/13.png",
+      "animations/idle_steam/14.png",
+      "animations/idle_steam/15.png",
+      "animations/idle_steam/16.png",
+      "animations/idle_steam/17.png",
+      "animations/idle_steam/18.png",
+      "animations/idle_steam/19.png",
+      "animations/idle_steam/20.png",
+      "animations/idle_steam/21.png",
+      "animations/idle_steam/22.png",
+      "animations/idle_steam/23.png",
+      "animations/idle_steam/24.png"
+    ],
+    "bolttagu-alert.png": [
+      "states/alert_aha.png"
+    ],
+    "bolttagu-wondering.png": [
+      "animations/wondering/01.png",
+      "animations/wondering/02.png",
+      "animations/wondering/03.png",
+      "animations/wondering/04.png",
+      "animations/wondering/05.png",
+      "animations/wondering/06.png",
+      "animations/wondering/07.png",
+      "animations/wondering/08.png"
+    ],
+    "bolttagu-enter.png": [
+      "animations/enter/01.png",
+      "animations/enter/02.png",
+      "animations/enter/03.png"
+    ],
+    "bolttagu-exit.png": [
+      "animations/exit/01.png",
+      "animations/exit/02.png",
+      "animations/exit/03.png"
+    ],
+    "bolttagu-floor.png": [
+      "layers/floor_base.png",
+      "layers/floor_with_coffee.png"
+    ]
+  }
+}

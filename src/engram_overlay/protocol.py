@@ -33,6 +33,7 @@ POINTER_ACTIONS = frozenset(
         "drag_begin",
         "drag_move",
         "drag_end",
+        "menu_dismiss",
     }
 )
 COORDINATE_ACTIONS = frozenset({"right_click", "drag_move", "drag_end"})
@@ -42,11 +43,11 @@ class ProtocolError(ValueError):
     """Raised when a JSONL line is not a valid v1 protocol object."""
 
 
-def hello_message() -> dict[str, Any]:
+def hello_message(*, capabilities: list[str] | None = None) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
         "type": "overlay.hello",
-        "payload": {"supported_schema_versions": [SCHEMA_VERSION]},
+        "payload": {"supported_schema_versions": [SCHEMA_VERSION], **({"capabilities": capabilities} if capabilities else {})},
     }
 
 
