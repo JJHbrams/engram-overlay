@@ -125,7 +125,7 @@ registry를 순회해 `sprite_map()`을 노출하는 오버레이만 모으므�
 Engram의 플로팅 런처가 캐릭터의 표시 여부를 소유한다. 2단계 상호작용이다: **런처 클릭 → 캐릭터 등장**,
 **캐릭터 클릭 → 대화 입력**. 캐릭터의 "닫기"는 **축소**일 뿐이고 프로세스 종료는 tray의 Quit만 한다.
 
-`--presentation`을 manifest argv에 넣으면 활성화된다.
+renderer를 `--presentation`으로 실행하면 활성화된다.
 
 | 플래그 | capability 광고 | 시작 상태 | 등장 인사 |
 | --- | --- | --- | --- |
@@ -158,8 +158,8 @@ Engram의 플로팅 런처가 캐릭터의 표시 여부를 소유한다. 2단�
 
 ### 크기
 
-- 시작 크기는 manifest argv의 `--scale`로 정한다. 기본 1.0이 원화 그대로의 270×302, 허용 범위는 0.2~4.0이다.
-- `replace` 모드에서는 이후 Engram이 크기를 요청할 수 있다. renderer가 handshake에서 `overlay.set_size` capability를 advertise하기 때문이다.
+- 시작 크기는 실행 인자 `--scale`로 정한다. 기본 1.0이 원화 그대로의 270×302, 허용 범위는 0.2~4.0이다.
+- `replace` 모드에서는 이후 Engram이 크기를 요청할 수 있다. renderer가 등록할 때 `overlay.set_size` capability를 advertise하기 때문이다.
 - 요청받은 높이는 종횡비를 지킨 채 위 배율 범위 안으로 clamp하고, 적용된 실제 크기를 `overlay.geometry_changed`로 회신한다. 그림을 늘리지 않는다.
 - `observer` 모드와 capability를 알리지 않은 renderer는 크기 요청을 받지 않는다.
 - 셀을 미리 확대하지 않고 완성된 프레임만 리샘플링하므로 배율을 올려도 메모리는 그대로다. 초당 12회 이하만 다시 그리므로 비용도 무시할 수준이다.

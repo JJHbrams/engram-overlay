@@ -34,16 +34,16 @@ python -m venv .venv
 checkout과 무관하게 사는 런타임을 설치하거나 Windows 시작 시 자동 실행하려면
 `scripts/install-runtime.ps1`을 쓴다. 둘 다 manifest를 만들지 않는다 — v2의 Engram은
 renderer를 실행하지 않으므로 실행 방법을 적어둘 곳이 없다.
-선택을 자동화할 때는 `scripts/select-overlay.py`의 dry-run을 먼저 확인하고 `--apply`를 사용한다.
-이 스크립트는 기존 top-level 설정 키를 검증하고 백업 뒤 원자적으로 `overlay.external_renderer`만 바꾼다.
+접속이 되는지 확인할 때는 `scripts/verify-connection.py`를 쓴다. discovery 읽기·접속·등록까지만 하고
+바로 끊으므로 실행 중인 renderer의 선택을 건드리지 않는다. Engram이 꺼져 있으면 exit 2다.
 
 프로젝트 계층과 새 renderer 추가 규칙은 [Overlay 구현 계층](architecture.md)을 따른다.
 
 ## 완료 기준
 
-- handshake가 stdout 첫 줄에 한 번 출력된다.
-- 잘못된 입력 JSONL이 renderer를 중단시키지 않고 stderr에 기록된다.
+- `overlay.register`가 소켓의 첫 줄로 한 번 전송되고 token은 어디에도 기록되지 않는다.
+- 잘못된 입력 JSONL이 renderer를 중단시키지 않는다.
 - 알 수 없는 type과 필드를 무시한다.
 - 모든 공개 `display_hint`가 안전한 기본 상태를 가진다.
-- protocol 단위 테스트와 실제 child-process JSONL smoke test가 통과한다.
-- Engram 설정용 manifest 예제가 제공된다.
+- Engram이 꺼져 있거나 재시작해도 창이 살아남고 backoff로 다시 붙는다.
+- protocol 단위 테스트와 `verify-connection.py`의 실제 등록이 통과한다.

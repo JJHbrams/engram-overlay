@@ -1,6 +1,6 @@
 ---
 name: create-engram-overlay
-description: Create or extend a personal renderer in the engram-overlay repository, including backend selection, registry entry, manifest, focused tests, and Engram Event API verification. Use for new 2D, software-3D, GPU-3D, WebView, or Live2D overlays; not for ordinary bug fixes to an existing overlay.
+description: Create or extend a personal renderer in the engram-overlay repository, including backend selection, registry entry, roster entry, focused tests, and Engram Event API verification. Use for new 2D, software-3D, GPU-3D, WebView, or Live2D overlays; not for ordinary bug fixes to an existing overlay.
 ---
 
 # Create an Engram overlay
@@ -29,7 +29,7 @@ python scripts/scaffold-overlay.py <overlay-id> --name "Display Name" --dry-run
 python scripts/scaffold-overlay.py <overlay-id> --name "Display Name"
 ```
 
-The scaffold creates a module, manifest, focused test, and registry entry. Replace its visual placeholder with the
+The scaffold creates a module, focused test, registry entry, and roster entry. Replace its visual placeholder with the
 requested behavior; do not remove its lifecycle methods or protocol boundary.
 
 For other backends, copy only the nearest relevant structure and register a lazy-loaded factory. Add dependencies as
@@ -38,7 +38,7 @@ backend-specific optional dependencies where practical.
 ## Verify
 
 Test pure geometry, state mapping, and constraints without a window. Add a small smoke test only for lifecycle behavior
-that cannot be covered headlessly. Then run the full suite and the installed-manifest JSONL roundtrip from `AGENTS.md`.
+that cannot be covered headlessly. Then run the full suite and the connection check from `AGENTS.md`.
 
 Do not mutate the user's active Engram selection unless explicitly requested. Report which backend, files, tests, and
 runtime evidence were used.

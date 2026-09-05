@@ -9,7 +9,7 @@ import sys
 from .client import Registration, sessions
 from .discovery import SCHEMA_VERSION as V2_SCHEMA_VERSION
 from .protocol import PRESENTATION_CAPABILITY, JsonlTransport, hello_message
-from .registry import OVERLAYS, create_overlay, format_catalog, overlay_ids
+from .registry import OVERLAYS, create_overlay, format_catalog, overlay_ids, renderer_id
 from .state import OverlayState
 
 
@@ -110,7 +110,7 @@ def run_v2(args: argparse.Namespace, capabilities: tuple[str, ...]) -> int:
     """
     spec = OVERLAYS[args.overlay]
     registration = Registration(
-        renderer_id=f"engram.{args.overlay}",
+        renderer_id=renderer_id(args.overlay),
         name=spec.name,
         supported_modes=("observer", "replace"),
         capabilities=capabilities,

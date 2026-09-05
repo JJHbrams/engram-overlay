@@ -27,7 +27,7 @@ overlay's view class.
 ```text
 src/engram_overlay/overlays/<id>.py     renderer behavior and factory
 src/engram_overlay/registry.py          lazy-loaded id/backend/factory mapping
-manifests/<id>/manifest.yaml            install and selection contract
+tests/roster.json                       display name and renderer id snapshot
 tests/test_<id>.py                      behavior and registration tests
 ```
 
@@ -59,7 +59,7 @@ renderer arguments or assets, not arbitrary settings injected into Engram.
 - Pure behavior and geometry have focused tests.
 - Packaged assets exist in a built wheel, not only the source tree.
 - The full unittest suite passes.
-- `scripts/verify-engram.py` passes against an installed manifest and the intended Engram source/runtime.
+- `scripts/verify-connection.py` registers with a running Engram, or reports exit 2 because none is running.
 - No active overlay selection or external release is changed without explicit authorization.
 
 ## Useful request shape
