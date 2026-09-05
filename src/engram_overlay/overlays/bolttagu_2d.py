@@ -136,21 +136,23 @@ CATEGORY_POSES: dict[str, str] = {
 # A hint that warrants a one-shot the moment the renderer enters it.
 HINT_ONESHOTS: dict[str, str] = {"success": "success"}
 
-# enter and exit belong to Engram's launcher, not to a hint. What is left is the
-# set of flourishes a hint may fire on arrival before settling into its pose.
+# Engram's launcher plays these for overlay.show and overlay.hide. A hint may use
+# them too: a lifecycle transition is a one-shot override, so it still wins while
+# it runs. Nothing here is off limits -- every bundled clip can be chosen.
 LIFECYCLE_CLIPS = ("enter", "exit")
 
 
 def selectable_poses() -> list[str]:
-    """Poses that can hold a state: idle plus everything that loops."""
-    return [IDLE_POSE] + sorted(name for name, clip in CLIPS.items() if clip.loop)
+    """Every pose a state can rest in.
+
+    A clip that does not loop holds its last frame for as long as the state lasts.
+    """
+    return [IDLE_POSE] + sorted(CLIPS)
 
 
 def selectable_oneshots() -> list[str]:
-    """Clips a hint may play once on arrival."""
-    return sorted(
-        name for name, clip in CLIPS.items() if not clip.loop and name not in LIFECYCLE_CLIPS
-    )
+    """Every clip a hint may play once on arrival before settling into its pose."""
+    return sorted(name for name, clip in CLIPS.items() if not clip.loop)
 
 
 # Chosen in scripts/build-bolttagu-preview.py and dropped next to the installed
@@ -163,7 +165,7 @@ def installed_mapping_path() -> Path:
 
 
 def _valid_pose(pose: object) -> bool:
-    return pose == IDLE_POSE or (isinstance(pose, str) and pose in CLIPS and CLIPS[pose].loop)
+    return isinstance(pose, str) and pose in selectable_poses()
 
 
 def _valid_oneshot(clip: object) -> bool:
@@ -399,7 +401,9 @@ class BolttaguAnimator:
             )
         clip = CLIPS[self.pose]
         cell = clip_cell(clip, now_ms - self.state_started_ms)
-        assert cell is not None  # looping clips never retire
+        if cell is None:
+            # A one-shot chosen as a state pose: play it, then stand there.
+            cell = clip.cells[-1]
         return ((clip.sheet, cell),)
 
 

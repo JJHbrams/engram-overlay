@@ -198,7 +198,7 @@ TEMPLATE = """<!doctype html>
 
   <h2>동작</h2>
   <div class="poses" id="poses"></div>
-  <p class="hint">점선 테두리는 한 번만 재생되는 동작이다. 등장·퇴장은 런처가 소유하므로 신호에 붙일 수 없고, 나머지는 아래 표의 <b>1회 재생</b>에서 고른다.</p>
+  <p class="hint">점선 테두리는 한 번만 재생되는 동작이다. 지속 동작으로 고르면 재생 후 마지막 프레임에서 멈춘다. <code>enter</code>·<code>exit</code>는 런처가 등장·퇴장에도 쓰지만, 그 전환은 1회 재생이라 항상 우선하므로 신호에 붙여도 충돌하지 않는다.</p>
 
   <h2>display hint</h2>
   <p class="hint" style="margin:-.5rem 0 1rem">신호마다 두 층이 있다. <b>지속 동작</b>은 그 상태에 머무는 동안 반복되고, <b>1회 재생</b>은 신호에 진입할 때 그 위로 한 번 얹힌 뒤 지속 동작으로 가라앉는다.</p>
@@ -287,7 +287,7 @@ function addCanvas(el, poseGetter, seed){
 }
 
 const poseBox = document.getElementById("poses");
-D.poses.concat(Object.keys(D.clips).filter(n => !D.clips[n].loop)).forEach((pose, i) => {
+D.poses.concat(Object.keys(D.clips).filter(n => !D.poses.includes(n))).forEach((pose, i) => {
   const clip = D.clips[pose];
   const card = document.createElement("div");
   card.className = "pose" + (clip && !clip.loop ? " oneshot" : "");
