@@ -90,6 +90,9 @@ class Section:
     note: str = ""
     multi: bool = False
     allow_empty: bool = False
+    # Keys the overlay recognises but deliberately does not offer, each with the
+    # reason. Without this a deliberate omission is indistinguishable from a typo.
+    refused: dict[str, str] = field(default_factory=dict)
 
     @property
     def by_key(self) -> dict[str, Row]:
@@ -167,6 +170,9 @@ def resolve(
             continue
         rows, options = section.by_key, set(section.options)
         for row_key, value in entries.items():
+            if row_key in section.refused:
+                note(f"{MAPPING_FILE}: {key}: {section.refused[row_key]}")
+                continue
             if row_key not in rows:
                 note(f"{MAPPING_FILE}: {key}: unknown signal {row_key!r}")
                 continue

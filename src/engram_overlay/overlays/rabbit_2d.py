@@ -146,12 +146,12 @@ def choose_frame(
     frames_by_hint: dict[str, tuple[int, ...]] | None = None,
 ) -> int:
     """Choose once per state bucket and avoid immediate repeats when possible."""
-    STATE_FRAMES = frames_by_hint or globals()["STATE_FRAMES"]
-    hint = display_hint if display_hint in STATE_FRAMES else "idle"
+    table = frames_by_hint if frames_by_hint is not None else STATE_FRAMES
+    hint = display_hint if display_hint in table else "idle"
     key = (hint, max(0, bucket))
     if key in choices:
         return choices[key]
-    frames = STATE_FRAMES[hint]
+    frames = table[hint]
     previous = choices.get((hint, key[1] - 1))
     candidates = tuple(frame for frame in frames if frame != previous) or frames
     choices[key] = rng.choice(candidates)
@@ -163,8 +163,15 @@ class Rabbit2DView:
     background = TRANSPARENT
     transparent_color = TRANSPARENT
 
-    def __init__(self, *, rng: random.Random | None = None) -> None:
-        asset = Path(__file__).parent / "assets" / "rabbit_2d" / "rabbit-states.png"
+    def __init__(
+        self,
+        *,
+        rng: random.Random | None = None,
+        mapping_path: Path | None = None,
+        log: Callable[[str], None] | None = None,
+    ) -> None:
+        self.frames_by_hint = load_frames(mapping_path, log=log)
+        asset = ASSET_DIR / "rabbit-states.png"
         atlas = Image.open(asset).convert("RGBA")
         self.frames = tuple(
             frame.resize(DISPLAY_SIZE, Image.Resampling.LANCZOS)
@@ -185,7 +192,7 @@ class Rabbit2DView:
         self.image_id = canvas.create_image(0, 0, image=self.photo, anchor="nw")
 
     def apply_state(self, state: OverlayState) -> None:
-        hint = state.display_hint if state.display_hint in STATE_FRAMES else "idle"
+        hint = state.display_hint if state.display_hint in self.frames_by_hint else "idle"
         if hint != self.display_hint:
             self.display_hint = hint
             self.state_started_at = time.monotonic()
@@ -197,7 +204,9 @@ class Rabbit2DView:
             return
         elapsed_ms = max(0.0, (time.monotonic() - self.state_started_at) * 1000)
         bucket = int(elapsed_ms // STATE_FRAME_MS[self.display_hint])
-        frame = choose_frame(self.display_hint, bucket, self.choices, self.rng)
+        frame = choose_frame(
+            self.display_hint, bucket, self.choices, self.rng, self.frames_by_hint
+        )
         if frame == self.current_frame:
             return
         self.current_frame = frame

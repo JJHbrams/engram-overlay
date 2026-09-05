@@ -247,6 +247,11 @@ def sprite_map() -> SpriteMap:
                 poses,
                 note="검색·기억 도구는 자기 display hint로 오므로 여기 없다. 비우면 generating 설정을 따른다.",
                 allow_empty=True,
+                refused={
+                    key: f"category {key!r} arrives as its own display hint, "
+                         f"so set the {key!r} hint instead"
+                    for key in sorted(UNREACHABLE_CATEGORIES)
+                },
             ),
             Section(
                 "lifecycle", "런처 전환",

@@ -67,15 +67,26 @@ python scripts/build-bolttagu-assets.py --pack <sprite-pack-vN>
 
 ### 매핑 고르기
 
+스프라이트 오버레이는 어떤 신호에 어떤 그림을 붙일지 공용 미리보기 페이지에서 고른다.
+각 오버레이가 `sprite_map()`으로 자기 자신을 선언하고(`overlays/spritemap.py`), 생성기와 로더는
+그 선언만 읽는다. 오버레이별 코드가 양쪽 어디에도 없다.
+
+| 오버레이 | 모델 |
+| --- | --- |
+| `bolttagu-2d` | 신호 → 애니메이션 1개 (단일 선택) |
+| `rabbit-2d` | 신호 → 정지컷 여러 장, 시간 구간마다 하나씩 무작위 (다중 선택) |
+
+
 어떤 신호에 어떤 동작을 붙일지는 미리보기 페이지에서 고른다.
 
 ```powershell
-python scripts/build-bolttagu-preview.py --open
+python scripts/build-sprite-preview.py --open
 ```
 
-`dist/bolttagu-mapping.html`이 생성된다. 외부 의존이 없는 단일 파일이라 그냥 열면 된다.
+`dist/sprite-mapping.html`이 생성된다. 외부 의존이 없는 단일 파일이고, **상단 탭으로 오버레이를 고른다.**
+registry를 순회해 `sprite_map()`을 노출하는 오버레이만 모으므로, 스프라이트 오버레이를 추가하면 탭이 저절로 생긴다.
 
-- 11개 동작을 **오버레이가 실제로 그리는 패킹된 셀**로, 같은 타이밍으로 재생한다. 원본 팩이 아니다.
+- 동작을 **오버레이가 실제로 그리는 셀**로, 같은 타이밍으로 재생한다. 원본 팩이 아니다.
 - display hint 12종과 도구 범주별로 동작을 고르면 그 자리에서 미리 보인다.
 - `lifecycle`은 런처가 펼치고 접을 때(`overlay.show`/`overlay.hide`) 재생할 동작이다. display hint와 무관하며 항상 우선한다.
 - 신호마다 두 층을 고른다. **지속 동작**은 그 상태에 머무는 동안 반복되고, **1회 재생**은 진입할 때 그 위로 한 번 얹힌 뒤 지속 동작으로 가라앉는다. 기본값은 `success` 신호에 `success` 1회 재생 + `idle` 지속이다.
