@@ -183,6 +183,22 @@ class RegisterMessageTests(unittest.TestCase):
         )
         self.assertEqual(message["payload"]["capabilities"], ["overlay.presentation"])
 
+    def test_catalog_is_included_only_when_given(self) -> None:
+        item = {
+            "renderer_id": "engram.xeyes",
+            "name": "Engram XEyes",
+            "supported_modes": ["observer", "replace"],
+            "capabilities": ["overlay.presentation"],
+        }
+        message = register_message(
+            self.discovery,
+            renderer_id="engram.catalog-provider",
+            name="Catalog",
+            supported_modes=("observer", "replace"),
+            catalog=(item,),
+        )
+        self.assertEqual(message["payload"]["catalog"], [item])
+
 
 class BackoffTests(unittest.TestCase):
     def test_it_doubles_then_settles_at_the_ceiling(self) -> None:

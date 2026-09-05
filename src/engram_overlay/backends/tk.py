@@ -105,6 +105,14 @@ class TkOverlayHost:
         """
         self._connect = connect
 
+    def enable_launcher_management(self) -> None:
+        """Start a generic renderer collapsed; show/hide may complete immediately."""
+        if not self.visible:
+            return
+        self.visible = False
+        self._mapped = False
+        self.root.withdraw()
+
     def run(self) -> None:
         threading.Thread(target=self._read_messages, name="engram-jsonl-reader", daemon=True).start()
         # Geometry is optional for a passive observer.  Interactive observers

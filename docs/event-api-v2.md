@@ -30,6 +30,21 @@ stale instance, 잘못된 token, 중복 ID, 잘못된 mode, timeout은 연결을
 connection refusal, EOF 뒤 bounded exponential backoff로 다시 읽고 연결한다. 어느 쪽이 먼저 시작해도 되고
 Engram 재시작 뒤 기존 endpoint나 credential을 재사용하지 않는다.
 
+### 선택적 catalog 등록
+
+한 provider connection이 여러 논리 renderer를 제공할 때만 `catalog`를 추가할 수 있다. 이 필드는 최대 32개
+item의 배열이며 각 item은 정확히 `renderer_id`, `name`, `supported_modes`와 선택적 `capabilities`만 가진다.
+각 값의 형식과 제한은 top-level 등록 필드와 같다. provider ID, 같은 catalog의 다른 ID, 이미 연결된 다른
+provider나 singleton renderer ID와 충돌하면 등록 전체가 거부된다.
+
+```json
+{"schema_version":2,"type":"overlay.register","payload":{"token":"value-read-from-discovery","instance_id":"current-instance-id","renderer_id":"vendor.catalog-provider","name":"Vendor Catalog","supported_modes":["observer","replace"],"catalog":[{"renderer_id":"vendor.rabbit","name":"Rabbit","supported_modes":["observer","replace"],"capabilities":["overlay.presentation"]}]}}
+```
+
+catalog를 보내지 않는 기존 singleton 등록은 변하지 않는다. Engram Settings와 persisted selection에는 provider
+ID가 아니라 각 item의 stable `renderer_id`와 mode만 나타나고 저장된다. Engram은 provider 내부 preset,
+asset, executable, argv 또는 path를 읽거나 실행하지 않는다.
+
 ## Host에서 받는 메시지
 
 등록 성공 뒤 `engram.welcome`, 현재 상태를 담은 `state.snapshot`, 초기 `renderer.assignment`가 그 순서로
@@ -39,6 +54,13 @@ exact `mode`와 boolean `selected`가 있다. assignment와 control의 `display_
 payload에 category가 없다는 이유로 renderer의 현재 work state나 `tool_category`를 지우지 않는다.
 `state.snapshot` payload는 현재 `generation_active`와 bounded `tool_category`를 사용해 재접속 직후 상태를
 복원한다. 일반 `tool.started` 이벤트의 같은 값은 `payload.category`에 있다.
+catalog provider의 assignment에는 선택된 item의 `renderer_id`도 포함된다. provider는 같은 connection을
+유지하면서 그 logical item을 활성화하며, 이후 outbound geometry/pointer/visibility는 그 item의 source로
+귀속된다. Engram은 control routing과 `overlay.presentation`/`overlay.set_size` 판단에 top-level provider가
+아니라 현재 item의 mode와 capabilities를 사용한다.
+provider는 새 worker의 hidden Tk surface가 생성되고 snapshot/assignment를 전달한 뒤 exact
+`renderer.ready {renderer_id}`를 보낸다. Engram은 matching readiness 전까지 bundled fallback을 유지하고
+replace controls를 보내지 않는다. 이전 선택의 늦은 readiness와 늦은 worker output은 무시한다.
 
 일반 host envelope은 다음 필드를 가진다.
 
@@ -87,5 +109,7 @@ observer의 transient anchor일 뿐 replace/bundled geometry를 저장하지 않
 통지되고 ready replace는 즉시 활성화된다. disconnect 시 Engram은 provider session을 끝내거나 외부
 프로세스를 kill하지 않고 bundled renderer로 복귀한다.
 
-Event API v1 stdin/stdout과 command manifest는 retired다. 이 저장소는 parser/headless 회귀용 명시적
-`--v1-stdio`만 보존한다. 정상 설치·실행·재접속 경로에는 v1 bridge나 manifest가 없다.
+Event API v1 stdin/stdout과 command manifest는 Engram 연동 경계에서는 retired다. 이 저장소는 명시적
+`--v1-stdio` fixture를 보존하고, `-All` catalog supervisor는 같은 설치 패키지 안에서 active preset worker
+하나를 격리하기 위한 private stdio bridge로 재사용한다. discovery/token은 worker에 전달되지 않고 Engram은
+그 child의 command/path/lifecycle을 전혀 보지 않는다. singleton `-Overlay` 경로와 public 연결은 v2 socket이다.

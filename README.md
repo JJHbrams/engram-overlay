@@ -27,6 +27,7 @@ Engram은 Event API v2에서 loopback API만 제공하고 renderer를 실행하�
 
 ```powershell
 .\scripts\install-runtime.ps1 -List                          # 목록만 보기
+.\scripts\install-runtime.ps1 -All                           # 7개 preset을 한 provider로 설치·실행
 .\scripts\install-runtime.ps1 -Overlay rabbit-2d             # 설치하고 실행
 .\scripts\install-runtime.ps1 -Overlay rabbit-2d -Autostart  # Windows 시작 시 자동 실행
 python scripts/build-sprite-preview.py                       # 신호별 동작 고르기
@@ -34,6 +35,9 @@ python scripts/build-sprite-preview.py                       # 신호별 동작 
 
 - 런타임 위치는 `%LOCALAPPDATA%\engram-overlay\`이고, checkout을 지우거나 옮겨도 계속 동작한다.
 - **실행 중인 renderer만** Engram `Settings > Overlay`에 나온다. 설치만으로는 목록에 안 뜬다.
+- `-All`은 checkout과 무관한 런타임 하나와 provider 프로세스 하나를 설치한다. Settings에는 기존의
+  안정된 `engram.<preset>` ID를 가진 7개 preset이 각각 나타나며 선택할 때 provider가 활성 창을 교체한다.
+- `-Overlay`는 기존처럼 preset 하나만 직접 등록한다. v2 catalog를 보내지 않는 외부 renderer도 그대로 호환된다.
 - 옵션: `-Scale`·`-Presentation`·`-NoFacePointer`(bolttagu-2d), `-EyeEmission`(robot-arm-3d-v2/v3).
 - 설치하면 바로 실행된다. 옵션을 바꿀 때도 다시 실행하면 renderer를 내렸다 새로 띄운다. 설치만 하려면 `-NoStart`.
 - 수동 실행은 `%LOCALAPPDATA%\engram-overlay\start-overlay.cmd`. 자동 실행 해제는 `-RemoveAutostart`.
@@ -105,6 +109,7 @@ python scripts/verify-connection.py --overlay rabbit-2d
 | transport | 독립 renderer가 Engram의 `127.0.0.1` ephemeral TCP JSONL API에 연결 |
 | schema | 기본 `schema_version: 2`; 명시적 `--v1-stdio`만 schema 1 |
 | handshake | discovery를 읽은 renderer가 socket 첫 줄로 `overlay.register` 전송 |
+| catalog | 한 provider가 선택적인 bounded catalog를 등록할 수 있고, 선택 assignment의 logical renderer ID로 활성 preset을 교체 |
 | privacy | 대화·thinking·도구 payload·파일 경로를 받지 않는 `metadata_only` |
 | modes | `observer`는 번들 캐릭터와 공존, `replace`는 번들을 대체 |
 | sizing | `overlay.set_size`를 advertise한 `replace` renderer만 크기 요청을 받는다 |

@@ -86,6 +86,7 @@ def register_message(
     name: str,
     supported_modes: tuple[str, ...],
     capabilities: tuple[str, ...] = (),
+    catalog: tuple[dict[str, object], ...] = (),
 ) -> dict[str, object]:
     """The first line a renderer sends, carrying the discovery credentials."""
     payload: dict[str, object] = {
@@ -97,6 +98,8 @@ def register_message(
     }
     if capabilities:
         payload["capabilities"] = list(capabilities)
+    if catalog:
+        payload["catalog"] = list(catalog)
     return {"schema_version": SCHEMA_VERSION, "type": "overlay.register", "payload": payload}
 
 

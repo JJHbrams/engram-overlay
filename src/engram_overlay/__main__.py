@@ -9,6 +9,7 @@ import sys
 from .client import Registration, sessions
 from .discovery import SCHEMA_VERSION as V2_SCHEMA_VERSION
 from .protocol import PRESENTATION_CAPABILITY, JsonlTransport, hello_message
+from .provider import run_catalog_provider
 from .registry import OVERLAYS, create_overlay, format_catalog, overlay_ids, renderer_id
 from .state import OverlayState
 
@@ -16,6 +17,12 @@ from .state import OverlayState
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Engram custom overlay renderer")
     parser.add_argument("--overlay", choices=overlay_ids(), default="xeyes")
+    parser.add_argument(
+        "--provider",
+        action="store_true",
+        help="advertise every bundled preset through one Event API v2 catalog connection",
+    )
+    parser.add_argument("--provider-worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--list-overlays",
         action="store_true",
@@ -66,14 +73,20 @@ def main(argv: list[str] | None = None) -> int:
         # JSONL-only rule for a running renderer's stdout is not in play.
         print(format_catalog())
         return 0
+    if args.provider:
+        if args.v1_stdio or args.headless:
+            parser.error("--provider requires Event API v2")
+        if args.eye_emission or args.no_face_pointer or args.scale != 1.0 or args.presentation:
+            parser.error("--provider cannot be combined with single-preset options")
+        return run_catalog_provider()
+    if args.provider_worker and (not args.v1_stdio or not args.presentation):
+        parser.error("--provider-worker requires --v1-stdio --presentation")
     if args.eye_emission and args.overlay not in {"robot-arm-3d-v2", "robot-arm-3d-v3"}:
         parser.error("--eye-emission is only supported by robot-arm-3d-v2 and robot-arm-3d-v3")
     if args.no_face_pointer and args.overlay != "bolttagu-2d":
         parser.error("--no-face-pointer is only supported by bolttagu-2d")
     if args.scale != 1.0 and args.overlay != "bolttagu-2d":
         parser.error("--scale is only supported by bolttagu-2d")
-    if args.presentation and args.overlay != "bolttagu-2d":
-        parser.error("--presentation is only supported by bolttagu-2d")
     if args.headless and not args.v1_stdio:
         parser.error("--headless is a legacy contract check and requires --v1-stdio")
     capabilities = ["overlay.set_size"] if args.overlay == "bolttagu-2d" else []
@@ -90,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.headless:
             run_headless(transport)
             return 0
-        create_overlay(
+        host = create_overlay(
             args.overlay,
             transport,
             args.mode,
@@ -98,7 +111,10 @@ def main(argv: list[str] | None = None) -> int:
             face_pointer=not args.no_face_pointer,
             scale=args.scale,
             launcher_managed=args.presentation,
-        ).run()
+        )
+        if args.provider_worker:
+            transport.send({"schema_version": 1, "type": "renderer.worker_ready", "payload": {}})
+        host.run()
         return 0
 
     return run_v2(args, tuple(capabilities))
