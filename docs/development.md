@@ -30,8 +30,10 @@ python -m venv .venv
 .\.venv\Scripts\engram-custom-overlay.exe --overlay xeyes --mode replace
 ```
 
-개발 설치와 manifest 생성을 한 번에 하려면 `scripts/install-dev.ps1`을 실행한다.
-생성 위치는 `%USERPROFILE%/.engram/overlays/xeyes/manifest.yaml`이다.
+`.venv` 생성과 editable install을 한 번에 하려면 `scripts/install-dev.ps1`을 실행한다.
+checkout과 무관하게 사는 런타임을 설치하거나 Windows 시작 시 자동 실행하려면
+`scripts/install-runtime.ps1`을 쓴다. 둘 다 manifest를 만들지 않는다 — v2의 Engram은
+renderer를 실행하지 않으므로 실행 방법을 적어둘 곳이 없다.
 선택을 자동화할 때는 `scripts/select-overlay.py`의 dry-run을 먼저 확인하고 `--apply`를 사용한다.
 이 스크립트는 기존 top-level 설정 키를 검증하고 백업 뒤 원자적으로 `overlay.external_renderer`만 바꾼다.
 

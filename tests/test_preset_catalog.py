@@ -1,7 +1,7 @@
 """The bundled preset roster, and the listing built from it.
 
 The registry is the single source of truth for a preset's display name: the CLI
-listing and install-dev.ps1 both read it from there instead of keeping their own
+listing and both install scripts read it from there instead of keeping their own
 copy. These tests guard that roster and its agreement with the reference
 manifests under manifests/.
 """
@@ -103,24 +103,51 @@ class ListOverlaysCliTests(unittest.TestCase):
 
 
 class InstallScriptTests(unittest.TestCase):
-    """The script must not carry its own copy of the roster."""
+    """Neither script may carry its own copy of the roster."""
 
     def setUp(self) -> None:
-        self.source = (REPO_ROOT / "scripts" / "install-dev.ps1").read_text(encoding="utf-8")
+        scripts = REPO_ROOT / "scripts"
+        self.dev = (scripts / "install-dev.ps1").read_text(encoding="utf-8")
+        self.runtime = (scripts / "install-runtime.ps1").read_text(encoding="utf-8")
 
-    def test_script_reads_the_registry_instead_of_hardcoding_ids(self) -> None:
-        self.assertIn("overlay_catalog", self.source)
-        # A ValidateSet over overlay ids is exactly the copy that used to drift.
-        self.assertNotIn('ValidateSet("xeyes"', self.source)
+    def scripts(self):
+        return (("dev", self.dev), ("runtime", self.runtime))
 
-    def test_script_offers_bulk_and_listing_switches(self) -> None:
-        self.assertRegex(self.source, r"\[switch\]\$All")
-        self.assertRegex(self.source, r"\[switch\]\$List")
+    def test_both_scripts_read_the_registry_instead_of_hardcoding_ids(self) -> None:
+        for name, source in self.scripts():
+            with self.subTest(script=name):
+                self.assertIn("overlay_catalog", source)
+                # A ValidateSet over overlay ids is exactly the copy that used to drift.
+                self.assertNotIn('ValidateSet("xeyes"', source)
 
-    def test_script_can_install_the_presentation_flag(self) -> None:
+    def test_both_scripts_can_install_the_presentation_flag(self) -> None:
         """Without this there is no supported way to opt into Engram's launcher."""
-        self.assertRegex(self.source, r"\[switch\]\$Presentation")
-        self.assertIn('"--presentation"', self.source)
+        for name, source in self.scripts():
+            with self.subTest(script=name):
+                self.assertRegex(source, r"\[switch\]\$Presentation")
+                self.assertIn('"--presentation"', source)
+
+    def test_neither_script_writes_a_v1_manifest(self) -> None:
+        """v2 never spawns a renderer, so a spawn manifest is a dead file that
+        still names whichever checkout wrote it."""
+        for name, source in self.scripts():
+            with self.subTest(script=name):
+                self.assertNotIn("schema_version: 1", source)
+
+    def test_the_runtime_install_does_not_link_the_checkout(self) -> None:
+        """An editable install would leave the runtime broken the moment this
+        repository is moved or deleted."""
+        self.assertNotRegex(self.runtime, r"pip install.*\s-e\s")
+
+    def test_the_runtime_install_offers_autostart_both_ways(self) -> None:
+        self.assertRegex(self.runtime, r"\[switch\]\$Autostart")
+        self.assertRegex(self.runtime, r"\[switch\]\$RemoveAutostart")
+
+    def test_the_legacy_cleanup_removes_manifests_and_nothing_else(self) -> None:
+        """mapping.json next to a manifest is hand-built state, not litter."""
+        self.assertRegex(self.runtime, r"\[switch\]\$RemoveLegacyManifests")
+        self.assertIn("Remove-Item -LiteralPath $manifest -Force", self.runtime)
+        self.assertNotRegex(self.runtime, r"Remove-Item.*-Recurse")
 
 
 if __name__ == "__main__":
