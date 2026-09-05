@@ -5,7 +5,8 @@ param(
     [switch]$EyeEmission,
     [double]$Scale = 1.0,
     [switch]$All,
-    [switch]$List
+    [switch]$List,
+    [switch]$Presentation
 )
 
 $ErrorActionPreference = "Stop"
@@ -46,8 +47,8 @@ if ($List) {
 
 $known = $catalog | ForEach-Object { $_.id }
 if ($All) {
-    if ($EyeEmission -or $Scale -ne 1.0) {
-        throw "-EyeEmission and -Scale apply to a single overlay; drop -All or install that overlay on its own"
+    if ($EyeEmission -or $Scale -ne 1.0 -or $Presentation) {
+        throw "-EyeEmission, -Scale and -Presentation apply to a single overlay; drop -All or install that overlay on its own"
     }
     $targets = $known
 } else {
@@ -59,6 +60,9 @@ if ($All) {
     }
     if ($Scale -ne 1.0 -and $Overlay -ne "bolttagu-2d") {
         throw "Scale is only supported by bolttagu-2d"
+    }
+    if ($Presentation -and $Overlay -ne "bolttagu-2d") {
+        throw "Presentation is only supported by bolttagu-2d"
     }
     if ($Scale -lt 0.2 -or $Scale -gt 4.0) {
         throw "Scale must be between 0.2 and 4.0"
@@ -86,6 +90,10 @@ foreach ($id in $targets) {
     if ($Scale -ne 1.0) {
         $commandTail += '  - "--scale"'
         $commandTail += ('  - "{0}"' -f $Scale)
+    }
+    if ($Presentation) {
+        # Engram's launcher owns show/hide for this renderer.
+        $commandTail += '  - "--presentation"'
     }
     $commandTailYaml = $commandTail -join "`n"
 

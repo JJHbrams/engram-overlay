@@ -231,18 +231,22 @@ class BolttaguAnimator:
         self.state_started_ms = started_ms
         self.oneshot = intro
         self.oneshot_started_ms = started_ms
+        # A farewell is terminal: nothing follows it on screen, so it holds its
+        # last frame instead of snapping back to idle before the window closes.
+        self.oneshot_holds = False
         self.blink = BlinkTimeline(rng=rng or random.Random(), started_ms=started_ms)
 
     @property
     def pose(self) -> str:
         return pose_for(self.display_hint, self.tool_category)
 
-    def play_lifecycle(self, clip: str, now_ms: int) -> int:
+    def play_lifecycle(self, clip: str, now_ms: int, *, hold_last: bool = False) -> int:
         """Start a show/hide transition, overriding any hint one-shot in flight."""
         if clip not in CLIPS:
             raise ValueError(f"unknown lifecycle clip: {clip}")
         self.oneshot = clip
         self.oneshot_started_ms = now_ms
+        self.oneshot_holds = hold_last
         return CLIPS[clip].total_ms
 
     def apply_hint(self, hint: str, now_ms: int, category: str | None = None) -> None:
@@ -253,6 +257,7 @@ class BolttaguAnimator:
         self.display_hint = resolved
         self.tool_category = category
         self.state_started_ms = now_ms
+        self.oneshot_holds = False
         if self.pose == IDLE_POSE and not was_idle:
             self.blink.reset(now_ms)
         oneshot = HINT_ONESHOTS.get(resolved)
@@ -267,6 +272,8 @@ class BolttaguAnimator:
             cell = clip_cell(clip, now_ms - self.oneshot_started_ms)
             if cell is not None:
                 return ((clip.sheet, cell),)
+            if self.oneshot_holds:
+                return ((clip.sheet, clip.cells[-1]),)
             self.oneshot = None
             if self.pose == IDLE_POSE:
                 self.blink.reset(now_ms)
@@ -370,7 +377,7 @@ class Bolttagu2dView:
         return self.animator.play_lifecycle("enter", self._now_ms())
 
     def begin_exit(self) -> int:
-        return self.animator.play_lifecycle("exit", self._now_ms())
+        return self.animator.play_lifecycle("exit", self._now_ms(), hold_last=True)
 
     def tick(self, pointer_x: int, pointer_y: int, window_x: int, window_y: int) -> None:
         if self.face_pointer:
