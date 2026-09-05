@@ -35,6 +35,7 @@ from engram_overlay.overlays.bolttagu_2d import (  # noqa: E402
     HINT_ONESHOTS,
     IDLE_POSE,
     MAPPING_FILE,
+    REFINABLE_CATEGORIES,
     STATE_POSES,
     STEAM_CELLS,
     STEAM_FRAME_MS,
@@ -42,7 +43,6 @@ from engram_overlay.overlays.bolttagu_2d import (  # noqa: E402
     selectable_oneshots,
     selectable_poses,
 )
-from engram_overlay.protocol import TOOL_CATEGORIES  # noqa: E402
 
 OUTPUT = REPO_ROOT / "dist" / "bolttagu-mapping.html"
 
@@ -119,8 +119,8 @@ def build_payload() -> dict[str, object]:
                 "note": CATEGORY_NOTES.get(key, ""),
                 "default": CATEGORY_POSES.get(key, ""),
             }
-            for key in ("write", "execute", "read", "memory", "search", "communication", "other")
-            if key in TOOL_CATEGORIES
+            for key in ("write", "execute", "read", "communication", "other")
+            if key in REFINABLE_CATEGORIES
         ],
         "mappingPath": str(installed_mapping_path()),
         "mappingFile": MAPPING_FILE,
@@ -208,7 +208,8 @@ TEMPLATE = """<!doctype html>
   </table>
 
   <h2>도구 범주 — generating 세분</h2>
-  <p class="hint" style="margin:-.5rem 0 1rem">Engram은 검색·기억이 아닌 모든 도구를 <code>generating</code>으로 뭉쳐 보내고, 어떤 일인지는 <code>payload.category</code>에만 담긴다. 아래에서 지정하지 않은 범주는 위 <code>generating</code> 설정을 그대로 쓴다.</p>
+  <p class="hint" style="margin:-.5rem 0 1rem">Engram은 검색·기억이 아닌 모든 도구를 <code>generating</code>으로 뭉쳐 보내고, 어떤 일인지는 <code>payload.category</code>에만 담긴다. 아래에서 지정하지 않은 범주는 위 <code>generating</code> 설정을 그대로 쓴다.<br>
+  <b>검색·기억 도구는 여기 없다.</b> 그 둘은 <code>generating</code>이 아니라 <code>search</code>·<code>memory</code> 신호로 직접 오므로 위 display hint 표에서 정한다.</p>
   <table>
     <thead><tr><th>범주</th><th>도구</th><th>동작</th><th></th></tr></thead>
     <tbody id="cats"></tbody>

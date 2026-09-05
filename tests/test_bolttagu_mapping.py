@@ -6,6 +6,7 @@ from engram_overlay.overlays.bolttagu_2d import (
     CLIPS,
     HINT_ONESHOTS,
     IDLE_POSE,
+    REFINABLE_CATEGORIES,
     STATE_POSES,
     BolttaguAnimator,
     load_mapping,
@@ -81,6 +82,30 @@ class MappingOverrideTests(unittest.TestCase):
         hints, categories, _ = self.load({"hints": {"input": "wondering"}})
         self.assertEqual(hints["search"], STATE_POSES["search"])
         self.assertEqual(categories, CATEGORY_POSES)
+
+    def test_unreachable_categories_are_refused_with_a_pointer(self) -> None:
+        """search and memory arrive as their own hints, never alongside generating,
+        so a category entry for them could never fire."""
+        for key in ("search", "memory"):
+            with self.subTest(category=key):
+                _, categories, notes = self.load({"categories": {key: "waiting"}})
+                self.assertNotIn(key, categories)
+                self.assertEqual(len(notes), 1)
+                self.assertIn("hint instead", notes[0])
+
+    def test_every_refinable_category_is_accepted(self) -> None:
+        for key in REFINABLE_CATEGORIES:
+            with self.subTest(category=key):
+                _, categories, notes = self.load({"categories": {key: "waiting"}})
+                self.assertEqual(categories[key], "waiting")
+                self.assertEqual(notes, [])
+
+    def test_the_hint_decides_for_search_and_memory(self) -> None:
+        """Setting the hint is the only thing that moves those two."""
+        hints, categories, _ = self.load({"hints": {"search": "waiting"}})
+        animator = BolttaguAnimator(started_ms=0, intro=None, hints=hints, categories=categories)
+        animator.apply_hint("search", 0, "search")
+        self.assertEqual(animator.resolve(0), (("waiting", 0),))
 
     def test_a_chosen_category_wins(self) -> None:
         _, categories, notes = self.load({"categories": {"read": "waiting"}})
