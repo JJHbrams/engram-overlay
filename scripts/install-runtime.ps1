@@ -22,6 +22,7 @@
 #>
 param(
     [string]$Overlay = "bolttagu-2d",
+    [switch]$All,
     [string]$Root,
     [ValidateRange(0.2, 4.0)]
     [double]$Scale = 1.0,
@@ -36,6 +37,12 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+if ($All -and $PSBoundParameters.ContainsKey("Overlay")) {
+    throw "-All and -Overlay select different runtime modes; use only one."
+}
+if ($All -and ($EyeEmission -or $Presentation -or $NoFacePointer -or $Scale -ne 1.0)) {
+    throw "-All cannot use single-preset options (-EyeEmission, -Presentation, -NoFacePointer, or -Scale)."
+}
 $repoRoot = Split-Path -Parent $PSScriptRoot
 if (-not $Root) {
     $Root = Join-Path $env:LOCALAPPDATA "engram-overlay"
@@ -188,26 +195,29 @@ if ($List) {
 }
 
 $known = $catalog | ForEach-Object { $_.id }
-if ($known -notcontains $Overlay) {
-    throw "Unknown overlay '$Overlay'. Available: $($known -join ', ')"
-}
-if ($EyeEmission -and $Overlay -notin @("robot-arm-3d-v2", "robot-arm-3d-v3")) {
-    throw "Eye emission is only supported by robot-arm-3d-v2 and robot-arm-3d-v3"
-}
-foreach ($restricted in @(@{ On = $Scale -ne 1.0; Name = "Scale" },
-                          @{ On = [bool]$Presentation; Name = "Presentation" },
-                          @{ On = [bool]$NoFacePointer; Name = "NoFacePointer" })) {
-    if ($restricted.On -and $Overlay -ne "bolttagu-2d") {
-        throw "$($restricted.Name) is only supported by bolttagu-2d"
+if (-not $All) {
+    if ($known -notcontains $Overlay) {
+        throw "Unknown overlay '$Overlay'. Available: $($known -join ', ')"
+    }
+    if ($EyeEmission -and $Overlay -notin @("robot-arm-3d-v2", "robot-arm-3d-v3")) {
+        throw "Eye emission is only supported by robot-arm-3d-v2 and robot-arm-3d-v3"
+    }
+    foreach ($restricted in @(@{ On = $Scale -ne 1.0; Name = "Scale" },
+                              @{ On = [bool]$NoFacePointer; Name = "NoFacePointer" })) {
+        if ($restricted.On -and $Overlay -ne "bolttagu-2d") {
+            throw "$($restricted.Name) is only supported by bolttagu-2d"
+        }
     }
 }
 
-$spec = $catalog | Where-Object { $_.id -eq $Overlay }
-$rendererArgs = @("--overlay", $Overlay)
-if ($EyeEmission) { $rendererArgs += "--eye-emission" }
-if ($NoFacePointer) { $rendererArgs += "--no-face-pointer" }
-if ($Scale -ne 1.0) { $rendererArgs += @("--scale", "$Scale") }
-if ($Presentation) { $rendererArgs += "--presentation" }
+$spec = if ($All) { $null } else { $catalog | Where-Object { $_.id -eq $Overlay } }
+$rendererArgs = if ($All) { @("--provider") } else { @("--overlay", $Overlay) }
+if (-not $All) {
+    if ($EyeEmission) { $rendererArgs += "--eye-emission" }
+    if ($NoFacePointer) { $rendererArgs += "--no-face-pointer" }
+    if ($Scale -ne 1.0) { $rendererArgs += @("--scale", "$Scale") }
+    if ($Presentation) { $rendererArgs += "--presentation" }
+}
 
 $windowedCommand = ('"{0}" {1}' -f $windowedLauncher, ($rendererArgs -join " "))
 $consoleCommand = ('"{0}" {1}' -f $consoleLauncher, ($rendererArgs -join " "))
@@ -228,7 +238,11 @@ if ($Autostart) {
 }
 
 Write-Output ""
-Write-Output "Installed $($spec.Name) ($Overlay)"
+if ($All) {
+    Write-Output "Installed one catalog provider advertising $($catalog.Count) presets"
+} else {
+    Write-Output "Installed $($spec.Name) ($Overlay)"
+}
 Write-Output "  Runtime  : $runtime"
 Write-Output "  Start    : $startScript"
 if ($Autostart) {

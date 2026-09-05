@@ -49,6 +49,14 @@ class V2DocumentationContractTests(unittest.TestCase):
         self.assertIn("전역 입력 지연", content)
         self.assertIn("custom dark nonmodal menu", content)
 
+    def test_catalog_contract_keeps_provider_internals_out_of_engram(self) -> None:
+        content = self.read("docs/event-api-v2.md")
+        for required in ("최대 32개", "renderer_id", "catalog를 보내지 않는", "현재 item의 mode와 capabilities"):
+            with self.subTest(required=required):
+                self.assertIn(required, content)
+        self.assertIn("Engram은", content)
+        self.assertIn("child의 command/path/lifecycle을 전혀 보지 않는다", content)
+
 
 if __name__ == "__main__":
     unittest.main()

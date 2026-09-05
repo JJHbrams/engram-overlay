@@ -42,6 +42,7 @@ class Registration:
     name: str
     supported_modes: tuple[str, ...] = ("observer", "replace")
     capabilities: tuple[str, ...] = ()
+    catalog: tuple[dict[str, object], ...] = ()
 
 
 class Session:
@@ -103,6 +104,7 @@ def connect_once(
                 name=registration.name,
                 supported_modes=registration.supported_modes,
                 capabilities=registration.capabilities,
+                catalog=registration.catalog,
             )
         )
     except OSError:

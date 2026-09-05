@@ -81,6 +81,16 @@ def renderer_id(overlay_id: str) -> str:
     return f"engram.{overlay_id}"
 
 
+def provider_catalog() -> tuple[dict[str, object], ...]:
+    """Bounded v2 catalog preserving every preset's existing renderer ID."""
+    return tuple({
+        "renderer_id": renderer_id(spec.id),
+        "name": spec.name,
+        "supported_modes": ["observer", "replace"],
+        "capabilities": ["overlay.presentation", *(["overlay.set_size"] if spec.id == "bolttagu-2d" else [])],
+    } for spec in overlay_catalog())
+
+
 def overlay_catalog() -> tuple[OverlaySpec, ...]:
     """Every bundled preset, ordered by id."""
     return tuple(OVERLAYS[overlay_id] for overlay_id in overlay_ids())
@@ -115,18 +125,25 @@ def create_overlay(
         raise ValueError(f"unknown overlay: {overlay_id}") from exc
     module = importlib.import_module(spec.module)
     factory = cast(OverlayFactory, getattr(module, spec.factory))
+
+    def finish(runner: OverlayRunner) -> OverlayRunner:
+        if launcher_managed and overlay_id != "bolttagu-2d":
+            enable = getattr(runner, "enable_launcher_management", None)
+            if not callable(enable):
+                raise ValueError(f"launcher-managed presentation is unavailable for {overlay_id}")
+            enable()
+        return runner
+
     if overlay_id in {"robot-arm-3d-v2", "robot-arm-3d-v3"}:
-        return factory(transport, mode, eye_emission=eye_emission)
+        return finish(factory(transport, mode, eye_emission=eye_emission))
     if eye_emission:
         raise ValueError("eye emission is only supported by robot-arm-3d-v2 and robot-arm-3d-v3")
     if overlay_id == "bolttagu-2d":
-        return factory(
+        return finish(factory(
             transport, mode, face_pointer=face_pointer, scale=scale, launcher_managed=launcher_managed
-        )
+        ))
     if not face_pointer:
         raise ValueError("pointer facing is only supported by bolttagu-2d")
     if scale != 1.0:
         raise ValueError("scale is only supported by bolttagu-2d")
-    if launcher_managed:
-        raise ValueError("launcher-managed presentation is only supported by bolttagu-2d")
-    return factory(transport, mode)
+    return finish(factory(transport, mode))

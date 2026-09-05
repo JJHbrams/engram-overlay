@@ -35,6 +35,10 @@ python -m venv .venv
 checkout과 무관하게 사는 런타임을 설치하거나 Windows 시작 시 자동 실행하려면
 `scripts/install-runtime.ps1`을 쓴다. 둘 다 manifest를 만들지 않는다 — v2의 Engram은
 renderer를 실행하지 않으므로 실행 방법을 적어둘 곳이 없다.
+`install-runtime.ps1 -All`은 package와 모든 asset을 독립 runtime에 복사하고 catalog provider 하나를
+실행한다. `-Overlay <id>`는 기존 singleton 개발/호환 경로다. catalog provider가 선택된 preset을 private
+`--v1-stdio --presentation` worker 하나로 바꾸는 것은 renderer package 내부 구현이며 Engram에는 worker
+command, path, asset 또는 lifecycle이 노출되지 않는다.
 접속이 되는지 확인할 때는 `scripts/verify-connection.py`를 쓴다. discovery 읽기·접속·등록까지만 하고
 바로 끊으므로 실행 중인 renderer의 선택을 건드리지 않는다. Engram이 꺼져 있으면 exit 2다.
 

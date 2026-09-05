@@ -11,6 +11,8 @@ import io
 import json
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 from engram_overlay.__main__ import main
 from engram_overlay.registry import (
@@ -19,6 +21,7 @@ from engram_overlay.registry import (
     overlay_catalog,
     overlay_ids,
     renderer_id,
+    create_overlay,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -63,6 +66,24 @@ class CatalogTests(unittest.TestCase):
         """The host keys a selection on this; a collision silently swaps overlays."""
         ids = [renderer_id(overlay_id) for overlay_id in overlay_ids()]
         self.assertEqual(len(ids), len(set(ids)))
+
+    def test_every_generic_preset_can_start_launcher_managed(self) -> None:
+        class Runner:
+            def __init__(self):
+                self.enabled = 0
+
+            def enable_launcher_management(self):
+                self.enabled += 1
+
+        for overlay_id in set(overlay_ids()) - {"bolttagu-2d"}:
+            runner = Runner()
+            module = SimpleNamespace(**{OVERLAYS[overlay_id].factory: lambda *args, **kwargs: runner})
+            with self.subTest(overlay=overlay_id), mock.patch(
+                "engram_overlay.registry.importlib.import_module", return_value=module
+            ):
+                created = create_overlay(overlay_id, mock.Mock(), "replace", launcher_managed=True)
+                self.assertIs(created, runner)
+                self.assertEqual(runner.enabled, 1)
 
 
 class FormatCatalogTests(unittest.TestCase):
@@ -156,6 +177,12 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn("Start-Process -FilePath $windowedLauncher", self.runtime)
         self.assertRegex(self.runtime, r"\[switch\]\$NoStart")
         self.assertNotRegex(self.runtime, r"\[switch\]\$Start\b")
+
+    def test_runtime_all_starts_one_catalog_provider(self) -> None:
+        self.assertRegex(self.runtime, r"\[switch\]\$All")
+        self.assertIn('if ($All) { @("--provider") }', self.runtime)
+        self.assertEqual(self.runtime.count("Start-Process -FilePath $windowedLauncher"), 1)
+        self.assertIn("one catalog provider advertising", self.runtime)
 
     def test_the_runtime_install_stops_a_running_renderer_before_pip(self) -> None:
         """A running renderer holds its own launcher open and Windows refuses to
