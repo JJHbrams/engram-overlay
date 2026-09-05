@@ -92,14 +92,15 @@ def pointer_message(action: str, *, screen_x: int | None = None, screen_y: int |
     return {"schema_version": SCHEMA_VERSION, "type": "pointer.action", "payload": payload}
 
 
-def parse_message(line: str) -> dict[str, Any]:
+def parse_message(line: str, *, schema_version: int = SCHEMA_VERSION) -> dict[str, Any]:
+    """Parse one JSONL line, accepting only the schema the caller speaks."""
     try:
         message = json.loads(line)
     except json.JSONDecodeError as exc:
         raise ProtocolError("invalid JSONL") from exc
     if not isinstance(message, dict):
         raise ProtocolError("message must be a JSON object")
-    if message.get("schema_version") != SCHEMA_VERSION:
+    if message.get("schema_version") != schema_version:
         raise ProtocolError("unsupported schema_version")
     if not isinstance(message.get("type"), str):
         raise ProtocolError("message type must be a string")
@@ -111,11 +112,17 @@ def parse_message(line: str) -> dict[str, Any]:
 
 @dataclass
 class JsonlTransport:
-    """Thread-safe JSONL transport. Protocol data uses stdout; diagnostics use stderr."""
+    """Thread-safe JSONL transport. Protocol data uses stdout; diagnostics use stderr.
+
+    ``schema_version`` is the version this end speaks. A line announcing anything
+    else is not ours to interpret, so it is reported and skipped rather than
+    guessed at -- which is how a v2 host's events looked like noise to a v1 parser.
+    """
 
     reader: IO[str]
     writer: IO[str]
     diagnostics: IO[str]
+    schema_version: int = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
         self._write_lock = threading.Lock()
@@ -135,7 +142,7 @@ class JsonlTransport:
             if not line.strip():
                 continue
             try:
-                yield parse_message(line)
+                yield parse_message(line, schema_version=self.schema_version)
             except ProtocolError as exc:
                 self.log(str(exc))
 
