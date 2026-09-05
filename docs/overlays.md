@@ -80,7 +80,7 @@ python scripts/build-bolttagu-assets.py --pack <sprite-pack-vN>
 어떤 신호에 어떤 동작을 붙일지는 미리보기 페이지에서 고른다.
 
 ```powershell
-python scripts/build-sprite-preview.py --open
+python scripts/build-sprite-preview.py
 ```
 
 `dist/sprite-mapping.html`이 생성된다. 외부 의존이 없는 단일 파일이고, **상단 탭으로 오버레이를 고른다.**

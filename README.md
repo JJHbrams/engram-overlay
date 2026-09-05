@@ -97,7 +97,7 @@ python scripts/verify-engram.py --engram-source <engram-source> --manifest "$HOM
 | `robot-arm-3d-v3` | CCTV | Tk textured software 3D + 2D actors | V2 arm의 gaze를 피해 숨고 엿보는 순례자 실루엣 |
 
 각 preset의 상태 매핑과 애니메이션 세부는 [Overlay preset 상세](docs/overlays.md)에 있다.
-스프라이트 preset의 신호별 동작은 `python scripts/build-sprite-preview.py --open`으로 띄우는
+스프라이트 preset의 신호별 동작은 `python scripts/build-sprite-preview.py`로 띄우는
 미리보기 페이지에서 탭으로 오버레이를 고르고 `mapping.json`으로 내보낼 수 있다.
 
 ## API 핵심
