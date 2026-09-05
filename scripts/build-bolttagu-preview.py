@@ -32,12 +32,15 @@ from engram_overlay.overlays.bolttagu_2d import (  # noqa: E402
     CATEGORY_POSES,
     CLIPS,
     EYE_CELLS,
+    HINT_ONESHOTS,
     IDLE_POSE,
     MAPPING_FILE,
     STATE_POSES,
     STEAM_CELLS,
     STEAM_FRAME_MS,
     installed_mapping_path,
+    selectable_oneshots,
+    selectable_poses,
 )
 from engram_overlay.protocol import TOOL_CATEGORIES  # noqa: E402
 
@@ -77,11 +80,6 @@ def data_uri(path: Path) -> str:
     return "data:image/png;base64," + base64.b64encode(path.read_bytes()).decode("ascii")
 
 
-def selectable_poses() -> list[str]:
-    """Only poses that can hold a state: idle plus the looping clips."""
-    return [IDLE_POSE] + sorted(name for name, clip in CLIPS.items() if clip.loop)
-
-
 def build_payload() -> dict[str, object]:
     metadata = json.loads((ASSET_DIR / "atlas.json").read_text(encoding="utf-8"))
     sheets: dict[str, dict[str, object]] = {}
@@ -105,8 +103,14 @@ def build_payload() -> dict[str, object]:
             "steamFrameMs": STEAM_FRAME_MS,
         },
         "poses": selectable_poses(),
+        "oneshots": selectable_oneshots(),
         "hints": [
-            {"key": key, "note": HINT_NOTES.get(key, ""), "default": STATE_POSES[key]}
+            {
+                "key": key,
+                "note": HINT_NOTES.get(key, ""),
+                "default": STATE_POSES[key],
+                "defaultOneshot": HINT_ONESHOTS.get(key, ""),
+            }
             for key in HINT_ORDER
         ],
         "categories": [
@@ -194,11 +198,12 @@ TEMPLATE = """<!doctype html>
 
   <h2>동작</h2>
   <div class="poses" id="poses"></div>
-  <p class="hint">점선 테두리는 한 번만 재생되는 전환 동작이라 신호에 붙일 수 없다. 등장·퇴장은 런처가, 완료는 턴 종료가 재생한다.</p>
+  <p class="hint">점선 테두리는 한 번만 재생되는 동작이다. 등장·퇴장은 런처가 소유하므로 신호에 붙일 수 없고, 나머지는 아래 표의 <b>1회 재생</b>에서 고른다.</p>
 
   <h2>display hint</h2>
+  <p class="hint" style="margin:-.5rem 0 1rem">신호마다 두 층이 있다. <b>지속 동작</b>은 그 상태에 머무는 동안 반복되고, <b>1회 재생</b>은 신호에 진입할 때 그 위로 한 번 얹힌 뒤 지속 동작으로 가라앉는다.</p>
   <table>
-    <thead><tr><th>신호</th><th>의미</th><th>동작</th><th></th></tr></thead>
+    <thead><tr><th>신호</th><th>의미</th><th>지속 동작</th><th></th><th>1회 재생</th><th></th></tr></thead>
     <tbody id="hints"></tbody>
   </table>
 
@@ -226,8 +231,9 @@ TEMPLATE = """<!doctype html>
 const D = JSON.parse(document.getElementById("payload").textContent);
 const [CW, CH] = D.cell;
 const images = {};
-const choice = {hints:{}, categories:{}};
-D.hints.forEach(h => choice.hints[h.key] = h.default);
+const choice = {hints:{}, categories:{}, oneshots:{}};
+D.hints.forEach(h => { choice.hints[h.key] = h.default;
+                       if (h.defaultOneshot) choice.oneshots[h.key] = h.defaultOneshot; });
 D.categories.forEach(c => choice.categories[c.key] = c.default || "");
 
 document.getElementById("prov").textContent =
@@ -324,20 +330,25 @@ D.categories.forEach(c => resetters.push(row(document.getElementById("cats"), c,
 /* ---- export ---- */
 function payload(){
   const doc = {version:1};
-  const hints = {}, cats = {};
-  D.hints.forEach(h => { if (choice.hints[h.key] !== h.default) hints[h.key] = choice.hints[h.key]; });
+  const hints = {}, cats = {}, ones = {};
+  D.hints.forEach(h => {
+    if (choice.hints[h.key] !== h.default) hints[h.key] = choice.hints[h.key];
+    const now = choice.oneshots[h.key] || "";
+    if (now !== (h.defaultOneshot || "")) ones[h.key] = now || null;
+  });
   D.categories.forEach(c => { if (choice.categories[c.key] !== (c.default || "")) {
     if (choice.categories[c.key]) cats[c.key] = choice.categories[c.key];
   }});
   if (Object.keys(hints).length) doc.hints = hints;
   if (Object.keys(cats).length) doc.categories = cats;
+  if (Object.keys(ones).length) doc.oneshots = ones;
   return doc;
 }
 const out = document.getElementById("out");
 const said = document.getElementById("said");
 function emit(){
   const doc = payload();
-  out.value = (doc.hints || doc.categories)
+  out.value = (doc.hints || doc.categories || doc.oneshots)
     ? JSON.stringify(doc, null, 2)
     : "// 기본값 그대로다. 바꾼 항목이 없으면 파일을 둘 필요가 없다.";
   said.textContent = "";
