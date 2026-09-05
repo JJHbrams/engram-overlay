@@ -408,6 +408,7 @@ class Bolttagu2dView:
             categories=categories,
         )
         self.mirrored = False
+        self._pointer_frozen = False
         self.canvas: tk.Canvas | None = None
         self.image_id: int | None = None
         self.photo: ImageTk.PhotoImage | None = None
@@ -445,13 +446,20 @@ class Bolttagu2dView:
         return self.width, self.height
 
     def begin_enter(self) -> int:
+        self._pointer_frozen = False
         return self.animator.play_lifecycle("enter", self._now_ms())
 
     def begin_exit(self) -> int:
-        return self.animator.play_lifecycle("exit", self._now_ms(), hold_last=True)
+        now_ms = self._now_ms()
+        # Freeze orientation before starting or drawing the farewell so a late
+        # pointer sample cannot flip any of its three frames.
+        self._pointer_frozen = True
+        hold_ms = self.animator.play_lifecycle("exit", now_ms, hold_last=True)
+        self._redraw((self.animator.resolve(now_ms), self.mirrored))
+        return hold_ms
 
     def tick(self, pointer_x: int, pointer_y: int, window_x: int, window_y: int) -> None:
-        if self.face_pointer:
+        if self.face_pointer and not self._pointer_frozen:
             self.mirrored = facing_mirrored(pointer_x, window_x, self.width, current=self.mirrored)
         self._redraw((self.animator.resolve(self._now_ms()), self.mirrored))
 

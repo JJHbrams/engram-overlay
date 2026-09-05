@@ -1,6 +1,7 @@
 import json
 import random
 import unittest
+from unittest.mock import Mock
 
 from engram_overlay.overlays import bolttagu_2d
 from engram_overlay.overlays.bolttagu_2d import (
@@ -489,6 +490,21 @@ class ViewTests(unittest.TestCase):
         view = self.view()
         self.assertEqual((view.width, view.height), (270, 302))
         self.assertIsNone(view.drawn)
+
+    def test_exit_freezes_facing_draws_frame_zero_and_show_reenables_pointer(self) -> None:
+        view = self.view(launcher_managed=True)
+        view.mirrored = True
+        view._now_ms = Mock(return_value=1_000)
+        view._redraw = Mock()
+
+        self.assertEqual(view.begin_exit(), sum((220, 220, 260)))
+        view._redraw.assert_called_once_with(((("exit", 0),), True))
+        view.tick(-1_000, 0, 0, 0)
+        self.assertTrue(view.mirrored)
+
+        self.assertEqual(view.begin_enter(), 720)
+        view.tick(-1_000, 0, 0, 0)
+        self.assertFalse(view.mirrored)
 
     def test_idle_frame_composites_steam_over_the_blink_layer(self) -> None:
         view = self.view()
