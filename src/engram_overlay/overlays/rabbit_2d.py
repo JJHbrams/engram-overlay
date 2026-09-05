@@ -209,8 +209,6 @@ class Rabbit2DView:
         self.current_frame = frame
         self.photo = ImageTk.PhotoImage(self.frames[frame], master=self.canvas)
         self.canvas.itemconfigure(self.image_id, image=self.photo)
-        if len(self.choices) > 12:
-            self.choices = {key: value for key, value in self.choices.items() if key[1] >= bucket - 1}
 
 
 def create_rabbit_2d(transport: JsonlTransport, mode: str) -> TkOverlayHost:
