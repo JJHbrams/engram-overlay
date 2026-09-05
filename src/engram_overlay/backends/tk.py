@@ -67,7 +67,11 @@ class TkOverlayHost:
         self.view.mount(self.canvas)
         self._drag_origin: tuple[int, int, int, int] | None = None
         # Engram's launcher owns presentation when the renderer starts collapsed.
+        # "visible" is the presentation Engram asked for; "_mapped" is whether the
+        # window is actually on screen. They differ for the length of a transition,
+        # which is exactly when the enter and exit frames still have to be drawn.
         self.visible = not start_hidden
+        self._mapped = not start_hidden
         self._show_after: str | None = None
         self._dismiss_after: str | None = None
         if start_hidden:
@@ -78,7 +82,7 @@ class TkOverlayHost:
         threading.Thread(target=self._read_messages, name="engram-jsonl-reader", daemon=True).start()
         # Geometry is optional for a passive observer.  Interactive observers
         # emit it so Engram can use this window as a transient bubble anchor.
-        if self.visible:
+        if self._mapped:
             self.root.after_idle(self._send_geometry)
         self.root.after(20, self._drain_messages)
         self.root.after(self.FRAME_MS, self._tick)
@@ -143,6 +147,7 @@ class TkOverlayHost:
             self.root.after_cancel(self._dismiss_after)
             self._dismiss_after = None
         if visible:
+            self._mapped = True
             self.root.deiconify()
             self.root.attributes("-topmost", True)
             hold_ms = self._begin("begin_enter")
@@ -174,6 +179,7 @@ class TkOverlayHost:
         self._dismiss_after = None
         if self.visible:
             return
+        self._mapped = False
         self.root.withdraw()
         self.transport.send(visibility_message(False))
 
@@ -186,8 +192,9 @@ class TkOverlayHost:
         self.transport.send(visibility_message(True))
 
     def _tick(self) -> None:
-        # A collapsed window has nothing to redraw; the launcher icon is Engram's.
-        if self.visible:
+        # Redraw whenever the window is on screen, not merely while Engram wants it
+        # shown: the farewell plays after the hide request and must still be drawn.
+        if self._mapped:
             pointer_x, pointer_y = self.root.winfo_pointerxy()
             self.view.tick(pointer_x, pointer_y, self.root.winfo_x(), self.root.winfo_y())
         self.root.after(self.FRAME_MS, self._tick)

@@ -120,6 +120,7 @@ class TkOverlayHostPresentationTests(unittest.TestCase):
         host.view.begin_enter.return_value = enter_ms
         host.view.begin_exit.return_value = exit_ms
         host.visible = not start_hidden
+        host._mapped = not start_hidden
         host._show_after = None
         host._dismiss_after = None
         host._drag_origin = None
@@ -229,6 +230,36 @@ class TkOverlayHostPresentationTests(unittest.TestCase):
         host._apply_presentation(False)
         host.transport.log.assert_called_once()
         host.root.withdraw.assert_called_once()
+
+    def test_the_farewell_keeps_being_drawn_after_the_hide_request(self):
+        """Regression: gating the redraw on the requested presentation stopped the
+        redraw the instant hide arrived, so the exit sprite was never drawn at all --
+        the window simply froze on its last frame and then vanished."""
+        host = self._host(start_hidden=False)
+        host.FRAME_MS = 16
+        host.root.winfo_pointerxy.return_value = (5, 6)
+
+        host._apply_presentation(False)
+        self.assertFalse(host.visible)   # Engram no longer wants it shown ...
+        self.assertTrue(host._mapped)    # ... but it is still on screen.
+
+        host._tick()
+        host.view.tick.assert_called_once()
+
+        host._finish_dismiss()
+        self.assertFalse(host._mapped)
+        host.view.tick.reset_mock()
+        host._tick()
+        host.view.tick.assert_not_called()
+
+    def test_the_arrival_is_drawn_from_its_first_frame(self):
+        host = self._host()
+        host.FRAME_MS = 16
+        host.root.winfo_pointerxy.return_value = (5, 6)
+        host._apply_presentation(True)
+        self.assertTrue(host._mapped)
+        host._tick()
+        host.view.tick.assert_called_once()
 
     def test_collapsed_window_is_not_redrawn(self):
         host = self._host()

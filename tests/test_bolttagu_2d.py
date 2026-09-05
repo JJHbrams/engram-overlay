@@ -381,6 +381,28 @@ class AnimatorTests(unittest.TestCase):
         self.assertEqual(animator.play_lifecycle("enter", 0), 720)
         self.assertEqual(animator.play_lifecycle("exit", 0), 700)
 
+    def test_the_farewell_holds_its_last_frame(self) -> None:
+        """The character has left; snapping back to idle before the window closes
+        shows it returning for a single frame."""
+        animator = self.animator()
+        animator.play_lifecycle("exit", 0, hold_last=True)
+        self.assertEqual(animator.resolve(690), (("exit", 2),))
+        self.assertEqual(animator.resolve(700), (("exit", 2),))
+        self.assertEqual(animator.resolve(5_000), (("exit", 2),))
+
+    def test_the_arrival_does_not_hold(self) -> None:
+        animator = self.animator()
+        animator.play_lifecycle("enter", 0)
+        self.assertEqual(animator.resolve(800)[0][0], "idle")
+
+    def test_a_hint_release_the_held_farewell(self) -> None:
+        animator = self.animator()
+        animator.play_lifecycle("exit", 0, hold_last=True)
+        self.assertEqual(animator.resolve(5_000), (("exit", 2),))
+        animator.apply_hint("thought", 5_000)
+        self.assertFalse(animator.oneshot_holds)
+        self.assertEqual(animator.resolve(5_000)[0][0], "wondering")
+
     def test_lifecycle_rejects_an_unknown_clip(self) -> None:
         with self.assertRaises(ValueError):
             self.animator().play_lifecycle("pirouette", 0)

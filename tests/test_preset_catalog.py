@@ -117,6 +117,11 @@ class InstallScriptTests(unittest.TestCase):
         self.assertRegex(self.source, r"\[switch\]\$All")
         self.assertRegex(self.source, r"\[switch\]\$List")
 
+    def test_script_can_install_the_presentation_flag(self) -> None:
+        """Without this there is no supported way to opt into Engram's launcher."""
+        self.assertRegex(self.source, r"\[switch\]\$Presentation")
+        self.assertIn('"--presentation"', self.source)
+
 
 if __name__ == "__main__":
     unittest.main()
