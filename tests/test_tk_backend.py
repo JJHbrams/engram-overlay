@@ -120,6 +120,7 @@ class TkOverlayHostPresentationTests(unittest.TestCase):
         host.view.begin_enter.return_value = enter_ms
         host.view.begin_exit.return_value = exit_ms
         host.visible = not start_hidden
+        host._show_after = None
         host._dismiss_after = None
         host._drag_origin = None
         return host
@@ -127,18 +128,29 @@ class TkOverlayHostPresentationTests(unittest.TestCase):
     def _sent(self, host):
         return [call.args[0] for call in host.transport.send.call_args_list]
 
-    def test_show_deiconifies_then_plays_the_arrival(self):
+    def test_show_acks_only_after_the_arrival_finishes(self):
         host = self._host()
         host._apply_presentation(True)
         host.root.deiconify.assert_called_once()
         host.view.begin_enter.assert_called_once()
         self.assertTrue(host.visible)
-        # Engram needs the geometry to anchor a bubble; a collapsed renderer
-        # never reported any.
+        # The documented show order is deiconify -> enter -> geometry -> ack.
+        self.assertEqual(self._sent(host), [])
+        host.root.after.assert_called_once_with(720, host._finish_show)
+
+        host._finish_show()
         sent = self._sent(host)
-        self.assertEqual([m["type"] for m in sent],
-                         ["overlay.geometry_changed", "overlay.visibility_changed"])
+        self.assertEqual([m["type"] for m in sent], ["overlay.geometry_changed", "overlay.visibility_changed"])
         self.assertEqual(sent[-1]["payload"], {"visible": True})
+
+    def test_show_without_an_arrival_hook_acks_immediately(self):
+        host = self._host()
+        host.view = Mock(spec=[])
+
+        host._apply_presentation(True)
+
+        self.assertEqual([message["type"] for message in self._sent(host)],
+                         ["overlay.geometry_changed", "overlay.visibility_changed"])
 
     def test_hide_withdraws_only_after_the_farewell_finishes(self):
         host = self._host(start_hidden=False)
@@ -177,6 +189,32 @@ class TkOverlayHostPresentationTests(unittest.TestCase):
         host.root.withdraw.assert_not_called()
         host.view.begin_enter.assert_called_once()
         self.assertTrue(host.visible)
+
+    def test_hide_during_a_running_show_cancels_its_true_ack(self):
+        host = self._host()
+        host._apply_presentation(True)
+        pending = host._show_after
+        self.assertIsNotNone(pending)
+
+        host._apply_presentation(False)
+
+        host.root.after_cancel.assert_called_once_with(pending)
+        self.assertIsNone(host._show_after)
+        self.assertEqual(self._sent(host), [])
+        # A stale Tk callback must be harmless even if cancellation races it.
+        host._finish_show()
+        self.assertEqual(self._sent(host), [])
+
+    def test_redundant_show_during_arrival_does_not_schedule_or_ack_twice(self):
+        host = self._host()
+        host._apply_presentation(True)
+        pending = host._show_after
+
+        host._apply_presentation(True)
+
+        self.assertEqual(host._show_after, pending)
+        host.root.after.assert_called_once_with(720, host._finish_show)
+        self.assertEqual(self._sent(host), [])
 
     def test_a_view_without_transition_hooks_still_collapses(self):
         host = self._host(start_hidden=False)
