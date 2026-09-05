@@ -28,6 +28,7 @@ git checkout v1.1.0.89
 .\scripts\install-dev.ps1 -List               # 목록만 보기
 .\scripts\install-dev.ps1 -Overlay rabbit-2d  # 하나만 등록
 .\scripts\install-dev.ps1 -All                # 전부 등록
+python scripts/build-sprite-preview.py         # 신호별 동작 고르기
 ```
 
 - manifest 위치는 `%USERPROFILE%\.engram\overlays\<id>\manifest.yaml`이다.
@@ -37,6 +38,11 @@ git checkout v1.1.0.89
 - `-All`은 overlay별 옵션과 같이 못 쓴다. 그 옵션이 필요한 preset은 따로 등록한다.
 - 설치 없이 목록만 보려면 `engram-custom-overlay --list-overlays`.
 - preset 목록의 단일 출처는 `engram_overlay.registry`다. overlay를 추가해도 스크립트는 손대지 않는다.
+
+`build-sprite-preview.py`는 스프라이트 preset에만 해당한다. localhost에 미리보기 페이지를 띄우고 브라우저를 연다.
+상단 탭으로 오버레이를 고르면 각 동작이 실제 타이밍으로 재생되고, 어떤 신호에 무엇을 붙일지 눈으로
+고를 수 있다. **바로 적용**을 누르면 그 오버레이의 `mapping.json`에 곧바로 쓴다. 코드 수정은 필요 없고,
+자세한 규칙은 [Overlay preset 상세](docs/overlays.md)에 있다.
 
 manifest 형태:
 
@@ -97,8 +103,6 @@ python scripts/verify-engram.py --engram-source <engram-source> --manifest "$HOM
 | `robot-arm-3d-v3` | CCTV | Tk textured software 3D + 2D actors | V2 arm의 gaze를 피해 숨고 엿보는 순례자 실루엣 |
 
 각 preset의 상태 매핑과 애니메이션 세부는 [Overlay preset 상세](docs/overlays.md)에 있다.
-스프라이트 preset의 신호별 동작은 `python scripts/build-sprite-preview.py`로 띄우는
-미리보기 페이지에서 탭으로 오버레이를 고르고 `mapping.json`으로 내보낼 수 있다.
 
 ## API 핵심
 
