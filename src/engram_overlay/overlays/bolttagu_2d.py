@@ -18,11 +18,12 @@ import time
 import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from PIL import Image, ImageTk
 
 from ..backends.tk import TkOverlayHost
-from ..protocol import JsonlTransport
+from ..protocol import TOOL_CATEGORIES, JsonlTransport
 from ..state import OverlayState
 
 TRANSPARENT = "#010203"
@@ -129,12 +130,73 @@ CATEGORY_POSES: dict[str, str] = {
 HINT_ONESHOTS: dict[str, str] = {"success": "success"}
 
 
-def pose_for(hint: str, category: str | None) -> str:
+# Chosen in scripts/build-bolttagu-preview.py and dropped next to the installed
+# manifest, so retuning which animation means what needs no code change.
+MAPPING_FILE = "mapping.json"
+
+
+def installed_mapping_path() -> Path:
+    return Path.home() / ".engram" / "overlays" / "bolttagu-2d" / MAPPING_FILE
+
+
+def _valid_pose(pose: object) -> bool:
+    return pose == IDLE_POSE or (isinstance(pose, str) and pose in CLIPS and CLIPS[pose].loop)
+
+
+def load_mapping(
+    path: Path | None = None, *, log: Callable[[str], None] | None = None
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Merge a user mapping over the defaults, dropping anything that cannot be drawn.
+
+    A bad file must never stop the renderer, so every rejected entry is reported and
+    the built-in default is kept for it.
+    """
+    hints, categories = dict(STATE_POSES), dict(CATEGORY_POSES)
+    path = path or installed_mapping_path()
+    if not path.is_file():
+        return hints, categories
+    note = log or (lambda message: None)
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        note(f"{MAPPING_FILE} ignored: {exc}")
+        return hints, categories
+    if not isinstance(document, dict):
+        note(f"{MAPPING_FILE} ignored: top level must be an object")
+        return hints, categories
+    for section, target, allowed in (
+        ("hints", hints, set(STATE_POSES)),
+        ("categories", categories, set(TOOL_CATEGORIES)),
+    ):
+        entries = document.get(section)
+        if entries is None:
+            continue
+        if not isinstance(entries, dict):
+            note(f"{MAPPING_FILE}: {section} must be an object")
+            continue
+        for key, pose in entries.items():
+            if key not in allowed:
+                note(f"{MAPPING_FILE}: unknown {section[:-1]} {key!r}")
+            elif not _valid_pose(pose):
+                note(f"{MAPPING_FILE}: {key!r} maps to unusable pose {pose!r}")
+            else:
+                target[key] = pose
+    return hints, categories
+
+
+def pose_for(
+    hint: str,
+    category: str | None,
+    hints: dict[str, str] | None = None,
+    categories: dict[str, str] | None = None,
+) -> str:
     """Pose for one hint, refined by the tool category when Engram supplied one."""
-    resolved = hint if hint in STATE_POSES else "idle"
-    if resolved == "generating" and category in CATEGORY_POSES:
-        return CATEGORY_POSES[category]
-    return STATE_POSES[resolved]
+    hints = STATE_POSES if hints is None else hints
+    categories = CATEGORY_POSES if categories is None else categories
+    resolved = hint if hint in hints else "idle"
+    if resolved == "generating" and category in categories:
+        return categories[category]
+    return hints[resolved]
 
 
 def clip_cell(clip: Clip, elapsed_ms: int) -> int | None:
@@ -223,9 +285,13 @@ class BolttaguAnimator:
         started_ms: int = 0,
         intro: str | None = "enter",
         rng: random.Random | None = None,
+        hints: dict[str, str] | None = None,
+        categories: dict[str, str] | None = None,
     ) -> None:
         if intro is not None and intro not in CLIPS:
             raise ValueError(f"unknown intro clip: {intro}")
+        self.hints = STATE_POSES if hints is None else hints
+        self.categories = CATEGORY_POSES if categories is None else categories
         self.display_hint = "idle"
         self.tool_category: str | None = None
         self.state_started_ms = started_ms
@@ -238,7 +304,7 @@ class BolttaguAnimator:
 
     @property
     def pose(self) -> str:
-        return pose_for(self.display_hint, self.tool_category)
+        return pose_for(self.display_hint, self.tool_category, self.hints, self.categories)
 
     def play_lifecycle(self, clip: str, now_ms: int, *, hold_last: bool = False) -> int:
         """Start a show/hide transition, overriding any hint one-shot in flight."""
@@ -250,7 +316,7 @@ class BolttaguAnimator:
         return CLIPS[clip].total_ms
 
     def apply_hint(self, hint: str, now_ms: int, category: str | None = None) -> None:
-        resolved = hint if hint in STATE_POSES else "idle"
+        resolved = hint if hint in self.hints else "idle"
         if (resolved, category) == (self.display_hint, self.tool_category):
             return
         was_idle = self.pose == IDLE_POSE
@@ -319,7 +385,10 @@ class Bolttagu2dView:
         show_floor: bool = False,
         coffee: bool = True,
         rng: random.Random | None = None,
+        mapping_path: Path | None = None,
+        log: Callable[[str], None] | None = None,
     ) -> None:
+        hints, categories = load_mapping(mapping_path, log=log)
         sheets, cell = load_atlas()
         self.cell = cell
         self.scale = scale
@@ -335,6 +404,8 @@ class Bolttagu2dView:
             started_ms=self._now_ms(),
             intro=None if launcher_managed else "enter",
             rng=rng,
+            hints=hints,
+            categories=categories,
         )
         self.mirrored = False
         self.canvas: tk.Canvas | None = None
@@ -404,7 +475,12 @@ def create_bolttagu_2d(
     scale: float = 1.0,
     launcher_managed: bool = False,
 ) -> TkOverlayHost:
-    view = Bolttagu2dView(face_pointer=face_pointer, scale=scale, launcher_managed=launcher_managed)
+    view = Bolttagu2dView(
+        face_pointer=face_pointer,
+        scale=scale,
+        launcher_managed=launcher_managed,
+        log=transport.log,
+    )
     return TkOverlayHost(
         transport, view, mode=mode, title="Bolttagu", start_hidden=launcher_managed
     )

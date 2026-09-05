@@ -1,0 +1,110 @@
+import json, tempfile, unittest
+from pathlib import Path
+
+from engram_overlay.overlays.bolttagu_2d import (
+    CATEGORY_POSES,
+    CLIPS,
+    IDLE_POSE,
+    STATE_POSES,
+    BolttaguAnimator,
+    load_mapping,
+    pose_for,
+)
+
+
+class MappingOverrideTests(unittest.TestCase):
+    """A user-chosen mapping must be honoured, and a bad one must never bite."""
+
+    def write(self, document: object) -> Path:
+        path = Path(tempfile.mkdtemp()) / "mapping.json"
+        path.write_text(
+            document if isinstance(document, str) else json.dumps(document), encoding="utf-8"
+        )
+        return path
+
+    def load(self, document: object) -> tuple[dict[str, str], dict[str, str], list[str]]:
+        notes: list[str] = []
+        hints, categories = load_mapping(self.write(document), log=notes.append)
+        return hints, categories, notes
+
+    def test_absent_file_keeps_the_defaults(self) -> None:
+        hints, categories = load_mapping(Path(tempfile.mkdtemp()) / "nope.json")
+        self.assertEqual(hints, STATE_POSES)
+        self.assertEqual(categories, CATEGORY_POSES)
+
+    def test_a_chosen_hint_wins(self) -> None:
+        hints, _, notes = self.load({"hints": {"input": "wondering"}})
+        self.assertEqual(hints["input"], "wondering")
+        self.assertEqual(notes, [])
+
+    def test_untouched_entries_keep_their_default(self) -> None:
+        hints, categories, _ = self.load({"hints": {"input": "wondering"}})
+        self.assertEqual(hints["search"], STATE_POSES["search"])
+        self.assertEqual(categories, CATEGORY_POSES)
+
+    def test_a_chosen_category_wins(self) -> None:
+        _, categories, notes = self.load({"categories": {"read": "waiting"}})
+        self.assertEqual(categories["read"], "waiting")
+        self.assertEqual(notes, [])
+
+    def test_idle_is_a_selectable_pose(self) -> None:
+        hints, _, notes = self.load({"hints": {"error": "idle"}})
+        self.assertEqual(hints["error"], "idle")
+        self.assertEqual(notes, [])
+
+    def test_a_one_shot_cannot_back_a_hint(self) -> None:
+        """enter/exit/success are transitions; a hint needs something that loops."""
+        for pose in ("enter", "exit", "success"):
+            with self.subTest(pose=pose):
+                hints, _, notes = self.load({"hints": {"idle": pose}})
+                self.assertEqual(hints["idle"], STATE_POSES["idle"])
+                self.assertTrue(notes)
+
+    def test_unknown_names_are_reported_and_dropped(self) -> None:
+        hints, categories, notes = self.load(
+            {"hints": {"teleporting": "idle", "idle": "nonsense"}, "categories": {"bogus": "idle"}}
+        )
+        self.assertEqual(hints, STATE_POSES)
+        self.assertEqual(categories, CATEGORY_POSES)
+        self.assertEqual(len(notes), 3)
+
+    def test_broken_json_falls_back_without_raising(self) -> None:
+        hints, categories, notes = self.load("{ not json")
+        self.assertEqual(hints, STATE_POSES)
+        self.assertEqual(categories, CATEGORY_POSES)
+        self.assertTrue(notes)
+
+    def test_wrong_shapes_fall_back(self) -> None:
+        for document in ([1, 2], {"hints": "listening"}):
+            with self.subTest(document=document):
+                hints, _, notes = self.load(document)
+                self.assertEqual(hints, STATE_POSES)
+                self.assertTrue(notes)
+
+    def test_the_animator_draws_the_chosen_pose(self) -> None:
+        hints, categories, _ = self.load(
+            {"hints": {"input": "wondering"}, "categories": {"write": "searching"}}
+        )
+        animator = BolttaguAnimator(started_ms=0, intro=None, hints=hints, categories=categories)
+        animator.apply_hint("input", 0)
+        self.assertEqual(animator.resolve(0), (("wondering", 0),))
+        animator.apply_hint("generating", 0, "write")
+        self.assertEqual(animator.resolve(0), (("searching", 0),))
+
+    def test_every_pose_the_picker_offers_is_accepted(self) -> None:
+        """The preview page lists idle plus the looping clips; all must load."""
+        offered = [IDLE_POSE] + [name for name, clip in CLIPS.items() if clip.loop]
+        hints, _, notes = self.load({"hints": {"idle": pose} for pose in offered[:1]})
+        self.assertEqual(notes, [])
+        for pose in offered:
+            with self.subTest(pose=pose):
+                hints, _, notes = self.load({"hints": {"thought": pose}})
+                self.assertEqual(hints["thought"], pose)
+                self.assertEqual(notes, [])
+
+    def test_pose_for_defaults_to_the_built_in_tables(self) -> None:
+        self.assertEqual(pose_for("search", None), STATE_POSES["search"])
+
+
+if __name__ == "__main__":
+    unittest.main()
