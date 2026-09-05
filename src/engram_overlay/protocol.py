@@ -27,6 +27,7 @@ DISPLAY_HINTS = frozenset(
 # Engram's launcher icon owns whether the character is on screen. A renderer that
 # advertises this capability starts collapsed and is shown or hidden by the host;
 # one that does not keeps the always-visible behaviour.
+MODES = frozenset({"observer", "replace"})
 PRESENTATION_CAPABILITY = "overlay.presentation"
 SHOW_MESSAGE = "overlay.show"
 HIDE_MESSAGE = "overlay.hide"

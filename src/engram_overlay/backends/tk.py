@@ -48,6 +48,8 @@ class TkOverlayHost:
     ) -> None:
         self.transport = transport
         self.view = view
+        # v1 passed the mode in; v2 assigns it and can change it while running, so
+        # this is only the starting value until the host says otherwise.
         self.mode = mode
         self.state = OverlayState()
         self.inbox: queue.Queue[dict[str, Any] | None] = queue.Queue()
@@ -120,6 +122,8 @@ class TkOverlayHost:
                 self.root.destroy()
                 return
             self.state.apply(message)
+            if self.state.mode is not None and self.state.mode != self.mode:
+                self._apply_mode(self.state.mode)
             if self.state.x is not None and self.state.y is not None:
                 # Local pointer motion is newer than queued host echoes.  Let
                 # drag_end reconcile the final authoritative position.
@@ -140,6 +144,20 @@ class TkOverlayHost:
                 self._apply_presentation(self.state.presentation == "shown")
                 self.state.presentation = None
         self.root.after(20, self._drain_messages)
+
+    def _apply_mode(self, mode: str) -> None:
+        """Take an assignment from the host.
+
+        Losing replace means this renderer no longer owns the bundled window's
+        position, so any in-flight drag is abandoned rather than reported against
+        geometry that is no longer ours.
+        """
+        self.mode = mode
+        self._drag_origin = None
+        self._drag_sent_ms = None
+        if self.visible:
+            # The host recomputes anchors on assignment; tell it where we are.
+            self._send_geometry()
 
     def _apply_presentation(self, visible: bool) -> None:
         """Show or collapse the window, letting the view animate the transition."""
