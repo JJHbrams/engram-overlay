@@ -164,3 +164,75 @@ class GeneratorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HiddenSectionTests(unittest.TestCase):
+    """A section can be loadable without being offered in the picker."""
+
+    def test_bolttagu_keeps_its_flourish_out_of_the_picker(self) -> None:
+        sprite_map = next(m for m in sprite_maps() if m.overlay_id == "bolttagu-2d")
+        hidden = [s for s in sprite_map.sections if s.hidden]
+        self.assertEqual([s.key for s in hidden], ["oneshots"])
+
+    def test_a_hidden_section_still_resolves(self) -> None:
+        from engram_overlay.overlays.bolttagu_2d import HINT_ONESHOTS, load_mapping
+
+        missing = Path(tempfile.mkdtemp()) / "none.json"
+        self.assertEqual(load_mapping(missing).oneshots, HINT_ONESHOTS)
+
+    def test_a_hidden_section_is_still_accepted_from_the_file(self) -> None:
+        from engram_overlay.overlays.bolttagu_2d import load_mapping
+
+        path = Path(tempfile.mkdtemp()) / "mapping.json"
+        path.write_text(json.dumps({"version": 1, "oneshots": {"click": "success"}}), encoding="utf-8")
+        notes: list[str] = []
+        self.assertEqual(load_mapping(path, log=notes.append).oneshots["click"], "success")
+        self.assertEqual(notes, [])
+
+
+class GeneratorPayloadTests(unittest.TestCase):
+    """The page is seeded from what is installed, and hidden sections stay out."""
+
+    def setUp(self) -> None:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "gen", REPO_ROOT / "scripts" / "build-sprite-preview.py"
+        )
+        self.gen = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.gen)
+
+    def test_hidden_sections_are_not_described(self) -> None:
+        sprite_map = next(m for m in sprite_maps() if m.overlay_id == "bolttagu-2d")
+        described = {s["key"] for s in self.gen.describe(sprite_map)["sections"]}
+        self.assertNotIn("oneshots", described)
+        self.assertIn("hints", described)
+
+    def test_every_row_carries_both_default_and_current(self) -> None:
+        for sprite_map in sprite_maps():
+            payload = self.gen.describe(sprite_map)
+            for section in payload["sections"]:
+                for row in section["rows"]:
+                    with self.subTest(overlay=sprite_map.overlay_id, row=row["key"]):
+                        self.assertIn("default", row)
+                        self.assertIn("current", row)
+
+    def test_current_follows_an_installed_mapping(self) -> None:
+        """Reopening the picker must show the choices in force, not the defaults."""
+        sprite_map = next(m for m in sprite_maps() if m.overlay_id == "bolttagu-2d")
+        chosen = Path(tempfile.mkdtemp()) / "mapping.json"
+        chosen.write_text(json.dumps({"version": 1, "hints": {"thought": "waiting"}}), encoding="utf-8")
+        payload = self.gen.describe(sprite_map, chosen)
+        hints = next(s for s in payload["sections"] if s["key"] == "hints")
+        row = next(r for r in hints["rows"] if r["key"] == "thought")
+        self.assertEqual(row["default"], ["wondering"])
+        self.assertEqual(row["current"], ["waiting"])
+        self.assertTrue(payload["hasMapping"])
+
+    def test_no_installed_mapping_leaves_current_at_the_defaults(self) -> None:
+        sprite_map = sprite_maps()[0]
+        payload = self.gen.describe(sprite_map, Path(tempfile.mkdtemp()) / "none.json")
+        self.assertFalse(payload["hasMapping"])
+        for section in payload["sections"]:
+            for row in section["rows"]:
+                self.assertEqual(row["current"], row["default"])
