@@ -15,6 +15,7 @@ from ..protocol import JsonlTransport
 from ..state import OverlayState
 from .spritemap import Layer, Option, Row, Section, SpriteMap
 from .spritemap import installed_mapping_path as _installed_mapping_path
+from .spritemap import Rotation
 from .spritemap import resolve as _resolve
 
 TRANSPARENT = "#010203"
@@ -141,21 +142,19 @@ def atlas_frames(atlas: Image.Image) -> tuple[Image.Image, ...]:
 def choose_frame(
     display_hint: str,
     bucket: int,
-    choices: dict[tuple[str, int], int],
-    rng: random.Random,
+    rotation: Rotation,
     frames_by_hint: dict[str, tuple[int, ...]] | None = None,
 ) -> int:
-    """Choose once per state bucket and avoid immediate repeats when possible."""
+    """Choose once per state bucket and avoid immediate repeats when possible.
+
+    The rotation itself is shared: any overlay whose signal offers several
+    options picks between them the same way.
+    """
     table = frames_by_hint if frames_by_hint is not None else STATE_FRAMES
     hint = display_hint if display_hint in table else "idle"
-    key = (hint, max(0, bucket))
-    if key in choices:
-        return choices[key]
-    frames = table[hint]
-    previous = choices.get((hint, key[1] - 1))
-    candidates = tuple(frame for frame in frames if frame != previous) or frames
-    choices[key] = rng.choice(candidates)
-    return choices[key]
+    names = tuple(POSE_NAMES[index] for index in table[hint])
+    chosen = rotation.pick(hint, names, bucket)
+    return POSE_NAMES.index(chosen) if chosen is not None else table[hint][0]
 
 
 class Rabbit2DView:
@@ -177,13 +176,13 @@ class Rabbit2DView:
             frame.resize(DISPLAY_SIZE, Image.Resampling.LANCZOS)
             for frame in atlas_frames(atlas)[:5]
         )
-        self.rng = rng or random.Random()
+        self.rotation = Rotation(rng or random.Random())
         self.canvas: tk.Canvas | None = None
         self.image_id: int | None = None
         self.photo: ImageTk.PhotoImage | None = None
         self.display_hint = "idle"
         self.state_started_at = time.monotonic()
-        self.choices: dict[tuple[str, int], int] = {}
+
         self.current_frame = -1
 
     def mount(self, canvas: tk.Canvas) -> None:
@@ -196,7 +195,7 @@ class Rabbit2DView:
         if hint != self.display_hint:
             self.display_hint = hint
             self.state_started_at = time.monotonic()
-            self.choices.clear()
+            self.rotation.clear()
 
     def tick(self, pointer_x: int, pointer_y: int, window_x: int, window_y: int) -> None:
         del pointer_x, pointer_y, window_x, window_y
@@ -204,9 +203,7 @@ class Rabbit2DView:
             return
         elapsed_ms = max(0.0, (time.monotonic() - self.state_started_at) * 1000)
         bucket = int(elapsed_ms // STATE_FRAME_MS[self.display_hint])
-        frame = choose_frame(
-            self.display_hint, bucket, self.choices, self.rng, self.frames_by_hint
-        )
+        frame = choose_frame(self.display_hint, bucket, self.rotation, self.frames_by_hint)
         if frame == self.current_frame:
             return
         self.current_frame = frame

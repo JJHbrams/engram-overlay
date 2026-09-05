@@ -25,6 +25,8 @@ from PIL import Image, ImageTk
 from ..backends.tk import TkOverlayHost
 from ..protocol import TOOL_CATEGORIES, JsonlTransport
 from .spritemap import MAPPING_FILE, Layer, Option, Row, Section, SpriteMap
+from .spritemap import finished as _finished
+from .spritemap import frames_at as _frames_at
 from .spritemap import installed_mapping_path as _installed_mapping_path
 from .spritemap import resolve as _resolve
 from .spritemap import single as _single
@@ -192,9 +194,30 @@ CATEGORY_NOTES = {
     "communication": "mail · message · discord",
     "other": "그 외",
 }
-# A fixed blink cycle stands in for the runtime's random one; over a preview the
-# difference is not visible and it keeps the description declarative.
-PREVIEW_BLINK_MS = 3_000
+def _options() -> dict[str, Option]:
+    """Every drawable pose, described once for both the picker and the renderer."""
+    options = {
+        IDLE_POSE: Option(
+            IDLE_POSE,
+            (
+                # The eye rests open for an unpredictable while, then blinks.
+                Layer(
+                    "idle",
+                    tuple(EYE_CELLS[name] for name in ("open", "half", "closed", "half")),
+                    (0,) + tuple(ms for _, ms in BLINK_SEQUENCE),
+                    hold_ms=BLINK_INTERVAL_MS,
+                ),
+                Layer("steam", tuple(range(STEAM_CELLS)), (STEAM_FRAME_MS,) * STEAM_CELLS),
+            ),
+            note="눈깜빡임 + 커피 김",
+        )
+    }
+    for name, clip in CLIPS.items():
+        options[name] = Option(name, (Layer(clip.sheet, clip.cells, clip.durations_ms, clip.loop),))
+    return options
+
+
+OPTIONS: dict[str, Option] = _options()
 
 
 def sprite_map() -> SpriteMap:
@@ -204,20 +227,6 @@ def sprite_map() -> SpriteMap:
         Path(name).stem.removeprefix("bolttagu-"): (name, len(frames), len(frames))
         for name, frames in metadata["sheets"].items()
     }
-    options = {
-        IDLE_POSE: Option(
-            IDLE_POSE,
-            (
-                Layer("idle", tuple(EYE_CELLS[n] for n in ("open", "half", "closed", "half")),
-                      (PREVIEW_BLINK_MS,) + tuple(ms for _, ms in BLINK_SEQUENCE)),
-                Layer("steam", tuple(range(STEAM_CELLS)), (STEAM_FRAME_MS,) * STEAM_CELLS),
-            ),
-            note="눈깜빡임 + 커피 김",
-        )
-    }
-    for name, clip in CLIPS.items():
-        options[name] = Option(name, (Layer(clip.sheet, clip.cells, clip.durations_ms, clip.loop),))
-
     poses = tuple(selectable_poses())
     return SpriteMap(
         overlay_id=OVERLAY_ID,
@@ -225,7 +234,7 @@ def sprite_map() -> SpriteMap:
         cell=tuple(metadata["cell"]),
         asset_dir=ASSET_DIR,
         sheets=sheets,
-        options=options,
+        options=OPTIONS,
         sections=(
             Section(
                 "hints", "display hint",
@@ -341,12 +350,6 @@ def scaled_cell(cell: tuple[int, int], scale: float) -> tuple[int, int]:
     return (max(1, round(cell[0] * scale)), max(1, round(cell[1] * scale)))
 
 
-def steam_cell(elapsed_ms: int) -> int:
-    if elapsed_ms < 0:
-        elapsed_ms = 0
-    return (elapsed_ms // STEAM_FRAME_MS) % STEAM_CELLS
-
-
 def facing_mirrored(pointer_x: int, window_x: int, width: int, *, current: bool) -> bool:
     """Whether to mirror the sprite so it looks toward the pointer.
 
@@ -359,39 +362,6 @@ def facing_mirrored(pointer_x: int, window_x: int, width: int, *, current: bool)
     return offset > 0
 
 
-class BlinkTimeline:
-    """Random eye blink on a millisecond clock and an injectable random source."""
-
-    def __init__(self, *, rng: random.Random, started_ms: int = 0) -> None:
-        self.rng = rng
-        self._blink_started_ms: int | None = None
-        self._next_blink_ms = started_ms + self._interval()
-
-    def _interval(self) -> int:
-        return self.rng.randint(*BLINK_INTERVAL_MS)
-
-    def reset(self, now_ms: int) -> None:
-        """Re-arm from scratch, as the pack's controller does on idle re-entry."""
-        self._blink_started_ms = None
-        self._next_blink_ms = now_ms + self._interval()
-
-    def eye(self, now_ms: int) -> str:
-        if self._blink_started_ms is None:
-            if now_ms < self._next_blink_ms:
-                return "open"
-            # Start from the scheduled instant, not from this tick, so a late
-            # frame does not stretch the blink itself.
-            self._blink_started_ms = self._next_blink_ms
-        elapsed = now_ms - self._blink_started_ms
-        cursor = 0
-        for name, duration in BLINK_SEQUENCE:
-            cursor += duration
-            if elapsed < cursor:
-                return name
-        self.reset(now_ms)
-        return "open"
-
-
 class BolttaguAnimator:
     """Track the active hint, any one-shot override, and the idle sub-loops."""
 
@@ -400,7 +370,7 @@ class BolttaguAnimator:
         *,
         started_ms: int = 0,
         intro: str | None = "enter",
-        rng: random.Random | None = None,
+        seed: int = 0,
         hints: dict[str, str] | None = None,
         categories: dict[str, str] | None = None,
         oneshots: dict[str, str] | None = None,
@@ -418,7 +388,9 @@ class BolttaguAnimator:
         # A farewell is terminal: nothing follows it on screen, so it holds its
         # last frame instead of snapping back to idle before the window closes.
         self.oneshot_holds = False
-        self.blink = BlinkTimeline(rng=rng or random.Random(), started_ms=started_ms)
+        # Feeds the pseudo-random blink hold; two renderers on one screen need not
+        # blink in lockstep.
+        self.seed = seed
 
     @property
     def pose(self) -> str:
@@ -442,36 +414,27 @@ class BolttaguAnimator:
         self.tool_category = category
         self.state_started_ms = now_ms
         self.oneshot_holds = False
-        if self.pose == IDLE_POSE and not was_idle:
-            self.blink.reset(now_ms)
         oneshot = self.oneshots.get(resolved)
         if oneshot is not None:
             self.oneshot = oneshot
             self.oneshot_started_ms = now_ms
 
     def resolve(self, now_ms: int) -> Recipe:
-        """Layers to draw for this instant, retiring a finished one-shot on the way."""
+        """Layers to draw for this instant, retiring a finished one-shot on the way.
+
+        Both a transient flourish and the resting pose are just options on the
+        shared timeline; only which one is asked for differs.
+        """
         if self.oneshot is not None:
-            clip = CLIPS[self.oneshot]
-            cell = clip_cell(clip, now_ms - self.oneshot_started_ms)
-            if cell is not None:
-                return ((clip.sheet, cell),)
+            option = OPTIONS[self.oneshot]
+            elapsed = now_ms - self.oneshot_started_ms
+            if not _finished(option, elapsed):
+                return _frames_at(option, elapsed, self.seed)
             if self.oneshot_holds:
-                return ((clip.sheet, clip.cells[-1]),)
+                return _frames_at(option, option.total_ms, self.seed)
             self.oneshot = None
-            if self.pose == IDLE_POSE:
-                self.blink.reset(now_ms)
-        if self.pose == IDLE_POSE:
-            return (
-                ("idle", EYE_CELLS[self.blink.eye(now_ms)]),
-                ("steam", steam_cell(now_ms - self.state_started_ms)),
-            )
-        clip = CLIPS[self.pose]
-        cell = clip_cell(clip, now_ms - self.state_started_ms)
-        if cell is None:
-            # A one-shot chosen as a state pose: play it, then stand there.
-            cell = clip.cells[-1]
-        return ((clip.sheet, cell),)
+        # A non-looping pose runs out and stands on its last frame.
+        return _frames_at(OPTIONS[self.pose], now_ms - self.state_started_ms, self.seed)
 
 
 def load_atlas() -> tuple[dict[str, tuple[Image.Image, ...]], tuple[int, int]]:
@@ -504,7 +467,7 @@ class Bolttagu2dView:
         launcher_managed: bool = False,
         show_floor: bool = False,
         coffee: bool = True,
-        rng: random.Random | None = None,
+        seed: int = 0,
         mapping_path: Path | None = None,
         log: Callable[[str], None] | None = None,
     ) -> None:
@@ -524,7 +487,7 @@ class Bolttagu2dView:
         self.animator = BolttaguAnimator(
             started_ms=self._now_ms(),
             intro=None if launcher_managed else "enter",
-            rng=rng,
+            seed=seed,
             hints=mapping.hints,
             categories=mapping.categories,
             oneshots=mapping.oneshots,

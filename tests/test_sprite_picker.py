@@ -2,11 +2,14 @@
 
 import importlib
 import json
+import random
 import tempfile
 import unittest
 from pathlib import Path
 
-from engram_overlay.overlays.spritemap import Layer, Option, Row, Section, SpriteMap, resolve, single
+from engram_overlay.overlays.spritemap import (
+    Layer, Option, Rotation, Row, Section, SpriteMap, cell_at, finished, frames_at, resolve, single,
+)
 from engram_overlay.registry import overlay_catalog
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -236,3 +239,63 @@ class GeneratorPayloadTests(unittest.TestCase):
         for section in payload["sections"]:
             for row in section["rows"]:
                 self.assertEqual(row["current"], row["default"])
+
+
+class RuntimeTests(unittest.TestCase):
+    """The timeline both renderers draw from."""
+
+    def layer(self, **kwargs):
+        base = {"sheet": "s", "cells": (0, 1, 2), "durations_ms": (100, 100, 100)}
+        return Layer(**{**base, **kwargs})
+
+    def test_a_loop_wraps(self) -> None:
+        layer = self.layer()
+        self.assertEqual([cell_at(layer, t) for t in (0, 100, 250, 300, 350)], [0, 1, 2, 0, 0])
+
+    def test_a_one_shot_holds_its_last_cell(self) -> None:
+        layer = self.layer(loop=False)
+        self.assertEqual(cell_at(layer, 299), 2)
+        self.assertEqual(cell_at(layer, 10_000), 2)
+
+    def test_negative_time_clamps(self) -> None:
+        self.assertEqual(cell_at(self.layer(), -500), 0)
+
+    def test_a_held_first_cell_waits_inside_its_range(self) -> None:
+        layer = self.layer(durations_ms=(0, 50, 90), hold_ms=(2_500, 6_000))
+        first_action = next(t for t in range(0, 20_000, 10) if cell_at(layer, t) != 0)
+        self.assertGreaterEqual(first_action, 2_500)
+        self.assertLessEqual(first_action, 6_000)
+
+    def test_a_held_cell_is_reproducible_and_seed_dependent(self) -> None:
+        layer = self.layer(durations_ms=(0, 50, 90), hold_ms=(2_500, 6_000))
+        run = lambda seed: [cell_at(layer, t, seed) for t in range(0, 30_000, 25)]
+        self.assertEqual(run(1), run(1))
+        self.assertNotEqual(run(1), run(4))
+
+    def test_a_hold_range_must_be_usable(self) -> None:
+        for bad in ((0, 100), (500, 100)):
+            with self.subTest(hold=bad), self.assertRaises(ValueError):
+                self.layer(durations_ms=(0, 50, 90), hold_ms=bad)
+
+    def test_frames_at_returns_every_layer_bottom_first(self) -> None:
+        option = Option("x", (self.layer(sheet="a"), self.layer(sheet="b", cells=(5,), durations_ms=(10,))))
+        self.assertEqual([sheet for sheet, _ in frames_at(option, 0)], ["a", "b"])
+
+    def test_finished_only_applies_to_a_one_shot(self) -> None:
+        self.assertFalse(finished(Option("l", (self.layer(),)), 10_000))
+        once = Option("o", (self.layer(loop=False),))
+        self.assertFalse(finished(once, 299))
+        self.assertTrue(finished(once, 300))
+
+    def test_rotation_holds_a_bucket_and_avoids_an_immediate_repeat(self) -> None:
+        rotation = Rotation(random.Random(11))
+        first = rotation.pick("k", ("a", "b", "c"), 0)
+        self.assertEqual(first, rotation.pick("k", ("a", "b", "c"), 0))
+        self.assertNotEqual(first, rotation.pick("k", ("a", "b", "c"), 1))
+
+    def test_rotation_passes_a_lone_candidate_through(self) -> None:
+        rotation = Rotation(random.Random(0))
+        self.assertEqual({rotation.pick("k", ("a",), b) for b in range(5)}, {"a"})
+
+    def test_rotation_returns_nothing_for_an_empty_choice(self) -> None:
+        self.assertIsNone(Rotation(random.Random(0)).pick("k", (), 0))
