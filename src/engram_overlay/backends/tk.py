@@ -6,10 +6,15 @@ import queue
 import threading
 import time
 import tkinter as tk
-from typing import Any, Protocol
+from typing import Any, Callable, Iterator, Protocol
 
 from ..protocol import JsonlTransport, geometry_message, pointer_message, visibility_message
 from ..state import OverlayState
+
+
+# Sentinels for the reader thread to mark session boundaries in the inbox.
+_CONNECTED = object()
+_DISCONNECTED = object()
 
 
 class TkOverlayView(Protocol):
@@ -47,6 +52,9 @@ class TkOverlayHost:
         start_hidden: bool = False,
     ) -> None:
         self.transport = transport
+        # v2 reconnects rather than ending: the window outlives any one socket, so
+        # the reader walks sessions and swaps the outbound transport as it goes.
+        self._connect: Callable[[], Iterator[Any]] | None = None
         self.view = view
         # v1 passed the mode in; v2 assigns it and can change it while running, so
         # this is only the starting value until the host says otherwise.
@@ -89,6 +97,14 @@ class TkOverlayHost:
             self.root.withdraw()
         self._bind_pointer_events()
 
+    def use_connection(self, connect: Callable[[], Iterator[Any]]) -> None:
+        """Drive this window from a stream of sessions rather than one transport.
+
+        Set on the host rather than threaded through every overlay factory: which
+        transport a renderer speaks over is not artwork-specific.
+        """
+        self._connect = connect
+
     def run(self) -> None:
         threading.Thread(target=self._read_messages, name="engram-jsonl-reader", daemon=True).start()
         # Geometry is optional for a passive observer.  Interactive observers
@@ -108,9 +124,19 @@ class TkOverlayHost:
         self.canvas.bind("<Button-3>", self._right_click)
 
     def _read_messages(self) -> None:
-        for message in self.transport.messages():
-            self.inbox.put(message)
-        self.inbox.put(None)
+        if self._connect is None:
+            for message in self.transport.messages():
+                self.inbox.put(message)
+            self.inbox.put(None)
+            return
+        # A dropped host is not the end of the renderer. Each session replaces the
+        # outbound transport, and losing one only resets what the host knows.
+        for session in self._connect():
+            self.transport = session.transport
+            self.inbox.put(_CONNECTED)
+            for message in session.transport.messages():
+                self.inbox.put(message)
+            self.inbox.put(_DISCONNECTED)
 
     def _drain_messages(self) -> None:
         while True:
@@ -121,6 +147,12 @@ class TkOverlayHost:
             if message is None:
                 self.root.destroy()
                 return
+            if message is _CONNECTED:
+                self._on_connected()
+                continue
+            if message is _DISCONNECTED:
+                self._on_disconnected()
+                continue
             self.state.apply(message)
             if self.state.mode is not None and self.state.mode != self.mode:
                 self._apply_mode(self.state.mode)
@@ -144,6 +176,19 @@ class TkOverlayHost:
                 self._apply_presentation(self.state.presentation == "shown")
                 self.state.presentation = None
         self.root.after(20, self._drain_messages)
+
+    def _on_connected(self) -> None:
+        """A fresh session knows nothing about us; re-announce what it needs."""
+        if self._mapped:
+            self._send_geometry()
+
+    def _on_disconnected(self) -> None:
+        """The host is gone. Engram has already fallen back to its bundled window,
+        so stop claiming a mode and let the next assignment decide again."""
+        self.mode = "observer"
+        self.state.mode = None
+        self._drag_origin = None
+        self._drag_sent_ms = None
 
     def _apply_mode(self, mode: str) -> None:
         """Take an assignment from the host.
@@ -208,7 +253,7 @@ class TkOverlayHost:
             return
         self._mapped = False
         self.root.withdraw()
-        self.transport.send(visibility_message(False))
+        self._send(visibility_message(False))
 
     def _finish_show(self) -> None:
         self._show_after = None
@@ -216,7 +261,7 @@ class TkOverlayHost:
             return
         # A collapsed renderer has no usable anchor until its arrival is over.
         self._send_geometry()
-        self.transport.send(visibility_message(True))
+        self._send(visibility_message(True))
 
     def _tick(self) -> None:
         # Redraw whenever the window is on screen, not merely while Engram wants it
@@ -226,12 +271,20 @@ class TkOverlayHost:
             self.view.tick(pointer_x, pointer_y, self.root.winfo_x(), self.root.winfo_y())
         self.root.after(self.FRAME_MS, self._tick)
 
+    def _send(self, message: dict[str, Any]) -> None:
+        """Outbound is best effort: a closed socket is the reader's problem, and a
+        raise here would take the Tk thread down mid-callback."""
+        try:
+            self.transport.send(message)
+        except OSError:
+            pass
+
     def _send_pointer(self, action: str, *, x: int | None = None, y: int | None = None) -> None:
-        self.transport.send(pointer_message(action, screen_x=x, screen_y=y))
+        self._send(pointer_message(action, screen_x=x, screen_y=y))
 
     def _send_geometry(self) -> None:
         self.root.update_idletasks()
-        self.transport.send(
+        self._send(
             geometry_message(self.root.winfo_x(), self.root.winfo_y(), self.root.winfo_width(), self.root.winfo_height())
         )
 
