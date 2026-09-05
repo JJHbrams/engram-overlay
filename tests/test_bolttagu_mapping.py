@@ -6,6 +6,7 @@ from engram_overlay.overlays.bolttagu_2d import (
     CLIPS,
     HINT_ONESHOTS,
     IDLE_POSE,
+    REFINABLE_CATEGORIES,
     STATE_POSES,
     BolttaguAnimator,
     load_mapping,
@@ -55,13 +56,19 @@ class MappingOverrideTests(unittest.TestCase):
         self.assertEqual(self.oneshots, HINT_ONESHOTS)
         self.assertTrue(notes)
 
-    def test_lifecycle_clips_cannot_be_a_flourish(self) -> None:
-        """enter and exit belong to the launcher, not to a hint."""
+    def test_lifecycle_clips_may_also_be_a_flourish(self) -> None:
+        """The launcher's own transition still overrides while it runs, so reusing
+        the clip on a hint cannot fight overlay.show/hide."""
         for clip in ("enter", "exit"):
             with self.subTest(clip=clip):
                 _, _, notes = self.load({"oneshots": {"idle": clip}})
-                self.assertNotIn("idle", self.oneshots)
-                self.assertTrue(notes)
+                self.assertEqual(self.oneshots["idle"], clip)
+                self.assertEqual(notes, [])
+
+    def test_a_looping_clip_is_still_refused_as_a_flourish(self) -> None:
+        _, _, notes = self.load({"oneshots": {"idle": "wondering"}})
+        self.assertNotIn("idle", self.oneshots)
+        self.assertTrue(notes)
 
     def test_a_flourish_plays_once_then_settles(self) -> None:
         hints, categories, _ = self.load({"oneshots": {"click": "success"}})
@@ -82,6 +89,30 @@ class MappingOverrideTests(unittest.TestCase):
         self.assertEqual(hints["search"], STATE_POSES["search"])
         self.assertEqual(categories, CATEGORY_POSES)
 
+    def test_unreachable_categories_are_refused_with_a_pointer(self) -> None:
+        """search and memory arrive as their own hints, never alongside generating,
+        so a category entry for them could never fire."""
+        for key in ("search", "memory"):
+            with self.subTest(category=key):
+                _, categories, notes = self.load({"categories": {key: "waiting"}})
+                self.assertNotIn(key, categories)
+                self.assertEqual(len(notes), 1)
+                self.assertIn("hint instead", notes[0])
+
+    def test_every_refinable_category_is_accepted(self) -> None:
+        for key in REFINABLE_CATEGORIES:
+            with self.subTest(category=key):
+                _, categories, notes = self.load({"categories": {key: "waiting"}})
+                self.assertEqual(categories[key], "waiting")
+                self.assertEqual(notes, [])
+
+    def test_the_hint_decides_for_search_and_memory(self) -> None:
+        """Setting the hint is the only thing that moves those two."""
+        hints, categories, _ = self.load({"hints": {"search": "waiting"}})
+        animator = BolttaguAnimator(started_ms=0, intro=None, hints=hints, categories=categories)
+        animator.apply_hint("search", 0, "search")
+        self.assertEqual(animator.resolve(0), (("waiting", 0),))
+
     def test_a_chosen_category_wins(self) -> None:
         _, categories, notes = self.load({"categories": {"read": "waiting"}})
         self.assertEqual(categories["read"], "waiting")
@@ -92,13 +123,20 @@ class MappingOverrideTests(unittest.TestCase):
         self.assertEqual(hints["error"], "idle")
         self.assertEqual(notes, [])
 
-    def test_a_one_shot_cannot_back_a_hint(self) -> None:
-        """enter/exit/success are transitions; a hint needs something that loops."""
+    def test_a_one_shot_can_back_a_hint_and_holds_its_last_frame(self) -> None:
+        """Every bundled clip is selectable; a non-looping one just stands still
+        on its final frame for as long as the state lasts."""
         for pose in ("enter", "exit", "success"):
             with self.subTest(pose=pose):
-                hints, _, notes = self.load({"hints": {"idle": pose}})
-                self.assertEqual(hints["idle"], STATE_POSES["idle"])
-                self.assertTrue(notes)
+                hints, categories, notes = self.load({"hints": {"click": pose}})
+                self.assertEqual(hints["click"], pose)
+                self.assertEqual(notes, [])
+                animator = BolttaguAnimator(
+                    started_ms=0, intro=None, hints=hints, categories=categories
+                )
+                animator.apply_hint("click", 0)
+                self.assertEqual(animator.resolve(0), ((pose, 0),))
+                self.assertEqual(animator.resolve(60_000), ((pose, 2),))
 
     def test_unknown_names_are_reported_and_dropped(self) -> None:
         hints, categories, notes = self.load(

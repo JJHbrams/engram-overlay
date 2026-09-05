@@ -38,6 +38,9 @@ python scripts/build-bolttagu-assets.py --pack <sprite-pack-vN>
 `tool.started`의 `payload.category`로 한 단계 더 갈라 쓴다. 이게 없으면 파일을 고치는 것과
 답변을 스트리밍하는 것이 똑같이 보인다.
 
+`search`·`memory` 범주는 여기 없다. Engram이 그 둘은 `generating`이 아니라 **각자의 display hint로** 보내므로
+(`event_api.event_for_bubble`) category 갈래에 도달하지 않는다. 위 hint 표가 그 둘을 정한다.
+
 | category | 도구 예 | 상태 |
 | --- | --- | --- |
 | `write` | write·edit·patch·delete | **writing** — 코드·문서·아티팩트 수정 |
@@ -48,6 +51,7 @@ python scripts/build-bolttagu-assets.py --pack <sprite-pack-vN>
 - category는 그 메시지에만 해당한다. `tool.completed`는 category 없이 오므로 상태가 초기화되고,
   도구가 끝난 뒤에도 writing이 남아있지 않는다.
 - category는 `generating`만 세분한다. `search`·`thought` 같은 구체적 hint를 덮지 않는다.
+- `mapping.json`에 `categories.search`/`categories.memory`를 쓰면 거부하고 hint 쪽을 쓰라고 알린다. 조용히 무시되는 설정을 남기지 않기 위해서다.
 - 서브에이전트·백그라운드 태스크 대기는 아직 정확히 잡히지 않는다. Engram의 `tool_category`가
   Task/Agent를 어느 패턴에도 매칭하지 않아 `other`로 떨어지기 때문이다. `execute`가 그 절반을
   덮는다.
@@ -90,8 +94,9 @@ python scripts/build-bolttagu-preview.py --open
 `oneshots`의 `null`은 그 신호의 1회 재생을 끄는 것이다.
 
 - 적지 않은 항목은 기본값을 유지한다.
-- 그릴 수 없는 값은 무시하고 기본값을 쓴다. 지속 동작에 1회 재생 클립을 넣거나, 1회 재생에 반복 클립을 넣으면 거부된다.
-- `enter`·`exit`는 런처가 소유하므로 어느 층에도 못 붙인다.
+- **모든 스프라이트를 고를 수 있다.** 반복하지 않는 클립(`enter`·`exit`·`success`)을 지속 동작으로 고르면 재생 후 마지막 프레임에서 멈춘다.
+- `enter`·`exit`는 런처가 등장·퇴장에도 쓰지만, 그 전환은 1회 재생이라 지속 동작을 항상 덮으므로 신호에 붙여도 충돌하지 않는다.
+- 1회 재생에는 반복 클립을 넣을 수 없다. 끝나지 않으므로 지속 동작으로 돌아가지 못한다.
 - 파일이 깨져 있어도 renderer는 죽지 않는다. 거부한 항목은 stderr로 남긴다.
 - 페이지의 프레임 선택 로직은 renderer와 같은 값을 내도록 대조 검증한다.
 

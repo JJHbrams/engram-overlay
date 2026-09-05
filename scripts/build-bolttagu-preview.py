@@ -35,6 +35,7 @@ from engram_overlay.overlays.bolttagu_2d import (  # noqa: E402
     HINT_ONESHOTS,
     IDLE_POSE,
     MAPPING_FILE,
+    REFINABLE_CATEGORIES,
     STATE_POSES,
     STEAM_CELLS,
     STEAM_FRAME_MS,
@@ -42,7 +43,6 @@ from engram_overlay.overlays.bolttagu_2d import (  # noqa: E402
     selectable_oneshots,
     selectable_poses,
 )
-from engram_overlay.protocol import TOOL_CATEGORIES  # noqa: E402
 
 OUTPUT = REPO_ROOT / "dist" / "bolttagu-mapping.html"
 
@@ -119,8 +119,8 @@ def build_payload() -> dict[str, object]:
                 "note": CATEGORY_NOTES.get(key, ""),
                 "default": CATEGORY_POSES.get(key, ""),
             }
-            for key in ("write", "execute", "read", "memory", "search", "communication", "other")
-            if key in TOOL_CATEGORIES
+            for key in ("write", "execute", "read", "communication", "other")
+            if key in REFINABLE_CATEGORIES
         ],
         "mappingPath": str(installed_mapping_path()),
         "mappingFile": MAPPING_FILE,
@@ -198,7 +198,7 @@ TEMPLATE = """<!doctype html>
 
   <h2>동작</h2>
   <div class="poses" id="poses"></div>
-  <p class="hint">점선 테두리는 한 번만 재생되는 동작이다. 등장·퇴장은 런처가 소유하므로 신호에 붙일 수 없고, 나머지는 아래 표의 <b>1회 재생</b>에서 고른다.</p>
+  <p class="hint">점선 테두리는 한 번만 재생되는 동작이다. 지속 동작으로 고르면 재생 후 마지막 프레임에서 멈춘다. <code>enter</code>·<code>exit</code>는 런처가 등장·퇴장에도 쓰지만, 그 전환은 1회 재생이라 항상 우선하므로 신호에 붙여도 충돌하지 않는다.</p>
 
   <h2>display hint</h2>
   <p class="hint" style="margin:-.5rem 0 1rem">신호마다 두 층이 있다. <b>지속 동작</b>은 그 상태에 머무는 동안 반복되고, <b>1회 재생</b>은 신호에 진입할 때 그 위로 한 번 얹힌 뒤 지속 동작으로 가라앉는다.</p>
@@ -208,7 +208,8 @@ TEMPLATE = """<!doctype html>
   </table>
 
   <h2>도구 범주 — generating 세분</h2>
-  <p class="hint" style="margin:-.5rem 0 1rem">Engram은 검색·기억이 아닌 모든 도구를 <code>generating</code>으로 뭉쳐 보내고, 어떤 일인지는 <code>payload.category</code>에만 담긴다. 아래에서 지정하지 않은 범주는 위 <code>generating</code> 설정을 그대로 쓴다.</p>
+  <p class="hint" style="margin:-.5rem 0 1rem">Engram은 검색·기억이 아닌 모든 도구를 <code>generating</code>으로 뭉쳐 보내고, 어떤 일인지는 <code>payload.category</code>에만 담긴다. 아래에서 지정하지 않은 범주는 위 <code>generating</code> 설정을 그대로 쓴다.<br>
+  <b>검색·기억 도구는 여기 없다.</b> 그 둘은 <code>generating</code>이 아니라 <code>search</code>·<code>memory</code> 신호로 직접 오므로 위 display hint 표에서 정한다.</p>
   <table>
     <thead><tr><th>범주</th><th>도구</th><th>동작</th><th></th></tr></thead>
     <tbody id="cats"></tbody>
@@ -286,7 +287,7 @@ function addCanvas(el, poseGetter, seed){
 }
 
 const poseBox = document.getElementById("poses");
-D.poses.concat(Object.keys(D.clips).filter(n => !D.clips[n].loop)).forEach((pose, i) => {
+D.poses.concat(Object.keys(D.clips).filter(n => !D.poses.includes(n))).forEach((pose, i) => {
   const clip = D.clips[pose];
   const card = document.createElement("div");
   card.className = "pose" + (clip && !clip.loop ? " oneshot" : "");
