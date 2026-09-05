@@ -1,6 +1,9 @@
 import json
 import random
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import Mock
 
 from engram_overlay.overlays import bolttagu_2d
 from engram_overlay.overlays.bolttagu_2d import (
@@ -60,7 +63,7 @@ class ClipTests(unittest.TestCase):
 
 class BolttaguResizeTests(unittest.TestCase):
     def test_host_height_resize_preserves_atlas_aspect_and_bounds(self) -> None:
-        view = bolttagu_2d.Bolttagu2dView()
+        view = bolttagu_2d.Bolttagu2dView(mapping_path=UNMAPPED)
         width, height = view.resize(9999, 9999)
         self.assertEqual((width, height), scaled_cell(view.cell, SCALE_RANGE[1]))
         self.assertAlmostEqual(width / height, view.cell[0] / view.cell[1], places=2)
@@ -480,15 +483,36 @@ class AtlasTests(unittest.TestCase):
         self.assertEqual(set(sheets), used)
 
 
+# A view reads the installed mapping.json by default. Tests must not, or they
+# report on whatever the machine's user happens to have chosen.
+UNMAPPED = Path(tempfile.mkdtemp()) / "no-mapping.json"
+
+
 class ViewTests(unittest.TestCase):
     def view(self, **kwargs: object) -> bolttagu_2d.Bolttagu2dView:
         kwargs.setdefault("rng", FixedIntervalRandom(3_000))
+        kwargs.setdefault("mapping_path", UNMAPPED)
         return bolttagu_2d.Bolttagu2dView(**kwargs)  # type: ignore[arg-type]
 
     def test_canvas_size_matches_the_atlas_cell(self) -> None:
         view = self.view()
         self.assertEqual((view.width, view.height), (270, 302))
         self.assertIsNone(view.drawn)
+
+    def test_exit_freezes_facing_draws_frame_zero_and_show_reenables_pointer(self) -> None:
+        view = self.view(launcher_managed=True)
+        view.mirrored = True
+        view._now_ms = Mock(return_value=1_000)
+        view._redraw = Mock()
+
+        self.assertEqual(view.begin_exit(), sum((220, 220, 260)))
+        view._redraw.assert_called_once_with(((("exit", 0),), True))
+        view.tick(-1_000, 0, 0, 0)
+        self.assertTrue(view.mirrored)
+
+        self.assertEqual(view.begin_enter(), 720)
+        view.tick(-1_000, 0, 0, 0)
+        self.assertFalse(view.mirrored)
 
     def test_idle_frame_composites_steam_over_the_blink_layer(self) -> None:
         view = self.view()
