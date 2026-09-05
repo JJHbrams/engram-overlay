@@ -84,6 +84,7 @@ def describe(sprite_map: SpriteMap, mapping_path: Path | None = None) -> dict[st
                         "cells": list(layer.cells),
                         "durations": list(layer.durations_ms),
                         "loop": layer.loop,
+                        "hold": list(layer.hold_ms) if layer.hold_ms else None,
                     }
                     for layer in option.layers
                 ],
@@ -208,14 +209,39 @@ function cellRect(sheet, index){
   const col = index % sheet.columns, row = Math.floor(index / sheet.columns);
   return [col, row];
 }
-function pickCell(layer, t){
-  const total = layer.durations.reduce((a,b)=>a+b,0);
-  let time = t;
-  if (layer.loop) time = ((time % total) + total) % total;
-  else if (time >= total) return layer.cells[layer.cells.length-1];
-  let cursor = 0;
-  for (let i=0;i<layer.durations.length;i++){ cursor += layer.durations[i]; if (time < cursor) return layer.cells[i]; }
-  return layer.cells[layer.cells.length-1];
+// Mirrors spritemap.cell_at, including the LCG behind a held first cell, so the
+// preview shows the frames the renderer draws rather than an approximation.
+function holdAt(layer, cycle, seed){
+  const [low, high] = layer.hold;
+  const noise = ((cycle*9301 + seed*49297 + 233280) % 233280) / 233280;
+  return low + Math.floor(noise * (high - low));
+}
+function pickCell(layer, t, seed){
+  seed = seed || 0;
+  let time = Math.max(0, t);
+  if (!layer.hold){
+    const total = layer.durations.reduce((a,b)=>a+b,0);
+    if (layer.loop) time = ((time % total) + total) % total;
+    else if (time >= total) return layer.cells[layer.cells.length-1];
+    let cursor = 0;
+    for (let i=0;i<layer.durations.length;i++){ cursor += layer.durations[i]; if (time < cursor) return layer.cells[i]; }
+    return layer.cells[layer.cells.length-1];
+  }
+  let tail = 0;
+  for (let i=1;i<layer.durations.length;i++) tail += layer.durations[i];
+  let cycle = 0;
+  for(;;){
+    const span = holdAt(layer, cycle, seed) + tail;
+    if (time < span || !layer.loop) break;
+    time -= span; cycle++;
+  }
+  let cursor = holdAt(layer, cycle, seed);
+  if (time < cursor) return layer.cells[0];
+  for (let i=1;i<layer.durations.length;i++){
+    cursor += layer.durations[i];
+    if (time < cursor) return layer.cells[i];
+  }
+  return layer.loop ? layer.cells[0] : layer.cells[layer.cells.length-1];
 }
 
 function makeCanvas(ov, el, valuesGetter){
@@ -230,11 +256,12 @@ function makeCanvas(ov, el, valuesGetter){
     const key = values.length === 1 ? values[0] : values[Math.floor(t/1200) % values.length];
     const option = ov.options[key];
     if (!option) return;
-    for (const layer of option.layers){
+    for (let i=0;i<option.layers.length;i++){
+      const layer = option.layers[i];
       const img = ov._img[layer.sheet];
       const sheet = ov.sheets[layer.sheet];
       if (!img || !sheet) continue;
-      const [col, row] = cellRect(sheet, pickCell(layer, t));
+      const [col, row] = cellRect(sheet, pickCell(layer, t, i));
       ctx.drawImage(img, col*CW, row*CH, CW, CH, 0, 0, CW, CH);
     }
   });

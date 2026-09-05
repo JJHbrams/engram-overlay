@@ -39,18 +39,31 @@ class Layer:
     cells: tuple[int, ...]
     durations_ms: tuple[int, ...]
     loop: bool = True
+    # A range the first cell's duration is drawn from anew each cycle. Lets a
+    # resting pose wait an unpredictable while before its brief action -- a blink,
+    # say -- without the timeline stopping being a pure function of the clock.
+    hold_ms: tuple[int, int] | None = None
 
     def __post_init__(self) -> None:
         if not self.cells:
             raise ValueError(f"layer on {self.sheet} has no cells")
         if len(self.cells) != len(self.durations_ms):
             raise ValueError(f"layer on {self.sheet} has mismatched cells and durations")
-        if min(self.durations_ms) <= 0:
+        rest = self.durations_ms[1:] if self.hold_ms else self.durations_ms
+        if rest and min(rest) <= 0:
             raise ValueError(f"layer on {self.sheet} has a non-positive duration")
+        if self.hold_ms:
+            low, high = self.hold_ms
+            if low <= 0 or high < low:
+                raise ValueError(f"layer on {self.sheet} has an unusable hold range")
 
     @property
     def total_ms(self) -> int:
-        return sum(self.durations_ms)
+        """Nominal length, using the midpoint of a random hold."""
+        if not self.hold_ms:
+            return sum(self.durations_ms)
+        low, high = self.hold_ms
+        return (low + high) // 2 + sum(self.durations_ms[1:])
 
 
 @dataclass(frozen=True)
@@ -122,6 +135,95 @@ class SpriteMap:
 
     def defaults(self) -> Resolved:
         return {s.key: {row.key: row.default for row in s.rows} for s in self.sections}
+
+
+def _hold_at(layer: Layer, cycle: int, seed: int) -> int:
+    """The first cell's duration for one cycle: reproducible, not memorised.
+
+    A plain LCG keeps this identical in the preview page, so what is previewed is
+    what is drawn rather than an approximation of it.
+    """
+    assert layer.hold_ms is not None
+    low, high = layer.hold_ms
+    noise = ((cycle * 9301 + seed * 49297 + 233280) % 233280) / 233280
+    return low + int(noise * (high - low))
+
+
+def cell_at(layer: Layer, elapsed_ms: int, seed: int = 0) -> int:
+    """Which cell of this layer is showing, given the clock."""
+    time = max(0, elapsed_ms)
+    if layer.hold_ms is None:
+        total = sum(layer.durations_ms)
+        if layer.loop:
+            time %= total
+        elif time >= total:
+            return layer.cells[-1]
+        cursor = 0
+        for cell, duration in zip(layer.cells, layer.durations_ms):
+            cursor += duration
+            if time < cursor:
+                return cell
+        return layer.cells[-1]
+
+    # A held first cell makes each cycle a different length, so walk the cycles.
+    tail = sum(layer.durations_ms[1:])
+    cycle = 0
+    while True:
+        span = _hold_at(layer, cycle, seed) + tail
+        if time < span or not layer.loop:
+            break
+        time -= span
+        cycle += 1
+    cursor = _hold_at(layer, cycle, seed)
+    if time < cursor:
+        return layer.cells[0]
+    for cell, duration in zip(layer.cells[1:], layer.durations_ms[1:]):
+        cursor += duration
+        if time < cursor:
+            return cell
+    return layer.cells[-1] if not layer.loop else layer.cells[0]
+
+
+def frames_at(option: Option, elapsed_ms: int, seed: int = 0) -> tuple[tuple[str, int], ...]:
+    """Every (sheet, cell) this option draws right now, bottom layer first."""
+    return tuple(
+        (layer.sheet, cell_at(layer, elapsed_ms, seed + index))
+        for index, layer in enumerate(option.layers)
+    )
+
+
+def finished(option: Option, elapsed_ms: int) -> bool:
+    """Whether a non-looping option has run out. A looping one never has."""
+    return not option.loops and elapsed_ms >= option.total_ms
+
+
+class Rotation:
+    """Pick one of several options per time bucket, avoiding an immediate repeat.
+
+    A signal that offers several stills wants variety without flicker, so the
+    choice is made once per bucket and remembered.
+    """
+
+    def __init__(self, rng: object) -> None:
+        self.rng = rng
+        self.picked: dict[tuple[str, int], str] = {}
+
+    def clear(self) -> None:
+        self.picked.clear()
+
+    def pick(self, key: str, choice: Choice, bucket: int) -> str | None:
+        if not choice:
+            return None
+        if len(choice) == 1:
+            return choice[0]
+        bucket = max(0, bucket)
+        remembered = self.picked.get((key, bucket))
+        if remembered is not None:
+            return remembered
+        previous = self.picked.get((key, bucket - 1))
+        candidates = tuple(value for value in choice if value != previous) or choice
+        self.picked[(key, bucket)] = self.rng.choice(candidates)  # type: ignore[attr-defined]
+        return self.picked[(key, bucket)]
 
 
 def _check(section: Section, row_key: str, value: object, options: set[str]) -> tuple[Choice, str]:

@@ -9,8 +9,10 @@ from engram_overlay.overlays import bolttagu_2d
 from engram_overlay.overlays.bolttagu_2d import (
     ASSET_DIR,
     BLINK_INTERVAL_MS,
+    BLINK_SEQUENCE,
     CATEGORY_POSES,
     CLIPS,
+    OPTIONS,
     EVENT_DURATIONS_MS,
     EYE_CELLS,
     HINT_ONESHOTS,
@@ -18,33 +20,17 @@ from engram_overlay.overlays.bolttagu_2d import (
     STATE_POSES,
     SCALE_RANGE,
     STEAM_CELLS,
-    BlinkTimeline,
     BolttaguAnimator,
     Clip,
-    clip_cell,
     facing_mirrored,
     load_atlas,
     pose_for,
     scaled_cell,
-    steam_cell,
 )
+from engram_overlay.overlays.spritemap import cell_at, finished
 from engram_overlay.protocol import DISPLAY_HINTS
 from engram_overlay.registry import OVERLAYS, create_overlay, overlay_ids
 from engram_overlay.state import OverlayState
-
-
-class FixedIntervalRandom(random.Random):
-    """Random source whose blink gaps are predictable but still range-checked."""
-
-    def __init__(self, interval: int) -> None:
-        super().__init__(0)
-        self.interval = interval
-        self.calls = 0
-
-    def randint(self, a: int, b: int) -> int:  # type: ignore[override]
-        assert (a, b) == BLINK_INTERVAL_MS
-        self.calls += 1
-        return self.interval
 
 
 class ClipTests(unittest.TestCase):
@@ -69,16 +55,21 @@ class BolttaguResizeTests(unittest.TestCase):
         self.assertAlmostEqual(width / height, view.cell[0] / view.cell[1], places=2)
 
 
-class ClipCellTests(unittest.TestCase):
+
+class TimelineTests(unittest.TestCase):
+    """The declared options are what the renderer draws, on the shared timeline."""
+
+    def layer(self, option: str, index: int = 0):
+        return OPTIONS[option].layers[index]
+
     def test_wondering_uses_pack_durations_and_wraps(self) -> None:
-        clip = CLIPS["wondering"]
-        self.assertEqual(clip.durations_ms, (320, 260, 320))
-        self.assertEqual(clip.total_ms, 900)
-        self.assertEqual(clip_cell(clip, 0), 0)
-        self.assertEqual(clip_cell(clip, 319), 0)
-        self.assertEqual(clip_cell(clip, 320), 1)
-        self.assertEqual(clip_cell(clip, 580), 2)
-        self.assertEqual(clip_cell(clip, 900), 0)
+        layer = self.layer("wondering")
+        self.assertEqual(layer.durations_ms, (320, 260, 320))
+        self.assertEqual(cell_at(layer, 0), 0)
+        self.assertEqual(cell_at(layer, 319), 0)
+        self.assertEqual(cell_at(layer, 320), 1)
+        self.assertEqual(cell_at(layer, 580), 2)
+        self.assertEqual(cell_at(layer, 900), 0)
 
     def test_every_event_clip_matches_the_pack_timings(self) -> None:
         for state, durations in EVENT_DURATIONS_MS.items():
@@ -90,73 +81,69 @@ class ClipCellTests(unittest.TestCase):
         one_shots = {name for name, clip in CLIPS.items() if not clip.loop}
         self.assertEqual(one_shots, {"success", "enter", "exit"})
 
-    def test_enter_uses_pack_durations_then_retires(self) -> None:
-        clip = CLIPS["enter"]
-        self.assertEqual(clip.durations_ms, (200, 300, 220))
-        self.assertEqual(clip_cell(clip, 0), 0)
-        self.assertEqual(clip_cell(clip, 200), 1)
-        self.assertEqual(clip_cell(clip, 500), 2)
-        self.assertIsNone(clip_cell(clip, 720))
+    def test_enter_uses_pack_durations_then_holds(self) -> None:
+        layer = self.layer("enter")
+        self.assertEqual(layer.durations_ms, (200, 300, 220))
+        self.assertEqual(cell_at(layer, 0), 0)
+        self.assertEqual(cell_at(layer, 200), 1)
+        self.assertEqual(cell_at(layer, 500), 2)
+        self.assertEqual(cell_at(layer, 720), 2)
+        self.assertTrue(finished(OPTIONS["enter"], 720))
 
-    def test_negative_elapsed_clamps_to_first_cell(self) -> None:
-        self.assertEqual(clip_cell(CLIPS["enter"], -50), 0)
+    def test_negative_elapsed_clamps_to_the_first_cell(self) -> None:
+        self.assertEqual(cell_at(self.layer("enter"), -50), 0)
 
-
-class SteamTests(unittest.TestCase):
     def test_steam_runs_a_24_frame_ten_fps_loop(self) -> None:
-        self.assertEqual(steam_cell(0), 0)
-        self.assertEqual(steam_cell(99), 0)
-        self.assertEqual(steam_cell(100), 1)
-        self.assertEqual(steam_cell(2_300), 23)
-        self.assertEqual(steam_cell(2_400), 0)
-
-    def test_negative_elapsed_clamps(self) -> None:
-        self.assertEqual(steam_cell(-500), 0)
+        steam = self.layer(IDLE_POSE, 1)
+        self.assertEqual(cell_at(steam, 0), 0)
+        self.assertEqual(cell_at(steam, 99), 0)
+        self.assertEqual(cell_at(steam, 100), 1)
+        self.assertEqual(cell_at(steam, 2_300), 23)
+        self.assertEqual(cell_at(steam, 2_400), 0)
 
 
 class BlinkTests(unittest.TestCase):
-    def test_eyes_stay_open_until_the_scheduled_blink(self) -> None:
-        blink = BlinkTimeline(rng=FixedIntervalRandom(3_000), started_ms=0)
-        self.assertEqual(blink.eye(0), "open")
-        self.assertEqual(blink.eye(2_999), "open")
+    """One definition of the blink, shared by the picker and the renderer."""
 
-    def test_blink_runs_half_closed_half_then_reopens(self) -> None:
-        blink = BlinkTimeline(rng=FixedIntervalRandom(3_000), started_ms=0)
-        self.assertEqual(blink.eye(3_000), "half")
-        self.assertEqual(blink.eye(3_049), "half")
-        self.assertEqual(blink.eye(3_050), "closed")
-        self.assertEqual(blink.eye(3_139), "closed")
-        self.assertEqual(blink.eye(3_140), "half")
-        self.assertEqual(blink.eye(3_209), "half")
-        self.assertEqual(blink.eye(3_210), "open")
+    def setUp(self) -> None:
+        self.eye = OPTIONS[IDLE_POSE].layers[0]
 
-    def test_next_blink_is_rescheduled_after_completion(self) -> None:
-        rng = FixedIntervalRandom(3_000)
-        blink = BlinkTimeline(rng=rng, started_ms=0)
-        self.assertEqual(rng.calls, 1)
-        blink.eye(3_210)
-        self.assertEqual(rng.calls, 2)
-        self.assertEqual(blink.eye(6_209), "open")
-        self.assertEqual(blink.eye(6_210), "half")
+    def eyes(self, seed: int = 0, span: int = 40_000, step: int = 10):
+        names = {value: key for key, value in EYE_CELLS.items()}
+        return [(t, names[cell_at(self.eye, t, seed)]) for t in range(0, span, step)]
 
-    def test_a_long_stall_does_not_stretch_the_blink(self) -> None:
-        blink = BlinkTimeline(rng=FixedIntervalRandom(3_000), started_ms=0)
-        # One tick arrives well past the whole blink; it must already be over.
-        self.assertEqual(blink.eye(30_000), "open")
+    def test_the_blink_is_declared_not_reimplemented(self) -> None:
+        self.assertEqual(self.eye.hold_ms, BLINK_INTERVAL_MS)
+        self.assertEqual(self.eye.durations_ms[1:], tuple(ms for _, ms in BLINK_SEQUENCE))
 
-    def test_reset_rearms_from_the_given_instant(self) -> None:
-        blink = BlinkTimeline(rng=FixedIntervalRandom(2_500), started_ms=0)
-        blink.reset(10_000)
-        self.assertEqual(blink.eye(12_499), "open")
-        self.assertEqual(blink.eye(12_500), "half")
+    def test_the_eye_runs_half_closed_half_then_reopens(self) -> None:
+        seen = [name for _, name in self.eyes()]
+        self.assertEqual(set(seen), {"open", "half", "closed"})
+        # Every closed run is bracketed by half on both sides.
+        for index in range(1, len(seen) - 1):
+            if seen[index] == "closed" and seen[index - 1] != "closed":
+                self.assertEqual(seen[index - 1], "half")
 
-    def test_default_random_source_stays_inside_the_pack_interval(self) -> None:
-        blink = BlinkTimeline(rng=random.Random(7), started_ms=0)
+    def test_the_eye_rests_open_for_most_of_the_time(self) -> None:
+        seen = [name for _, name in self.eyes()]
+        self.assertGreater(seen.count("open") / len(seen), 0.9)
+
+    def test_gaps_between_blinks_stay_inside_the_declared_range(self) -> None:
         low, high = BLINK_INTERVAL_MS
-        for _ in range(50):
-            blink.reset(0)
-            self.assertGreaterEqual(blink._next_blink_ms, low)
-            self.assertLessEqual(blink._next_blink_ms, high)
+        starts = [t for (t, name), (_, prev) in zip(self.eyes()[1:], self.eyes())
+                  if name != "open" and prev == "open"]
+        gaps = [b - a for a, b in zip(starts, starts[1:])]
+        self.assertTrue(gaps)
+        for gap in gaps:
+            with self.subTest(gap=gap):
+                self.assertGreaterEqual(gap, low)
+                self.assertLessEqual(gap, high + sum(ms for _, ms in BLINK_SEQUENCE))
+
+    def test_the_same_seed_replays_identically(self) -> None:
+        self.assertEqual(self.eyes(seed=3), self.eyes(seed=3))
+
+    def test_a_different_seed_blinks_at_different_times(self) -> None:
+        self.assertNotEqual(self.eyes(seed=0), self.eyes(seed=5))
 
 
 class ScaleTests(unittest.TestCase):
@@ -217,30 +204,27 @@ class StateMappingTests(unittest.TestCase):
 
 
 class AnimatorTests(unittest.TestCase):
-    def animator(self, *, intro: str | None = None, interval: int = 3_000) -> BolttaguAnimator:
-        return BolttaguAnimator(started_ms=0, intro=intro, rng=FixedIntervalRandom(interval))
+    def animator(self, *, intro: str | None = None, seed: int = 0) -> BolttaguAnimator:
+        return BolttaguAnimator(started_ms=0, intro=intro, seed=seed)
 
     def test_rejects_an_unknown_intro(self) -> None:
         with self.assertRaises(ValueError):
             BolttaguAnimator(intro="pirouette")
 
-    def test_idle_layers_blink_over_steam(self) -> None:
+    def test_idle_layers_the_eye_over_the_steam(self) -> None:
         animator = self.animator()
-        self.assertEqual(
-            animator.resolve(0),
-            (("idle", EYE_CELLS["open"]), ("steam", 0)),
-        )
-        self.assertEqual(
-            animator.resolve(3_050),
-            (("idle", EYE_CELLS["closed"]), ("steam", steam_cell(3_050))),
-        )
+        frames = animator.resolve(0)
+        self.assertEqual([sheet for sheet, _ in frames], ["idle", "steam"])
+        self.assertEqual(frames[0][1], EYE_CELLS["open"])
 
-    def test_steam_and_blink_advance_independently(self) -> None:
+    def test_idle_steam_advances_independently_of_the_eye(self) -> None:
         animator = self.animator()
+        steam = {animator.resolve(t)[1][1] for t in range(0, 2_400, 100)}
         eyes = {animator.resolve(t)[0][1] for t in range(0, 2_400, 100)}
-        steams = {animator.resolve(t)[1][1] for t in range(0, 2_400, 100)}
-        self.assertEqual(eyes, {EYE_CELLS["open"]})  # no blink scheduled yet
-        self.assertEqual(len(steams), STEAM_CELLS)
+        self.assertEqual(len(steam), STEAM_CELLS)
+        self.assertEqual(eyes, {EYE_CELLS["open"]})
+
+
 
     def test_intro_plays_once_then_falls_back_to_idle(self) -> None:
         animator = self.animator(intro="enter")
@@ -250,12 +234,11 @@ class AnimatorTests(unittest.TestCase):
         self.assertEqual(recipe[0][0], "idle")
         self.assertIsNone(animator.oneshot)
 
-    def test_intro_rearms_the_blink_when_it_retires(self) -> None:
-        rng = FixedIntervalRandom(3_000)
-        animator = BolttaguAnimator(started_ms=0, intro="enter", rng=rng)
-        self.assertEqual(rng.calls, 1)
-        animator.resolve(800)
-        self.assertEqual(rng.calls, 2)
+    def test_the_arrival_hands_back_to_idle(self) -> None:
+        animator = BolttaguAnimator(started_ms=0, intro="enter")
+        self.assertEqual(animator.resolve(0)[0][0], "enter")
+        self.assertEqual(animator.resolve(800)[0][0], "idle")
+        self.assertIsNone(animator.oneshot)
 
     def test_thought_runs_the_wondering_loop(self) -> None:
         animator = self.animator()
@@ -334,22 +317,19 @@ class AnimatorTests(unittest.TestCase):
         self.assertEqual(animator.display_hint, "idle")
         self.assertEqual(animator.pose, IDLE_POSE)
 
-    def test_returning_to_idle_rearms_the_blink(self) -> None:
-        rng = FixedIntervalRandom(3_000)
-        animator = BolttaguAnimator(started_ms=0, intro=None, rng=rng)
+    def test_returning_to_idle_restarts_the_blink_clock(self) -> None:
+        """The pose clock is the blink clock, so re-entering idle starts a fresh wait."""
+        animator = BolttaguAnimator(started_ms=0, intro=None)
         animator.apply_hint("thought", 1_000)
-        self.assertEqual(rng.calls, 1)
         animator.apply_hint("idle", 2_000)
-        self.assertEqual(rng.calls, 2)
-        self.assertEqual(animator.resolve(4_999)[0][1], EYE_CELLS["open"])
-        self.assertEqual(animator.resolve(5_000)[0][1], EYE_CELLS["half"])
+        self.assertEqual(animator.state_started_ms, 2_000)
+        low = BLINK_INTERVAL_MS[0]
+        self.assertEqual(animator.resolve(2_000 + low - 10)[0][1], EYE_CELLS["open"])
 
-    def test_moving_between_two_idle_hints_does_not_rearm_the_blink(self) -> None:
-        rng = FixedIntervalRandom(3_000)
-        animator = BolttaguAnimator(started_ms=0, intro=None, rng=rng)
+    def test_success_settles_on_the_idle_pose(self) -> None:
+        animator = BolttaguAnimator(started_ms=0, intro=None)
         animator.apply_hint("success", 1_000)
         self.assertEqual(animator.pose, IDLE_POSE)
-        self.assertEqual(rng.calls, 1)
 
     def test_both_failure_hints_loop_the_error_animation(self) -> None:
         for hint in ("error", "provider_error"):
@@ -490,7 +470,6 @@ UNMAPPED = Path(tempfile.mkdtemp()) / "no-mapping.json"
 
 class ViewTests(unittest.TestCase):
     def view(self, **kwargs: object) -> bolttagu_2d.Bolttagu2dView:
-        kwargs.setdefault("rng", FixedIntervalRandom(3_000))
         kwargs.setdefault("mapping_path", UNMAPPED)
         return bolttagu_2d.Bolttagu2dView(**kwargs)  # type: ignore[arg-type]
 
