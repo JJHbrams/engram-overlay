@@ -6,12 +6,16 @@ import random
 import time
 import tkinter as tk
 from pathlib import Path
+from typing import Callable
 
 from PIL import Image, ImageTk
 
 from ..backends.tk import TkOverlayHost
 from ..protocol import JsonlTransport
 from ..state import OverlayState
+from .spritemap import Layer, Option, Row, Section, SpriteMap
+from .spritemap import installed_mapping_path as _installed_mapping_path
+from .spritemap import resolve as _resolve
 
 TRANSPARENT = "#010203"
 ATLAS_COLUMNS = 3
@@ -33,6 +37,70 @@ STATE_FRAMES: dict[str, tuple[int, ...]] = {
     "provider_error": (2, 4),
     "error": (4,),
 }
+
+OVERLAY_ID = "rabbit-2d"
+ASSET_DIR = Path(__file__).parent / "assets" / "rabbit_2d"
+
+# The five drawn poses, in atlas order.
+POSE_NAMES = ("졸림", "놀람", "울먹임", "궁금함", "화남")
+HINT_NOTES = {
+    "idle": "유휴", "default": "기본", "input": "사용자 입력 제출",
+    "generating": "응답 생성 · 도구 실행", "thought": "생각 중", "search": "검색 도구",
+    "memory": "기억 도구", "success": "턴 완료", "hover": "포인터 올림",
+    "click": "클릭", "error": "도구 실패", "provider_error": "provider 실패",
+}
+HINT_ORDER = (
+    "idle", "default", "input", "generating", "thought",
+    "search", "memory", "success", "hover", "click", "error", "provider_error",
+)
+PREVIEW_FRAME_MS = 900
+
+
+def installed_mapping_path() -> Path:
+    return _installed_mapping_path(OVERLAY_ID)
+
+
+def sprite_map() -> SpriteMap:
+    """Declarative description for the shared picker and loader.
+
+    Unlike a sheet overlay, a hint here holds several stills and one is drawn per
+    time bucket, so its section is multi-select.
+    """
+    options = {
+        name: Option(name, (Layer("states", (index,), (PREVIEW_FRAME_MS,)),))
+        for index, name in enumerate(POSE_NAMES)
+    }
+    return SpriteMap(
+        overlay_id=OVERLAY_ID,
+        name="Rabbit",
+        cell=FRAME_SIZE,
+        asset_dir=ASSET_DIR,
+        sheets={"states": ("rabbit-states.png", len(POSE_NAMES), ATLAS_COLUMNS)},
+        options=options,
+        sections=(
+            Section(
+                "hints", "display hint",
+                tuple(
+                    Row(key, HINT_NOTES.get(key, ""),
+                        tuple(POSE_NAMES[i] for i in STATE_FRAMES[key]))
+                    for key in HINT_ORDER
+                ),
+                tuple(POSE_NAMES),
+                note="여러 장을 고르면 시간 구간마다 하나씩 무작위로 뽑는다. 직전 장은 피한다.",
+                multi=True,
+            ),
+        ),
+    )
+
+
+def load_frames(
+    path: Path | None = None, *, log: Callable[[str], None] | None = None
+) -> dict[str, tuple[int, ...]]:
+    """Resolve hint -> candidate frame indices through the shared loader."""
+    resolved = _resolve(sprite_map(), path, log=log)["hints"]
+    lookup = {name: index for index, name in enumerate(POSE_NAMES)}
+    return {key: tuple(lookup[name] for name in names) for key, names in resolved.items() if names}
+
 
 STATE_FRAME_MS = {
     "default": 5200,
@@ -75,13 +143,15 @@ def choose_frame(
     bucket: int,
     choices: dict[tuple[str, int], int],
     rng: random.Random,
+    frames_by_hint: dict[str, tuple[int, ...]] | None = None,
 ) -> int:
     """Choose once per state bucket and avoid immediate repeats when possible."""
-    hint = display_hint if display_hint in STATE_FRAMES else "idle"
+    table = frames_by_hint if frames_by_hint is not None else STATE_FRAMES
+    hint = display_hint if display_hint in table else "idle"
     key = (hint, max(0, bucket))
     if key in choices:
         return choices[key]
-    frames = STATE_FRAMES[hint]
+    frames = table[hint]
     previous = choices.get((hint, key[1] - 1))
     candidates = tuple(frame for frame in frames if frame != previous) or frames
     choices[key] = rng.choice(candidates)
@@ -93,8 +163,15 @@ class Rabbit2DView:
     background = TRANSPARENT
     transparent_color = TRANSPARENT
 
-    def __init__(self, *, rng: random.Random | None = None) -> None:
-        asset = Path(__file__).parent / "assets" / "rabbit_2d" / "rabbit-states.png"
+    def __init__(
+        self,
+        *,
+        rng: random.Random | None = None,
+        mapping_path: Path | None = None,
+        log: Callable[[str], None] | None = None,
+    ) -> None:
+        self.frames_by_hint = load_frames(mapping_path, log=log)
+        asset = ASSET_DIR / "rabbit-states.png"
         atlas = Image.open(asset).convert("RGBA")
         self.frames = tuple(
             frame.resize(DISPLAY_SIZE, Image.Resampling.LANCZOS)
@@ -115,7 +192,7 @@ class Rabbit2DView:
         self.image_id = canvas.create_image(0, 0, image=self.photo, anchor="nw")
 
     def apply_state(self, state: OverlayState) -> None:
-        hint = state.display_hint if state.display_hint in STATE_FRAMES else "idle"
+        hint = state.display_hint if state.display_hint in self.frames_by_hint else "idle"
         if hint != self.display_hint:
             self.display_hint = hint
             self.state_started_at = time.monotonic()
@@ -127,7 +204,9 @@ class Rabbit2DView:
             return
         elapsed_ms = max(0.0, (time.monotonic() - self.state_started_at) * 1000)
         bucket = int(elapsed_ms // STATE_FRAME_MS[self.display_hint])
-        frame = choose_frame(self.display_hint, bucket, self.choices, self.rng)
+        frame = choose_frame(
+            self.display_hint, bucket, self.choices, self.rng, self.frames_by_hint
+        )
         if frame == self.current_frame:
             return
         self.current_frame = frame

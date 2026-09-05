@@ -89,7 +89,7 @@ python scripts/verify-engram.py --engram-source <engram-source> --manifest "$HOM
 | id | 이름 | backend | 설명 |
 | --- | --- | --- | --- |
 | `bolttagu-2d` | Bolttagu | Tk sprite sheet | 검색·작성·응답·실패 등 상태별 애니메이션과 랜덤 눈깜빡임·커피 김을 합성하는 2D 캐릭터 |
-| `rabbit-2d` | Rabbit | Tk sprite grid | 손그림 토끼 5개 포즈를 의미 이벤트에 맞춰 회전 |
+| `rabbit-2d` | Rabbit | Tk sprite grid | 손그림 토끼 5개 포즈를 의미 이벤트에 맞춰 회전. 매핑 선택 가능 |
 | `xeyes` | Engram XEyes | Tk | mouse pointer를 따라보는 두 눈. 첫 API/입력 smoke |
 | `robot-arm` | Engram 3-Link Robot Arm | Tk | 천장에서 내려오는 iris·LED 표정의 단안 3-link arm |
 | `robot-arm-3d` | Engram 3D Robot Arm | Tk software 3D | 같은 arm을 원근 투영·depth sort·면 조명으로 렌더링 |
@@ -97,8 +97,8 @@ python scripts/verify-engram.py --engram-source <engram-source> --manifest "$HOM
 | `robot-arm-3d-v3` | CCTV | Tk textured software 3D + 2D actors | V2 arm의 gaze를 피해 숨고 엿보는 순례자 실루엣 |
 
 각 preset의 상태 매핑과 애니메이션 세부는 [Overlay preset 상세](docs/overlays.md)에 있다.
-`bolttagu-2d`의 신호별 동작은 `python scripts/build-bolttagu-preview.py --open`으로 띄우는
-미리보기 페이지에서 골라 `mapping.json`으로 내보낼 수 있다.
+스프라이트 preset의 신호별 동작은 `python scripts/build-sprite-preview.py --open`으로 띄우는
+미리보기 페이지에서 탭으로 오버레이를 고르고 `mapping.json`으로 내보낼 수 있다.
 
 ## API 핵심
 
