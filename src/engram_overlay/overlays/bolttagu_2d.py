@@ -24,6 +24,10 @@ from PIL import Image, ImageTk
 
 from ..backends.tk import TkOverlayHost
 from ..protocol import TOOL_CATEGORIES, JsonlTransport
+from .spritemap import MAPPING_FILE, Layer, Option, Row, Section, SpriteMap
+from .spritemap import installed_mapping_path as _installed_mapping_path
+from .spritemap import resolve as _resolve
+from .spritemap import single as _single
 from ..state import OverlayState
 
 TRANSPARENT = "#010203"
@@ -160,13 +164,99 @@ def selectable_oneshots() -> list[str]:
     return sorted(name for name, clip in CLIPS.items() if not clip.loop)
 
 
-# Chosen in scripts/build-bolttagu-preview.py and dropped next to the installed
-# manifest, so retuning which animation means what needs no code change.
-MAPPING_FILE = "mapping.json"
+OVERLAY_ID = "bolttagu-2d"
 
 
 def installed_mapping_path() -> Path:
-    return Path.home() / ".engram" / "overlays" / "bolttagu-2d" / MAPPING_FILE
+    return _installed_mapping_path(OVERLAY_ID)
+
+
+HINT_NOTES = {
+    "idle": "유휴", "default": "기본", "input": "사용자 입력 제출",
+    "generating": "응답 생성 · 도구 실행", "thought": "생각 중", "search": "검색 도구",
+    "memory": "기억 도구", "success": "턴 완료", "hover": "포인터 올림",
+    "click": "클릭", "error": "도구 실패", "provider_error": "provider 실패",
+}
+HINT_ORDER = (
+    "idle", "default", "input", "generating", "thought",
+    "search", "memory", "success", "hover", "click", "error", "provider_error",
+)
+CATEGORY_NOTES = {
+    "write": "write · edit · patch · delete",
+    "execute": "shell · exec · build · test · run",
+    "read": "read · open",
+    "communication": "mail · message · discord",
+    "other": "그 외",
+}
+# A fixed blink cycle stands in for the runtime's random one; over a preview the
+# difference is not visible and it keeps the description declarative.
+PREVIEW_BLINK_MS = 3_000
+
+
+def sprite_map() -> SpriteMap:
+    """Declarative description of this overlay for the shared picker and loader."""
+    metadata = json.loads((ASSET_DIR / "atlas.json").read_text(encoding="utf-8"))
+    sheets = {
+        Path(name).stem.removeprefix("bolttagu-"): (name, len(frames), len(frames))
+        for name, frames in metadata["sheets"].items()
+    }
+    options = {
+        IDLE_POSE: Option(
+            IDLE_POSE,
+            (
+                Layer("idle", tuple(EYE_CELLS[n] for n in ("open", "half", "closed", "half")),
+                      (PREVIEW_BLINK_MS,) + tuple(ms for _, ms in BLINK_SEQUENCE)),
+                Layer("steam", tuple(range(STEAM_CELLS)), (STEAM_FRAME_MS,) * STEAM_CELLS),
+            ),
+            note="눈깜빡임 + 커피 김",
+        )
+    }
+    for name, clip in CLIPS.items():
+        options[name] = Option(name, (Layer(clip.sheet, clip.cells, clip.durations_ms, clip.loop),))
+
+    poses = tuple(selectable_poses())
+    return SpriteMap(
+        overlay_id=OVERLAY_ID,
+        name="Bolttagu",
+        cell=tuple(metadata["cell"]),
+        asset_dir=ASSET_DIR,
+        sheets=sheets,
+        options=options,
+        sections=(
+            Section(
+                "hints", "display hint",
+                tuple(Row(k, HINT_NOTES.get(k, ""), (STATE_POSES[k],)) for k in HINT_ORDER),
+                poses,
+                note="그 상태에 머무는 동안 반복되는 동작. 반복하지 않는 클립은 마지막 프레임에서 멈춘다.",
+            ),
+            Section(
+                "oneshots", "1회 재생",
+                tuple(Row(k, HINT_NOTES.get(k, ""),
+                          (HINT_ONESHOTS[k],) if k in HINT_ONESHOTS else ())
+                      for k in HINT_ORDER),
+                tuple(selectable_oneshots()),
+                note="신호에 진입할 때 지속 동작 위로 한 번 얹힌 뒤 가라앉는다.",
+                allow_empty=True,
+            ),
+            Section(
+                "categories", "도구 범주 — generating 세분",
+                tuple(Row(k, CATEGORY_NOTES.get(k, ""),
+                          (CATEGORY_POSES[k],) if k in CATEGORY_POSES else ())
+                      for k in ("write", "execute", "read", "communication", "other")
+                      if k in REFINABLE_CATEGORIES),
+                poses,
+                note="검색·기억 도구는 자기 display hint로 오므로 여기 없다. 비우면 generating 설정을 따른다.",
+                allow_empty=True,
+            ),
+            Section(
+                "lifecycle", "런처 전환",
+                (Row("show", "overlay.show · 런처로 펼칠 때", (LIFECYCLE_TRANSITIONS["show"],)),
+                 Row("hide", "overlay.hide · 런처로 접을 때", (LIFECYCLE_TRANSITIONS["hide"],))),
+                tuple(sorted(CLIPS)),
+                note="display hint와 무관하게 항상 우선한다.",
+            ),
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -190,75 +280,14 @@ def _valid_oneshot(clip: object) -> bool:
 def load_mapping(
     path: Path | None = None, *, log: Callable[[str], None] | None = None
 ) -> Mapping:
-    """Merge a user mapping over the defaults, dropping anything that cannot be drawn.
-
-    A bad file must never stop the renderer, so every rejected entry is reported and
-    the built-in default is kept for it.
-    """
-    hints, categories = dict(STATE_POSES), dict(CATEGORY_POSES)
-    oneshots, lifecycle = dict(HINT_ONESHOTS), dict(LIFECYCLE_TRANSITIONS)
-    resolved = lambda: Mapping(hints, categories, oneshots, lifecycle)  # noqa: E731
-    path = path or installed_mapping_path()
-    if not path.is_file():
-        return resolved()
-    note = log or (lambda message: None)
-    try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        note(f"{MAPPING_FILE} ignored: {exc}")
-        return resolved()
-    if not isinstance(document, dict):
-        note(f"{MAPPING_FILE} ignored: top level must be an object")
-        return resolved()
-    for section, target, allowed in (
-        ("hints", hints, set(STATE_POSES)),
-        ("categories", categories, REFINABLE_CATEGORIES),
-    ):
-        entries = document.get(section)
-        if entries is None:
-            continue
-        if not isinstance(entries, dict):
-            note(f"{MAPPING_FILE}: {section} must be an object")
-            continue
-        for key, pose in entries.items():
-            if section == "categories" and key in UNREACHABLE_CATEGORIES:
-                note(
-                    f"{MAPPING_FILE}: category {key!r} arrives as its own display hint, "
-                    f"so set the {key!r} hint instead"
-                )
-            elif key not in allowed:
-                note(f"{MAPPING_FILE}: unknown {section[:-1]} {key!r}")
-            elif not _valid_pose(pose):
-                note(f"{MAPPING_FILE}: {key!r} maps to unusable pose {pose!r}")
-            else:
-                target[key] = pose
-
-    entries = document.get("oneshots")
-    if isinstance(entries, dict):
-        for key, clip in entries.items():
-            if key not in STATE_POSES:
-                note(f"{MAPPING_FILE}: unknown hint {key!r}")
-            elif not _valid_oneshot(clip):
-                note(f"{MAPPING_FILE}: {key!r} cannot play {clip!r} once")
-            elif clip is None:
-                oneshots.pop(key, None)
-            else:
-                oneshots[key] = clip
-    elif entries is not None:
-        note(f"{MAPPING_FILE}: oneshots must be an object")
-
-    entries = document.get("lifecycle")
-    if isinstance(entries, dict):
-        for key, clip in entries.items():
-            if key not in LIFECYCLE_TRANSITIONS:
-                note(f"{MAPPING_FILE}: unknown transition {key!r}")
-            elif not isinstance(clip, str) or clip not in CLIPS:
-                note(f"{MAPPING_FILE}: {key!r} cannot play {clip!r}")
-            else:
-                lifecycle[key] = clip
-    elif entries is not None:
-        note(f"{MAPPING_FILE}: lifecycle must be an object")
-    return resolved()
+    """Resolve this overlay's mapping through the shared loader."""
+    resolved = _resolve(sprite_map(), path, log=log)
+    return Mapping(
+        hints=_single(resolved, "hints"),
+        categories=_single(resolved, "categories"),
+        oneshots=_single(resolved, "oneshots"),
+        lifecycle=_single(resolved, "lifecycle"),
+    )
 
 
 def pose_for(
