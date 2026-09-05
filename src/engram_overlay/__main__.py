@@ -74,13 +74,15 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--scale is only supported by bolttagu-2d")
     if args.presentation and args.overlay != "bolttagu-2d":
         parser.error("--presentation is only supported by bolttagu-2d")
+    if args.headless and not args.v1_stdio:
+        parser.error("--headless is a legacy contract check and requires --v1-stdio")
     capabilities = ["overlay.set_size"] if args.overlay == "bolttagu-2d" else []
     if args.presentation:
         # Advertised only when asked for, so an Engram without the launcher never
         # leaves a collapsed renderer with no way to appear.
         capabilities.append(PRESENTATION_CAPABILITY)
 
-    if args.v1_stdio or args.headless:
+    if args.v1_stdio:
         # v1 is retired on Engram's side; this path stays for the headless
         # contract check and for driving a renderer without a host.
         transport = JsonlTransport(sys.stdin, sys.stdout, sys.stderr)

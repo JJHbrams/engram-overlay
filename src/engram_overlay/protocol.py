@@ -1,4 +1,4 @@
-"""Engram External Overlay Event API v1 JSONL helpers."""
+"""Shared Engram External Overlay Event API JSONL helpers."""
 
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ COORDINATE_ACTIONS = frozenset({"right_click", "drag_move", "drag_end"})
 
 
 class ProtocolError(ValueError):
-    """Raised when a JSONL line is not a valid v1 protocol object."""
+    """Raised when a JSONL line is not valid for the selected protocol version."""
 
 
 def hello_message(*, capabilities: list[str] | None = None) -> dict[str, Any]:

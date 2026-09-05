@@ -32,9 +32,11 @@ Engram 재시작 뒤 기존 endpoint나 credential을 재사용하지 않는다.
 
 ## Host에서 받는 메시지
 
-등록 성공 뒤 `engram.welcome`과 `state.snapshot`이 오고, 선택 재계산 때 `renderer.assignment`가 온다.
-welcome payload에는 `selected_schema_version: 2`, `content_policy: metadata_only`, `mode`,
-`host_instance_id`가 있다. assignment payload에는 exact `mode`와 boolean `selected`가 있다.
+등록 성공 뒤 `engram.welcome`, 현재 상태를 담은 `state.snapshot`, 초기 `renderer.assignment`가 그 순서로
+온다. 선택 재계산 때도 assignment가 다시 온다. welcome payload에는 `selected_schema_version: 2`,
+`content_policy: metadata_only`, `mode`, boolean `selected`, `host_instance_id`가 있다. assignment payload에는
+exact `mode`와 boolean `selected`가 있다. assignment와 control의 `display_hint`는 현재 resolved hint이며,
+payload에 category가 없다는 이유로 renderer의 현재 work state나 `tool_category`를 지우지 않는다.
 
 일반 host envelope은 다음 필드를 가진다.
 

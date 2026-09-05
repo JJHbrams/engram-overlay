@@ -31,18 +31,25 @@ WELCOME = {
     "payload": {
         "selected_schema_version": 2,
         "mode": "replace",
+        "selected": True,
         "content_policy": "metadata_only",
         "host_instance_id": INSTANCE,
     },
 }
 SNAPSHOT = {"schema_version": 2, "type": "state.snapshot", "display_hint": "idle", "payload": {}}
+ASSIGNMENT = {
+    "schema_version": 2,
+    "type": "renderer.assignment",
+    "display_hint": "idle",
+    "payload": {"mode": "replace", "selected": True},
+}
 
 
 class StubHost:
     """A loopback server that accepts a registration and replies like Engram."""
 
     def __init__(self, replies=None, accept=True):
-        self.replies = [WELCOME, SNAPSHOT] if replies is None else replies
+        self.replies = [WELCOME, SNAPSHOT, ASSIGNMENT] if replies is None else replies
         self.accept = accept
         self.registered = []
         self._server = socket.socket()
@@ -198,6 +205,16 @@ class ConnectTests(unittest.TestCase):
         self.assertEqual(first["type"], "engram.welcome")
         self.assertEqual(host.registered[0]["payload"]["renderer_id"], "engram.stub")
         self.assertEqual(host.registered[0]["payload"]["token"], TOKEN)
+
+    def test_initial_host_sequence_is_welcome_snapshot_then_assignment(self) -> None:
+        host = StubHost()
+        self.addCleanup(host.close)
+        session = connect_once(self.registration(), discovery_path=host.discovery_file())
+        self.addCleanup(session.close)
+        self.assertEqual(
+            [message["type"] for message in session.transport.messages()],
+            ["engram.welcome", "state.snapshot", "renderer.assignment"],
+        )
 
     def test_a_dead_port_raises_rather_than_hanging(self) -> None:
         host = StubHost()
