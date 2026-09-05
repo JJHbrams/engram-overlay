@@ -85,7 +85,7 @@ def format_catalog() -> str:
         lines.append(f"  {spec.id.ljust(width)}  {spec.name}")
         lines.append(f"  {' ' * width}  {spec.backend} - {spec.summary}")
     lines.append("")
-    lines.append("Install one with scripts/install-dev.ps1 -Overlay <id>, or all of them with -All.")
+    lines.append("Run one with --overlay <id>; install it with scripts/install-runtime.ps1 -Overlay <id>.")
     return "\n".join(lines)
 
 

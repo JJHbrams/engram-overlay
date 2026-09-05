@@ -20,22 +20,25 @@ git checkout v1.1.0.89
 
 개발을 이어갈 때는 tag에서 개인 branch를 만들거나 저장소를 fork한다.
 
-### 2. preset 등록
+### 2. preset 실행
 
-`install-dev.ps1`이 `.venv` 생성, editable install, launcher 절대 경로가 박힌 manifest 생성을 한 번에 한다.
+Engram은 Event API v2에서 loopback API만 제공하고 renderer를 실행하지 않는다. renderer가 스스로
+접속하는 독립 프로그램이므로, 등록할 manifest가 아니라 실행할 런타임이 필요하다.
 
 ```powershell
-.\scripts\install-dev.ps1 -List               # 목록만 보기
-.\scripts\install-dev.ps1 -Overlay rabbit-2d  # 하나만 등록
-.\scripts\install-dev.ps1 -All                # 전부 등록
-python scripts/build-sprite-preview.py         # 신호별 동작 고르기
+.\scripts\install-runtime.ps1 -List                          # 목록만 보기
+.\scripts\install-runtime.ps1 -Overlay rabbit-2d -Start      # 설치하고 바로 실행
+.\scripts\install-runtime.ps1 -Overlay rabbit-2d -Autostart  # Windows 시작 시 자동 실행
+python scripts/build-sprite-preview.py                       # 신호별 동작 고르기
 ```
 
-- manifest 위치는 `%USERPROFILE%\.engram\overlays\<id>\manifest.yaml`이다.
-- 등록 뒤 Engram `Settings > Overlay`에서 고르고 재시작한다. 스크립트는 현재 선택을 바꾸지 않는다.
-- `-Mode observer|replace` (기본 `replace`), `-Scale`(bolttagu-2d), `-EyeEmission`(robot-arm-3d-v2/v3).
-- Engram 런처가 캐릭터 표시를 소유하게 하려면 manifest argv에 `--presentation`을 넣는다.
-- `-All`은 overlay별 옵션과 같이 못 쓴다. 그 옵션이 필요한 preset은 따로 등록한다.
+- 런타임 위치는 `%LOCALAPPDATA%\engram-overlay\`이고, checkout을 지우거나 옮겨도 계속 동작한다.
+- 실행 중인 renderer만 Engram `Settings > Overlay`에 나온다. 먼저 켜고 고른다.
+- 옵션: `-Scale`·`-Presentation`·`-NoFacePointer`(bolttagu-2d), `-EyeEmission`(robot-arm-3d-v2/v3).
+- 다시 켤 때는 `%LOCALAPPDATA%\engram-overlay\start-overlay.cmd`. 자동 실행 해제는 `-RemoveAutostart`.
+- v1 시절 `%USERPROFILE%\.engram\overlays\*\manifest.yaml`은 이제 동작하지 않는다.
+  `-RemoveLegacyManifests`가 manifest만 지우고 `mapping.json` 같은 나머지는 남긴다.
+- 코드를 고치며 쓸 때는 `install-dev.ps1`. checkout을 editable로 연결해 수정이 바로 반영된다.
 - 설치 없이 목록만 보려면 `engram-custom-overlay --list-overlays`.
 - preset 목록의 단일 출처는 `engram_overlay.registry`다. overlay를 추가해도 스크립트는 손대지 않는다.
 
@@ -44,23 +47,12 @@ python scripts/build-sprite-preview.py         # 신호별 동작 고르기
 고를 수 있다. **바로 적용**을 누르면 그 오버레이의 `mapping.json`에 곧바로 쓴다. 코드 수정은 필요 없고,
 자세한 규칙은 [Overlay preset 상세](docs/overlays.md)에 있다.
 
-manifest 형태:
+renderer가 Engram을 찾는 방법:
 
-```yaml
-schema_version: 1
-id: rabbit-2d
-name: Rabbit
-command:
-  - "C:/path/to/engram-overlay/.venv/Scripts/engram-custom-overlay.exe"
-  - "--overlay"
-  - "rabbit-2d"
-  - "--mode"
-  - "replace"
-supported_modes: [observer, replace]
-```
-
-- `command` 첫 항목은 실제 checkout의 launcher 절대 경로여야 한다.
-- Engram은 검증된 manifest의 argv만 실행한다. shell 문자열이 아니다.
+- `%USERPROFILE%\.engram\overlay-event-api-v2.json`에서 현재 `host`/`port`/`instance_id`/`token`을 읽는다.
+- 세 값 모두 Engram이 켜질 때마다 새로 생성되므로 캐시하지 않는다.
+- Engram이 꺼져 있으면 실패가 아니라 대기다. backoff로 재시도하다 켜지면 붙는다.
+- `token`은 argv·설정·로그 어디에도 남기지 않는다.
 
 ### 3. 자신의 overlay 만들기
 
