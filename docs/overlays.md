@@ -83,8 +83,9 @@ python scripts/build-bolttagu-assets.py --pack <sprite-pack-vN>
 python scripts/build-sprite-preview.py
 ```
 
-`dist/sprite-mapping.html`이 생성된다. 외부 의존이 없는 단일 파일이고, **상단 탭으로 오버레이를 고른다.**
+localhost에 페이지를 띄우고 브라우저를 연다. **상단 탭으로 오버레이를 고른다.**
 registry를 순회해 `sprite_map()`을 노출하는 오버레이만 모으므로, 스프라이트 오버레이를 추가하면 탭이 저절로 생긴다.
+파일만 만들고 끝내려면 `--write-only`.
 
 - 동작을 **오버레이가 실제로 그리는 셀**로, 같은 타이밍으로 재생한다. 원본 팩이 아니다.
 - display hint 12종과 도구 범주별로 동작을 고르면 그 자리에서 미리 보인다.
@@ -112,6 +113,8 @@ registry를 순회해 `sprite_map()`을 노출하는 오버레이만 모으므�
 - 1회 재생에는 반복 클립을 넣을 수 없다. 끝나지 않으므로 지속 동작으로 돌아가지 못한다.
 - 파일이 깨져 있어도 renderer는 죽지 않는다. 거부한 항목은 stderr로 남긴다.
 - 페이지의 프레임 선택 로직은 renderer와 같은 값을 내도록 대조 검증한다.
+- 페이지는 **설치된 `mapping.json`을 읽어 현재 선택을 채운 채로 열린다.** 기존 매핑을 고칠 수 있다.
+- `oneshots`(신호 진입 시 1회 재생)는 파일에서는 계속 받지만 표에는 없다. 지속 동작으로 1회 재생 클립을 고를 수 있게 된 뒤로는 "재생 후 idle 복귀" 하나만 남아서 열 하나를 쓸 값이 아니다.
 
 ### presentation — 런처 아이콘 연동
 

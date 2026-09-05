@@ -8,12 +8,14 @@ adds a tab; nothing here changes.
 The page plays the packed cells the renderer actually draws, at the declared
 timings, and exports only what differs from the defaults.
 
-The page is the whole point, so it opens once written. Pass --no-open where a
-browser cannot be launched or only the path is wanted.
+The page is the whole point, so it is served on localhost and opened. Serving it
+rather than opening the file directly is what lets the page write the chosen
+mapping straight to the overlay's install path instead of leaving it in the
+downloads folder.
 
 Usage:
     python scripts/build-sprite-preview.py
-    python scripts/build-sprite-preview.py --no-open
+    python scripts/build-sprite-preview.py --write-only   # just the file
 """
 
 from __future__ import annotations
@@ -23,13 +25,15 @@ import base64
 import importlib
 import json
 import sys
+import tempfile
 import webbrowser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from engram_overlay.overlays.spritemap import MAPPING_FILE, SpriteMap  # noqa: E402
+from engram_overlay.overlays.spritemap import MAPPING_FILE, SpriteMap, resolve  # noqa: E402
 from engram_overlay.registry import overlay_catalog  # noqa: E402
 
 OUTPUT = REPO_ROOT / "dist" / "sprite-mapping.html"
@@ -50,8 +54,13 @@ def data_uri(path: Path) -> str:
     return "data:image/png;base64," + base64.b64encode(path.read_bytes()).decode("ascii")
 
 
-def describe(sprite_map: SpriteMap) -> dict[str, object]:
+def describe(sprite_map: SpriteMap, mapping_path: Path | None = None) -> dict[str, object]:
+    # Seed from whatever is installed, so reopening the page shows the choices in
+    # force rather than starting over from the defaults every time.
+    mapping_path = mapping_path or sprite_map.mapping_path
+    current = resolve(sprite_map, mapping_path)
     return {
+        "hasMapping": mapping_path.is_file(),
         "id": sprite_map.overlay_id,
         "name": sprite_map.name,
         "cell": list(sprite_map.cell),
@@ -90,11 +99,17 @@ def describe(sprite_map: SpriteMap) -> dict[str, object]:
                 "allowEmpty": section.allow_empty,
                 "options": list(section.options),
                 "rows": [
-                    {"key": row.key, "note": row.note, "default": list(row.default)}
+                    {
+                        "key": row.key,
+                        "note": row.note,
+                        "default": list(row.default),
+                        "current": list(current[section.key][row.key]),
+                    }
                     for row in section.rows
                 ],
             }
             for section in sprite_map.sections
+            if not section.hidden
         ],
     }
 
@@ -257,17 +272,17 @@ function buildPanel(ov){
     panel.appendChild(table);
 
     for (const row of section.rows){
-      state[ov.id][section.key][row.key] = row.default.slice();
+      state[ov.id][section.key][row.key] = row.current.slice();
       const tr = document.createElement("tr");
       let control;
       if (section.multi){
         control = section.options.map(o =>
-          `<label><input type="checkbox" value="${o}"${row.default.includes(o)?" checked":""}><span>${o}</span></label>`).join("");
+          `<label><input type="checkbox" value="${o}"${row.current.includes(o)?" checked":""}><span>${o}</span></label>`).join("");
         control = `<div class="chips">${control}</div>`;
       } else {
-        const empty = section.allowEmpty ? `<option value=""${row.default.length?"":" selected"}>— 없음</option>` : "";
+        const empty = section.allowEmpty ? `<option value=""${row.current.length?"":" selected"}>— 없음</option>` : "";
         control = `<select>${empty}` + section.options.map(o =>
-          `<option value="${o}"${row.default[0]===o?" selected":""}>${o}</option>`).join("") + "</select>";
+          `<option value="${o}"${row.current[0]===o?" selected":""}>${o}</option>`).join("") + "</select>";
       }
       tr.innerHTML = `<td class="key">${row.key}</td><td class="note">${row.note}</td>` +
                      `<td>${control}</td><td class="thumb"><canvas></canvas></td>`;
@@ -276,6 +291,7 @@ function buildPanel(ov){
       const cur = () => state[ov.id][section.key][row.key];
       const same = () => JSON.stringify(cur()) === JSON.stringify(row.default);
       const mark = () => tr.classList.toggle("changed", !same());
+      mark();   // a seeded choice is already a change from the default
       if (section.multi){
         const boxes = [...tr.querySelectorAll("input")];
         boxes.forEach(box => box.addEventListener("change", () => {
@@ -301,13 +317,14 @@ function buildPanel(ov){
 
   panel.insertAdjacentHTML("beforeend", `<h2>적용</h2>
     <div class="bar">
-      <button class="act primary" data-do="copy">JSON 복사</button>
+      <button class="act primary" data-do="apply" hidden>바로 적용</button>
+      <button class="act" data-do="copy">JSON 복사</button>
       <button class="act" data-do="save">파일로 저장</button>
       <button class="act" data-do="reset">기본값으로</button>
       <span class="said"></span>
     </div>
     <textarea readonly spellcheck="false"></textarea>
-    <p class="note">브라우저 다운로드 폴더에 저장되니 아래 경로로 옮기고 오버레이를 재시작한다.</p>
+    <p class="note" data-role="howto">브라우저 다운로드 폴더에 저장되니 아래 경로로 옮기고 오버레이를 재시작한다.</p>
     <p class="path">${ov.mappingPath}</p>`);
 
   const out = panel.querySelector("textarea");
@@ -324,6 +341,25 @@ function buildPanel(ov){
     flash("저장했다 · 다운로드 폴더 확인");
   });
   panel.querySelector('[data-do="reset"]').addEventListener("click", () => { resetters.forEach(r=>r()); emit(ov); });
+
+  // Writing the file needs a server; from file:// only download is possible.
+  if (location.protocol.startsWith("http")){
+    panel.querySelector('[data-do="howto"]');
+    const apply = panel.querySelector('[data-do="apply"]');
+    apply.hidden = false;
+    panel.querySelector('[data-role="howto"]').textContent =
+      "바로 적용을 누르면 아래 경로에 저장된다. 오버레이를 재시작하면 반영된다.";
+    apply.addEventListener("click", async () => {
+      try {
+        const response = await fetch("apply/" + ov.id, {
+          method: "POST", headers: {"Content-Type": "application/json"}, body: out.value,
+        });
+        const result = await response.json();
+        flash(response.ok ? "적용했다" : result.error);
+        if (result.notes && result.notes.length) console.warn(result.notes);
+      } catch (error) { flash("실패: " + error.message); }
+    });
+  }
   ov._out = out;
   return panel;
 }
@@ -390,13 +426,76 @@ function frame(now){
 """
 
 
+def serve(maps: list[SpriteMap], page: Path) -> None:
+    """Serve the page and accept the chosen mapping back, for localhost only."""
+    by_id = {sprite_map.overlay_id: sprite_map for sprite_map in maps}
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args: object) -> None:  # quiet
+            pass
+
+        def _send(self, code: int, body: bytes, kind: str) -> None:
+            self.send_response(code)
+            self.send_header("Content-Type", kind)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self) -> None:
+            if self.path in ("/", "/index.html"):
+                self._send(200, page.read_bytes(), "text/html; charset=utf-8")
+            else:
+                self._send(404, b"not found", "text/plain; charset=utf-8")
+
+        def do_POST(self) -> None:
+            overlay_id = self.path.removeprefix("/apply/")
+            sprite_map = by_id.get(overlay_id)
+            if sprite_map is None:
+                self._send(404, json.dumps({"error": "unknown overlay"}).encode(), "application/json")
+                return
+            raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            # Validate exactly as the renderer will before touching the real path.
+            scratch = Path(tempfile.mkdtemp()) / MAPPING_FILE
+            try:
+                scratch.write_bytes(raw)
+                notes: list[str] = []
+                resolve(sprite_map, scratch, log=notes.append)
+                json.loads(raw)
+            except (json.JSONDecodeError, OSError) as exc:
+                self._send(400, json.dumps({"error": str(exc)}).encode(), "application/json")
+                return
+            if notes:
+                # Refusing beats writing: a mapping whose entries were all rejected
+                # would replace a working one and apply nothing.
+                body = json.dumps({"error": "거부된 항목이 있어 쓰지 않았다", "notes": notes},
+                                  ensure_ascii=False)
+                self._send(409, body.encode("utf-8"), "application/json")
+                return
+            target = sprite_map.mapping_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(raw)
+            payload = json.dumps({"path": str(target), "notes": notes}, ensure_ascii=False)
+            self._send(200, payload.encode("utf-8"), "application/json")
+
+    # Loopback only: this writes files, so it must never be reachable off-machine.
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    url = f"http://127.0.0.1:{server.server_port}/"
+    print(f"serving {url}  (Ctrl+C to stop)")
+    webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("stopped")
+    finally:
+        server.server_close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--no-open",
-        dest="open_page",
-        action="store_false",
-        help="write the page without opening it",
+        "--write-only",
+        action="store_true",
+        help="write the page and exit instead of serving it",
     )
     arguments = parser.parse_args()
 
@@ -415,10 +514,9 @@ def main() -> None:
     for sprite_map in maps:
         rows = sum(len(section.rows) for section in sprite_map.sections)
         print(f"  {sprite_map.overlay_id:14s} {len(sprite_map.options):2d} options, {rows:2d} signals")
-    # The path is printed first, so a browser that refuses to launch still leaves
-    # something usable behind.
-    if arguments.open_page and not webbrowser.open(OUTPUT.as_uri()):
-        print("could not open a browser; open the path above yourself")
+    if arguments.write_only:
+        return
+    serve(maps, OUTPUT)
 
 
 if __name__ == "__main__":

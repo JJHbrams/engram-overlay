@@ -138,6 +138,10 @@ CATEGORY_POSES: dict[str, str] = {
 }
 
 # A hint that warrants a one-shot the moment the renderer enters it.
+# A flourish played once on arrival before settling back into the hint's pose.
+# Not offered in the picker: with non-looping poses selectable, the only thing it
+# adds is returning to idle afterwards, which is one clip and one default. The
+# mapping file still accepts an "oneshots" section.
 HINT_ONESHOTS: dict[str, str] = {"success": "success"}
 
 # Engram's launcher plays these for overlay.show and overlay.hide. A hint may use
@@ -237,6 +241,7 @@ def sprite_map() -> SpriteMap:
                 tuple(selectable_oneshots()),
                 note="신호에 진입할 때 지속 동작 위로 한 번 얹힌 뒤 가라앉는다.",
                 allow_empty=True,
+                hidden=True,
             ),
             Section(
                 "categories", "도구 범주 — generating 세분",

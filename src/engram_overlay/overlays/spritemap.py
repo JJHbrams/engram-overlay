@@ -93,6 +93,9 @@ class Section:
     # Keys the overlay recognises but deliberately does not offer, each with the
     # reason. Without this a deliberate omission is indistinguishable from a typo.
     refused: dict[str, str] = field(default_factory=dict)
+    # Resolved and loadable, but not offered in the picker. For a choice that is
+    # real but too narrow to be worth a column.
+    hidden: bool = False
 
     @property
     def by_key(self) -> dict[str, Row]:
