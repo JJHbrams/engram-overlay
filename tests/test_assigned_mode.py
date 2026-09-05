@@ -17,7 +17,7 @@ def welcome(mode: str) -> dict:
         "schema_version": 2,
         "type": "engram.welcome",
         "display_hint": "idle",
-        "payload": {"mode": mode, "selected_schema_version": 2, "content_policy": "metadata_only"},
+        "payload": {"mode": mode, "selected": True, "selected_schema_version": 2, "content_policy": "metadata_only"},
     }
 
 
@@ -38,6 +38,7 @@ class AssignedModeStateTests(unittest.TestCase):
         state = OverlayState()
         state.apply(welcome("replace"))
         self.assertEqual(state.mode, "replace")
+        self.assertTrue(state.selected)
 
     def test_a_later_assignment_replaces_it(self) -> None:
         state = OverlayState()
@@ -64,6 +65,16 @@ class AssignedModeStateTests(unittest.TestCase):
         state.apply({"schema_version": 2, "type": "generation.started",
                      "display_hint": "generating", "payload": {}})
         self.assertEqual(state.mode, "replace")
+
+    def test_assignment_and_controls_preserve_current_work_and_category(self) -> None:
+        state = OverlayState()
+        state.apply({"schema_version": 2, "type": "tool.started", "display_hint": "search",
+                     "payload": {"category": "search"}})
+        state.apply({"schema_version": 2, "type": "renderer.assignment", "display_hint": "search",
+                     "payload": {"mode": "replace", "selected": True}})
+        state.apply({"schema_version": 2, "type": "overlay.hide", "display_hint": "search", "payload": {}})
+        self.assertEqual(state.display_hint, "search")
+        self.assertEqual(state.tool_category, "search")
 
 
 class AssignedModeHostTests(unittest.TestCase):

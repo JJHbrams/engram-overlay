@@ -1,11 +1,14 @@
 # Engram 측 요청 사항 — rev 2
 
+> 역사적 v1 요청 기록이다. 현재 소유권과 wire 기준은 [Event API v2](event-api-v2.md)다. 아래 child process,
+> manifest, stdin/stdout 제안은 v2 정상 경로에 적용되지 않는다.
+
 `engram-overlay`에서 외부 renderer(`bolttagu-2d`)를 만들고 `replace` 모드로 운용하며 확인된, **Engram 본체
 변경이 필요한** 항목이다. renderer 쪽에서 해결 가능한 것은 이미 처리했고 여기 넣지 않았다.
 
 - rev 1 대비: **2건 종결**, 3건 미해결 유지, **2건 신규**, 1건 우선도 하향
 - 대상 코드: `ProjectIntelContunuum` `dev` @ `31a698f` (읽기 전용 확인, 2026-09-04)
-- 기준 계약: [Event API v1](event-api-v1.md), 소유권 경계는 [LLM authoring guide](llm-overlay-authoring.md)
+- 당시 기준 계약: [Event API v1](event-api-v1.md), 현재 기준: [Event API v2](event-api-v2.md)
 
 ## 요약
 
@@ -26,7 +29,7 @@ R1~R3은 서로 독립이라 각각 따로 고칠 수 있다.
 | 항목 | 결과 |
 | --- | --- |
 | Engram → renderer 크기 요청 경로 부재 | **해결.** `overlay.set_size`가 capability gate와 함께 도입됐다. `main.py:1278`에서 `supports("overlay.set_size")`로 확인 후 `1286`에서 발행하는 것을 dev에서 확인했다. |
-| replace 모드 컨텍스트 메뉴 행 | **해결.** native `#32768` popup이 Tk `post()`를 블로킹하는 것이 실제 원인이었고, scoped `WH_MOUSE_LL` hook으로 처리됐다. rev 1에 인계했던 내 가설 두 개는 모두 반증됐다. |
+| replace 모드 컨텍스트 메뉴 행 | **해결 후 교체.** scoped `WH_MOUSE_LL` 방식은 전역 입력 지연을 일으켜 되돌렸다. 현재 host가 bundled와 renderer 요청을 같은 custom dark nonmodal menu로 표시하며 Tk-thread outside-click polling으로 닫는다. renderer는 `menu_dismiss`/pointer 요청만 보낸다. |
 
 ---
 

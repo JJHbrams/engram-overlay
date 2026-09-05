@@ -1,7 +1,7 @@
 # Overlay preset 상세
 
 각 preset이 `display_hint`를 어떤 그림으로 옮기는지와, 그 그림을 만드는 방식이다.
-등록 방법은 [README](../README.md), 계약은 [Event API v1](event-api-v1.md)을 본다.
+실행 방법은 [README](../README.md), 기본 계약은 [Event API v2](event-api-v2.md)를 본다.
 
 ## bolttagu-2d
 

@@ -56,6 +56,24 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(json.loads(stdout.getvalue())["type"], "overlay.hello")
         self.assertEqual(stderr.getvalue(), "diagnostic\n")
 
+    def test_transport_stamps_all_backend_outbound_messages_with_active_v2_schema(self) -> None:
+        messages = (
+            geometry_message(1, 2, 3, 4),
+            visibility_message(False),
+            pointer_message("left_click"),
+            {"schema_version": 1, "type": "overlay.heartbeat", "payload": {}},
+        )
+        for message in messages:
+            with self.subTest(message_type=message["type"]):
+                wire = io.StringIO()
+                JsonlTransport(io.StringIO(), wire, io.StringIO(), schema_version=2).send(message)
+                self.assertEqual(json.loads(wire.getvalue())["schema_version"], 2)
+
+    def test_explicit_v1_transport_keeps_backend_outbound_schema_one(self) -> None:
+        wire = io.StringIO()
+        JsonlTransport(io.StringIO(), wire, io.StringIO()).send(pointer_message("left_click"))
+        self.assertEqual(json.loads(wire.getvalue())["schema_version"], 1)
+
     def test_unknown_hint_falls_back_to_idle(self) -> None:
         state = OverlayState()
         state.apply({"schema_version": 1, "type": "future.event", "display_hint": "future", "payload": {}})
@@ -142,6 +160,42 @@ class ProtocolTests(unittest.TestCase):
         state.apply({"schema_version": 1, "type": "overlay.set_position", "payload": {"x": 1, "y": 2}})
         state.apply({"schema_version": 1, "type": "overlay.set_size", "payload": {"width": 10, "height": 20}})
         self.assertEqual(state.tool_category, "execute")
+
+    def test_pointer_leave_restores_active_generation_instead_of_idle(self) -> None:
+        state = OverlayState()
+        state.apply({"schema_version": 2, "type": "generation.started", "display_hint": "generating", "payload": {}})
+        state.apply({"schema_version": 2, "type": "pointer.entered", "display_hint": "hover", "payload": {}})
+        self.assertEqual(state.display_hint, "hover")
+        state.apply({"schema_version": 2, "type": "pointer.left", "display_hint": "idle", "payload": {}})
+        self.assertEqual(state.display_hint, "generating")
+
+    def test_input_idle_restores_active_tool_hint_and_category(self) -> None:
+        state = OverlayState()
+        state.apply({"schema_version": 2, "type": "tool.started", "display_hint": "search", "payload": {"category": "search"}})
+        state.apply({"schema_version": 2, "type": "conversation.input_active", "display_hint": "input", "payload": {}})
+        self.assertEqual(state.display_hint, "input")
+        state.apply({"schema_version": 2, "type": "conversation.input_idle", "display_hint": "idle", "payload": {}})
+        self.assertEqual(state.display_hint, "search")
+        self.assertEqual(state.tool_category, "search")
+
+    def test_work_update_during_input_is_revealed_when_input_ends(self) -> None:
+        state = OverlayState()
+        state.apply({"schema_version": 2, "type": "conversation.input_active", "display_hint": "input", "payload": {}})
+        state.apply({"schema_version": 2, "type": "generation.thinking", "display_hint": "thought", "payload": {}})
+        self.assertEqual(state.display_hint, "input")
+        state.apply({"schema_version": 2, "type": "conversation.input_idle", "display_hint": "idle", "payload": {}})
+        self.assertEqual(state.display_hint, "thought")
+
+    def test_v2_snapshot_restores_the_current_bounded_tool_category(self) -> None:
+        state = OverlayState()
+        state.apply({
+            "schema_version": 2,
+            "type": "state.snapshot",
+            "display_hint": "search",
+            "payload": {"generation_active": True, "tool_category": "search"},
+        })
+        self.assertEqual(state.display_hint, "search")
+        self.assertEqual(state.tool_category, "search")
 
 
 if __name__ == "__main__":

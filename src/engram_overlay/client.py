@@ -50,8 +50,8 @@ class Session:
     def __init__(self, sock: socket.socket, discovery: Discovery) -> None:
         self._socket = sock
         self.discovery = discovery
-        # A text file pair over the socket lets the v1 transport carry v2 lines
-        # unchanged: the framing was never what differed between the versions.
+        # A text file pair reuses the shared JSONL framing while the transport's
+        # active schema stamps outbound renderer messages as v2.
         self._reader = sock.makefile("r", encoding="utf-8", newline="\n")
         self._writer = sock.makefile("w", encoding="utf-8", newline="\n")
         self.transport = JsonlTransport(
