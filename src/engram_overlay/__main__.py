@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import io
 import sys
 
+from .client import Registration, sessions
+from .discovery import SCHEMA_VERSION as V2_SCHEMA_VERSION
 from .protocol import PRESENTATION_CAPABILITY, JsonlTransport, hello_message
-from .registry import create_overlay, format_catalog, overlay_ids
+from .registry import OVERLAYS, create_overlay, format_catalog, overlay_ids
 from .state import OverlayState
 
 
@@ -35,6 +38,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=1.0,
         help="resize the bolttagu-2d window; 1.0 is the artwork's own 270x302",
+    )
+    parser.add_argument(
+        "--v1-stdio",
+        action="store_true",
+        help="speak Event API v1 over stdin/stdout instead of connecting to the v2 host",
     )
     parser.add_argument(
         "--presentation",
@@ -66,18 +74,20 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--scale is only supported by bolttagu-2d")
     if args.presentation and args.overlay != "bolttagu-2d":
         parser.error("--presentation is only supported by bolttagu-2d")
-    transport = JsonlTransport(sys.stdin, sys.stdout, sys.stderr)
-    # The API requires this to be the renderer's first stdout line. Send it
-    # before constructing a window or starting the reader.
     capabilities = ["overlay.set_size"] if args.overlay == "bolttagu-2d" else []
     if args.presentation:
-        # Advertised only when the manifest opts in, so an Engram without the
-        # launcher never leaves a collapsed renderer with no way to appear.
+        # Advertised only when asked for, so an Engram without the launcher never
+        # leaves a collapsed renderer with no way to appear.
         capabilities.append(PRESENTATION_CAPABILITY)
-    transport.send(hello_message(capabilities=capabilities or None))
-    if args.headless:
-        run_headless(transport)
-    else:
+
+    if args.v1_stdio or args.headless:
+        # v1 is retired on Engram's side; this path stays for the headless
+        # contract check and for driving a renderer without a host.
+        transport = JsonlTransport(sys.stdin, sys.stdout, sys.stderr)
+        transport.send(hello_message(capabilities=capabilities or None))
+        if args.headless:
+            run_headless(transport)
+            return 0
         create_overlay(
             args.overlay,
             transport,
@@ -87,6 +97,37 @@ def main(argv: list[str] | None = None) -> int:
             scale=args.scale,
             launcher_managed=args.presentation,
         ).run()
+        return 0
+
+    return run_v2(args, tuple(capabilities))
+
+
+def run_v2(args: argparse.Namespace, capabilities: tuple[str, ...]) -> int:
+    """Open the window, then keep it connected to whatever host is there.
+
+    The window is created before any host exists and outlives every socket: a
+    renderer starts with the session, waits for Engram, and survives its restarts.
+    """
+    spec = OVERLAYS[args.overlay]
+    registration = Registration(
+        renderer_id=f"engram.{args.overlay}",
+        name=spec.name,
+        supported_modes=("observer", "replace"),
+        capabilities=capabilities,
+    )
+    host = create_overlay(
+        args.overlay,
+        # Until a session exists there is nowhere to send; the reader swaps in a
+        # real transport as soon as one registers.
+        JsonlTransport(io.StringIO(), io.StringIO(), sys.stderr, schema_version=V2_SCHEMA_VERSION),
+        args.mode,
+        eye_emission=args.eye_emission,
+        face_pointer=not args.no_face_pointer,
+        scale=args.scale,
+        launcher_managed=args.presentation,
+    )
+    host.use_connection(lambda: sessions(registration))
+    host.run()
     return 0
 
 

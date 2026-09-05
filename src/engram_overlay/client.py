@@ -28,6 +28,10 @@ from .discovery import (
 from .protocol import JsonlTransport
 
 CONNECT_TIMEOUT_S = 2.0
+# A session has to last this long to count as good. Registering and dropping
+# immediately is a flap, not a success, and resetting the backoff on it turns
+# the loop into a spin that hammers the host.
+STABLE_SESSION_S = 5.0
 
 
 @dataclass(frozen=True)
@@ -133,11 +137,18 @@ def sessions(
                 on_wait(delay, type(exc).__name__)
             sleep(delay)
             continue
-        delays = backoff_delays()
+        started = time.monotonic()
         try:
             yield session
         finally:
             session.close()
+        if time.monotonic() - started >= STABLE_SESSION_S:
+            delays = backoff_delays()
+        else:
+            delay = next(delays)
+            if on_wait is not None:
+                on_wait(delay, "SessionFlapped")
+            sleep(delay)
 
 
 def messages(session: Session) -> Iterator[dict[str, Any]]:

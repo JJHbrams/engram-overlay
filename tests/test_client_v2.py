@@ -246,6 +246,55 @@ class ConnectTests(unittest.TestCase):
         self.assertEqual(served, [])
         loop.close()
 
+    def test_a_flapping_host_backs_off_instead_of_spinning(self) -> None:
+        """Registering and dropping at once is not success. Treating it as success
+        resets the backoff, and the loop becomes a spin that hammers the host --
+        straight into v2's socket and rate limits."""
+        host = StubHost()  # replies, then closes: every session is a flap
+        self.addCleanup(host.close)
+        asked = []
+        attempts = {"n": 0}
+
+        def keep_going():
+            attempts["n"] += 1
+            return attempts["n"] <= 6
+
+        for session in sessions(
+            self.registration(),
+            discovery_path=host.discovery_file(),
+            sleep=asked.append,
+            should_continue=keep_going,
+        ):
+            list(session.transport.messages())
+
+        self.assertEqual(asked, [0.5, 1.0, 2.0, 4.0, 8.0, 16.0])
+
+    def test_a_stable_session_clears_the_backoff(self) -> None:
+        import engram_overlay.client as client
+
+        host = StubHost()
+        self.addCleanup(host.close)
+        original = client.STABLE_SESSION_S
+        client.STABLE_SESSION_S = 0.0  # every session counts as stable
+        self.addCleanup(setattr, client, "STABLE_SESSION_S", original)
+
+        asked = []
+        attempts = {"n": 0}
+
+        def keep_going():
+            attempts["n"] += 1
+            return attempts["n"] <= 4
+
+        for session in sessions(
+            self.registration(),
+            discovery_path=host.discovery_file(),
+            sleep=asked.append,
+            should_continue=keep_going,
+        ):
+            list(session.transport.messages())
+
+        self.assertEqual(asked, [])
+
     def test_the_reason_reaches_the_caller_without_the_payload(self) -> None:
         """A wait may be reported; the credentials that caused it may not."""
         notes = []
