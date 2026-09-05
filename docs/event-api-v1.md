@@ -1,5 +1,8 @@
 # Engram External Overlay Event API v1
 
+> **Legacy/test-only.** 현재 기본 경로는 독립 renderer가 host에 연결하는 [Event API v2](event-api-v2.md)다.
+> 이 문서는 명시적 `--v1-stdio` 호환 테스트를 위해 보존하며, manifest나 Engram child launch를 새 구현에 사용하지 않는다.
+
 > renderer는 stdout으로 Engram에 메시지를 보내고, stdin으로 Engram 이벤트를 받는다. stdout에는 JSONL 프로토콜만 쓰고 로그는 stderr로 보낸다.
 
 ## 시작 순서

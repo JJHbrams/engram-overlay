@@ -5,8 +5,9 @@
 ## 계층
 
 ```text
-Engram child process / JSONL
-└─ protocol.py + state.py          # 공통 Event API와 metadata-only 상태
+Independent renderer process
+└─ discovery.py + client.py        # v2 discovery/auth/register/reconnect
+   ├─ protocol.py + state.py       # TCP JSONL과 metadata-only 상태
    ├─ scene3d.py                   # 무의존 Vec3·camera·projection·procedural mesh
    └─ registry.py                  # overlay id → 실행 factory
       ├─ backends/                 # 창·입력·렌더 loop 기술
@@ -36,6 +37,11 @@ tests/<id>/...                     # behavior와 contract 테스트
 | backend | window, render loop, 공통 pointer/drag/geometry | 작품별 scene과 animation |
 | overlay | scene, animation, mouse tracking, renderer별 설정 | Engram 내부 이벤트와 사용자 payload |
 | client | discovery, 등록, 재접속 backoff | 무엇을 그릴지 |
+
+정상 경로는 renderer가 먼저든 Engram이 먼저든 독립적으로 시작하는 Event API v2 client다. Engram은
+renderer executable, argv, 설치 경로, manifest를 알거나 실행하지 않는다. `client.py`는
+`~/.engram/overlay-event-api-v2.json`을 다시 읽어 매 host start마다 바뀌는 endpoint/token/instance에
+bounded backoff로 재접속한다. 기존 stdin/stdout child 경로는 `--v1-stdio` 테스트 호환에만 남는다.
 
 백엔드는 필요한 범위에서만 공유한다. 2D 이미지와 xeyes는 Tk 또는 Qt host를 공유할 수 있지만,
 3D와 Live2D를 같은 view interface에 억지로 맞추지 않는다. 모든 구현이 공유해야 하는 최소 계약은

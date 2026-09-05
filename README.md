@@ -102,16 +102,16 @@ python scripts/verify-connection.py --overlay rabbit-2d
 
 | 항목 | 계약 |
 | --- | --- |
-| transport | Engram이 시작한 로컬 child process의 stdin/stdout JSONL |
-| schema | `schema_version: 1` |
-| handshake | renderer stdout의 첫 줄은 `overlay.hello` |
+| transport | 독립 renderer가 Engram의 `127.0.0.1` ephemeral TCP JSONL API에 연결 |
+| schema | 기본 `schema_version: 2`; 명시적 `--v1-stdio`만 schema 1 |
+| handshake | discovery를 읽은 renderer가 socket 첫 줄로 `overlay.register` 전송 |
 | privacy | 대화·thinking·도구 payload·파일 경로를 받지 않는 `metadata_only` |
 | modes | `observer`는 번들 캐릭터와 공존, `replace`는 번들을 대체 |
 | sizing | `overlay.set_size`를 advertise한 `replace` renderer만 크기 요청을 받는다 |
 | presentation | `overlay.presentation`을 advertise한 renderer는 Engram 런처가 show/hide로 표시를 소유한다 |
-| fallback | handshake·JSONL·child 오류 시 Engram 번들 renderer 복구 |
+| fallback | 연결·등록·JSONL 오류나 disconnect 시 Engram 번들 renderer 복구; 외부 프로세스는 외부 앱 소유 |
 
-- 세부 계약: [Event API v1](docs/event-api-v1.md)
+- 세부 계약: [Event API v2](docs/event-api-v2.md) · [v1 legacy/test-only](docs/event-api-v1.md)
 - 프로젝트 구조: [Overlay 구현 계층](docs/architecture.md)
 - 개발 순서: [개발 가이드](docs/development.md)
 - LLM으로 만들 때: [LLM authoring guide](docs/llm-overlay-authoring.md)
@@ -127,4 +127,4 @@ python scripts/verify-connection.py --overlay rabbit-2d
 
 ## 문서 기준
 
-2026-08-25 기준 Engram의 `커스텀 오버레이 Event API v1` 매뉴얼과 `ProjectIntelContunuum/docs/overlay-event-api-v1.md`를 대조해 작성했다.
+현재 기준은 Engram의 `External Overlay Event API v2` 공개 계약이다. v1 stdin/stdout 문서는 명시적 호환 테스트용으로만 유지한다.

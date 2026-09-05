@@ -1,15 +1,21 @@
 # Engram overlay agent instructions
 
 Before creating or changing an overlay, read `docs/llm-overlay-authoring.md` and the relevant sections of
-`docs/event-api-v1.md`. Read `docs/architecture.md` when choosing or changing a rendering backend.
+`docs/event-api-v2.md`. Read `docs/event-api-v1.md` only when maintaining the explicit legacy/test-only
+`--v1-stdio` path. Read `docs/architecture.md` when choosing or changing a rendering backend.
 
 ## Non-negotiable contract
 
-- stdout is JSONL protocol only. Send `overlay.hello` as the first line and write diagnostics to stderr.
+- The normal renderer is an independently started Event API v2 client. It reads discovery, connects to the
+  loopback host, registers, and reconnects; Engram never launches it or supplies its path or arguments.
+- Event API v2 protocol uses the socket only and every outbound envelope carries `schema_version: 2`.
+  stdout JSONL and `overlay.hello` belong only to explicit `--v1-stdio`; diagnostics always go to stderr.
 - Consume metadata-only events. Do not request or infer conversation text, thinking, tool payloads, or file paths.
-- Keep Engram-owned protocol/lifecycle behavior in shared code and artwork-specific behavior inside the overlay.
+- Keep host protocol, discovery/reconnect, and shared input behavior in shared code; keep process lifecycle with the
+  external application and artwork-specific behavior inside the overlay.
 - Treat unknown event types and fields as forward-compatible input.
 - Never introduce shell command strings or arbitrary command execution.
+- Never add an Engram command manifest or make host launch/path ownership part of the normal flow.
 - Read the host's address and token from the discovery file only. Keep the token out of argv, config, logs and errors.
 - Preserve both `observer` and `replace` semantics. Do not persist observer-local drag as Engram's bundled rect.
 - Keep screen coordinates, client coordinates, and mixed-DPI conversions explicit.
@@ -29,6 +35,7 @@ existing implementation. Do not force those runtimes through the Tk starter.
 Every overlay change must include focused behavior tests and pass:
 
 ```powershell
+$env:PYTHONPATH = "src"
 python -m unittest discover -s tests
 python scripts/verify-connection.py --overlay <id>
 ```
