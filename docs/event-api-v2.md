@@ -37,6 +37,8 @@ Engram 재시작 뒤 기존 endpoint나 credential을 재사용하지 않는다.
 `content_policy: metadata_only`, `mode`, boolean `selected`, `host_instance_id`가 있다. assignment payload에는
 exact `mode`와 boolean `selected`가 있다. assignment와 control의 `display_hint`는 현재 resolved hint이며,
 payload에 category가 없다는 이유로 renderer의 현재 work state나 `tool_category`를 지우지 않는다.
+`state.snapshot` payload는 현재 `generation_active`와 bounded `tool_category`를 사용해 재접속 직후 상태를
+복원한다. 일반 `tool.started` 이벤트의 같은 값은 `payload.category`에 있다.
 
 일반 host envelope은 다음 필드를 가진다.
 

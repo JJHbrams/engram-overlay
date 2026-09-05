@@ -186,6 +186,17 @@ class ProtocolTests(unittest.TestCase):
         state.apply({"schema_version": 2, "type": "conversation.input_idle", "display_hint": "idle", "payload": {}})
         self.assertEqual(state.display_hint, "thought")
 
+    def test_v2_snapshot_restores_the_current_bounded_tool_category(self) -> None:
+        state = OverlayState()
+        state.apply({
+            "schema_version": 2,
+            "type": "state.snapshot",
+            "display_hint": "search",
+            "payload": {"generation_active": True, "tool_category": "search"},
+        })
+        self.assertEqual(state.display_hint, "search")
+        self.assertEqual(state.tool_category, "search")
+
 
 if __name__ == "__main__":
     unittest.main()

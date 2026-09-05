@@ -88,7 +88,8 @@ class OverlayState:
             # semantic event without one clears it rather than leaving it stale.
             if message_type not in _TRANSIENT_HINT_TYPES and message_type not in _CONTROL_HINT_TYPES:
                 self._work_display_hint = resolved_hint
-                category = payload.get("category") if isinstance(payload, dict) else None
+                category_key = "tool_category" if message_type == "state.snapshot" else "category"
+                category = payload.get(category_key) if isinstance(payload, dict) else None
                 self.tool_category = category if category in TOOL_CATEGORIES else None
                 self._restore_active_hint()
             elif message_type == _INPUT_ACTIVE:
