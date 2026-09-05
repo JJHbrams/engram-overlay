@@ -129,7 +129,9 @@ class JsonlTransport:
         self._write_lock = threading.Lock()
 
     def send(self, message: dict[str, Any]) -> None:
-        encoded = json.dumps(message, ensure_ascii=False, separators=(",", ":"))
+        outbound = dict(message)
+        outbound["schema_version"] = self.schema_version
+        encoded = json.dumps(outbound, ensure_ascii=False, separators=(",", ":"))
         with self._write_lock:
             self.writer.write(encoded + "\n")
             self.writer.flush()

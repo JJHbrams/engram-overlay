@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .protocol import DISPLAY_HINTS, HIDE_MESSAGE, MODES, SHOW_MESSAGE, TOOL_CATEGORIES
@@ -23,6 +23,28 @@ PALETTE = {
     "error": ("#ff5858", "ERROR"),
 }
 
+_INPUT_ACTIVE = "conversation.input_active"
+_INPUT_IDLE = "conversation.input_idle"
+_POINTER_ENTERED = "pointer.entered"
+_POINTER_LEFT = "pointer.left"
+_TRANSIENT_HINT_TYPES = frozenset({
+    _INPUT_ACTIVE,
+    _INPUT_IDLE,
+    _POINTER_ENTERED,
+    _POINTER_LEFT,
+    "conversation.input_submitted",
+    "pointer.left_clicked",
+    "pointer.right_clicked",
+})
+_CONTROL_HINT_TYPES = frozenset({
+    "engram.welcome",
+    "renderer.assignment",
+    "overlay.show",
+    "overlay.hide",
+    "overlay.set_position",
+    "overlay.set_size",
+})
+
 
 @dataclass
 class OverlayState:
@@ -38,19 +60,51 @@ class OverlayState:
     # recomputes it whenever selection changes, so it is state and not config.
     mode: str | None = None
     selected: bool | None = None
+    _work_display_hint: str = field(default="idle", init=False, repr=False)
+    _pointer_hovered: bool = field(default=False, init=False, repr=False)
+    _input_active: bool = field(default=False, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.display_hint in DISPLAY_HINTS:
+            self._work_display_hint = self.display_hint
+
+    def _restore_active_hint(self) -> None:
+        if self._input_active:
+            self.display_hint = "input"
+        elif self._pointer_hovered:
+            self.display_hint = "hover"
+        else:
+            self.display_hint = self._work_display_hint
 
     def apply(self, message: dict[str, Any]) -> None:
         message_type = message.get("type")
         payload = message.get("payload", {})
         hint = message.get("display_hint")
         if isinstance(hint, str):
-            self.display_hint = hint if hint in DISPLAY_HINTS else "idle"
+            resolved_hint = hint if hint in DISPLAY_HINTS else "idle"
             # display_hint collapses every non-search, non-memory tool into
             # "generating"; payload.category is the only thing that says which
             # kind of work it is. It describes the message that carried it, so a
             # semantic event without one clears it rather than leaving it stale.
-            category = payload.get("category") if isinstance(payload, dict) else None
-            self.tool_category = category if category in TOOL_CATEGORIES else None
+            if message_type not in _TRANSIENT_HINT_TYPES and message_type not in _CONTROL_HINT_TYPES:
+                self._work_display_hint = resolved_hint
+                category = payload.get("category") if isinstance(payload, dict) else None
+                self.tool_category = category if category in TOOL_CATEGORIES else None
+                self._restore_active_hint()
+            elif message_type == _INPUT_ACTIVE:
+                self._input_active = True
+                self._restore_active_hint()
+            elif message_type == _INPUT_IDLE:
+                self._input_active = False
+                self._restore_active_hint()
+            elif message_type == _POINTER_ENTERED:
+                self._pointer_hovered = True
+                self._restore_active_hint()
+            elif message_type == _POINTER_LEFT:
+                self._pointer_hovered = False
+                self._restore_active_hint()
+            elif message_type not in _CONTROL_HINT_TYPES:
+                self.display_hint = resolved_hint
         if message_type in ("engram.welcome", "renderer.assignment") and isinstance(payload, dict):
             mode = payload.get("mode")
             if mode in MODES:
