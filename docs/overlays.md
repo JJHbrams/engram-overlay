@@ -61,6 +61,31 @@ python scripts/build-bolttagu-assets.py --pack <sprite-pack-vN>
 - **커피 김** — 24프레임 10fps(2.4초) 반복. 캐릭터가 든 머그의 김이라 바닥 레이어를 꺼도 나온다. 깜빡임과 위상이 독립이다.
 - **포인터 방향** — 원본이 볼따구와 머그를 화면 왼쪽에 두고 그려져 이미 왼쪽을 본다. 그래서 포인터가 창 중심보다 **오른쪽**일 때만 좌우반전한다. 중심 ±24px는 deadzone이라 경계에서 깜빡이며 뒤집히지 않는다. `--no-face-pointer`로 끈다.
 
+### 매핑 고르기
+
+어떤 신호에 어떤 동작을 붙일지는 미리보기 페이지에서 고른다.
+
+```powershell
+python scripts/build-bolttagu-preview.py --open
+```
+
+`dist/bolttagu-mapping.html`이 생성된다. 외부 의존이 없는 단일 파일이라 그냥 열면 된다.
+
+- 11개 동작을 **오버레이가 실제로 그리는 패킹된 셀**로, 같은 타이밍으로 재생한다. 원본 팩이 아니다.
+- display hint 12종과 도구 범주별로 동작을 고르면 그 자리에서 미리 보인다.
+- 바꾼 항목만 JSON으로 내보낸다. 기본값과 같으면 쓰지 않는다.
+
+내보낸 파일을 `%USERPROFILE%\.engram\overlays\bolttagu-2d\mapping.json`에 두고 오버레이를 재시작하면 적용된다. 코드 수정이 필요 없다.
+
+```json
+{"version": 1, "hints": {"input": "wondering"}, "categories": {"read": "waiting"}}
+```
+
+- 적지 않은 항목은 기본값을 유지한다.
+- 그릴 수 없는 값은 무시하고 기본값을 쓴다. 모르는 신호 이름, 없는 동작, 그리고 `enter`·`exit`·`success` 같은 **1회 재생 클립**은 신호를 지탱할 수 없어 거부된다.
+- 파일이 깨져 있어도 renderer는 죽지 않는다. 거부한 항목은 stderr로 남긴다.
+- 페이지의 프레임 선택 로직은 renderer와 같은 값을 내도록 대조 검증한다.
+
 ### presentation — 런처 아이콘 연동
 
 Engram의 플로팅 런처가 캐릭터의 표시 여부를 소유한다. 2단계 상호작용이다: **런처 클릭 → 캐릭터 등장**,
