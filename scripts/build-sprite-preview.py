@@ -8,9 +8,12 @@ adds a tab; nothing here changes.
 The page plays the packed cells the renderer actually draws, at the declared
 timings, and exports only what differs from the defaults.
 
+The page is the whole point, so it opens once written. Pass --no-open where a
+browser cannot be launched or only the path is wanted.
+
 Usage:
     python scripts/build-sprite-preview.py
-    python scripts/build-sprite-preview.py --open
+    python scripts/build-sprite-preview.py --no-open
 """
 
 from __future__ import annotations
@@ -389,7 +392,12 @@ function frame(now){
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--open", action="store_true", help="open the page when it is written")
+    parser.add_argument(
+        "--no-open",
+        dest="open_page",
+        action="store_false",
+        help="write the page without opening it",
+    )
     arguments = parser.parse_args()
 
     maps = discover()
@@ -407,8 +415,10 @@ def main() -> None:
     for sprite_map in maps:
         rows = sum(len(section.rows) for section in sprite_map.sections)
         print(f"  {sprite_map.overlay_id:14s} {len(sprite_map.options):2d} options, {rows:2d} signals")
-    if arguments.open:
-        webbrowser.open(OUTPUT.as_uri())
+    # The path is printed first, so a browser that refuses to launch still leaves
+    # something usable behind.
+    if arguments.open_page and not webbrowser.open(OUTPUT.as_uri()):
+        print("could not open a browser; open the path above yourself")
 
 
 if __name__ == "__main__":
