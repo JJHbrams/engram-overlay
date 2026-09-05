@@ -17,6 +17,7 @@ class TkOverlayHostObserverTests(unittest.TestCase):
         host.root.winfo_width.return_value = 30
         host.root.winfo_height.return_value = 40
         host._drag_origin = None
+        host._drag_sent_ms = None
         return host
 
     def test_observer_emits_click_and_initial_geometry(self):
@@ -124,6 +125,7 @@ class TkOverlayHostPresentationTests(unittest.TestCase):
         host._show_after = None
         host._dismiss_after = None
         host._drag_origin = None
+        host._drag_sent_ms = None
         return host
 
     def _sent(self, host):

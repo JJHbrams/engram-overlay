@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 import tkinter as tk
 from typing import Any, Protocol
 
@@ -30,6 +31,11 @@ class TkOverlayHost:
     """Own the Tk window while a view owns only drawing and animation."""
 
     FRAME_MS = 16
+    # Event API v2 accepts at most 120 inbound messages per second per client, and
+    # a drag emits one per motion event -- which Tk delivers faster than the frame
+    # rate. Coalesce to the frame rate and always send the final position on
+    # release, so the host still lands exactly where the pointer left the window.
+    DRAG_MIN_INTERVAL_MS = 16
 
     def __init__(
         self,
@@ -66,6 +72,9 @@ class TkOverlayHost:
         self.canvas.pack(fill="both", expand=True)
         self.view.mount(self.canvas)
         self._drag_origin: tuple[int, int, int, int] | None = None
+        # None means the next motion reports immediately: the first move of a drag
+        # must not wait out an interval.
+        self._drag_sent_ms: float | None = None
         # Engram's launcher owns presentation when the renderer starts collapsed.
         # "visible" is the presentation Engram asked for; "_mapped" is whether the
         # window is actually on screen. They differ for the length of a transition,
@@ -211,12 +220,18 @@ class TkOverlayHost:
     def _drag_begin(self, event: tk.Event) -> None:
         self._send_pointer("menu_dismiss")
         self._drag_origin = (event.x_root, event.y_root, self.root.winfo_x(), self.root.winfo_y())
+        self._drag_sent_ms = None
 
     def _drag_move(self, event: tk.Event) -> None:
         if self._drag_origin is None:
             return
         target_x, target_y = self._drag_target(event)
+        # The window follows every motion event; only the reports are coalesced.
         self.root.geometry(f"+{target_x}+{target_y}")
+        now_ms = time.monotonic() * 1000
+        if self._drag_sent_ms is not None and now_ms - self._drag_sent_ms < self.DRAG_MIN_INTERVAL_MS:
+            return
+        self._drag_sent_ms = now_ms
         # Event API v1 calls these fields screen_x/screen_y, but Engram treats
         # them as the requested window top-left, not the current pointer.
         self._send_pointer("drag_move", x=target_x, y=target_y)
