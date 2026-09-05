@@ -73,16 +73,25 @@ python scripts/build-bolttagu-preview.py --open
 
 - 11개 동작을 **오버레이가 실제로 그리는 패킹된 셀**로, 같은 타이밍으로 재생한다. 원본 팩이 아니다.
 - display hint 12종과 도구 범주별로 동작을 고르면 그 자리에서 미리 보인다.
+- 신호마다 두 층을 고른다. **지속 동작**은 그 상태에 머무는 동안 반복되고, **1회 재생**은 진입할 때 그 위로 한 번 얹힌 뒤 지속 동작으로 가라앉는다. 기본값은 `success` 신호에 `success` 1회 재생 + `idle` 지속이다.
 - 바꾼 항목만 JSON으로 내보낸다. 기본값과 같으면 쓰지 않는다.
 
 내보낸 파일을 `%USERPROFILE%\.engram\overlays\bolttagu-2d\mapping.json`에 두고 오버레이를 재시작하면 적용된다. 코드 수정이 필요 없다.
 
 ```json
-{"version": 1, "hints": {"input": "wondering"}, "categories": {"read": "waiting"}}
+{
+  "version": 1,
+  "hints": {"input": "wondering"},
+  "categories": {"read": "waiting"},
+  "oneshots": {"click": "success", "success": null}
+}
 ```
 
+`oneshots`의 `null`은 그 신호의 1회 재생을 끄는 것이다.
+
 - 적지 않은 항목은 기본값을 유지한다.
-- 그릴 수 없는 값은 무시하고 기본값을 쓴다. 모르는 신호 이름, 없는 동작, 그리고 `enter`·`exit`·`success` 같은 **1회 재생 클립**은 신호를 지탱할 수 없어 거부된다.
+- 그릴 수 없는 값은 무시하고 기본값을 쓴다. 지속 동작에 1회 재생 클립을 넣거나, 1회 재생에 반복 클립을 넣으면 거부된다.
+- `enter`·`exit`는 런처가 소유하므로 어느 층에도 못 붙인다.
 - 파일이 깨져 있어도 renderer는 죽지 않는다. 거부한 항목은 stderr로 남긴다.
 - 페이지의 프레임 선택 로직은 renderer와 같은 값을 내도록 대조 검증한다.
 

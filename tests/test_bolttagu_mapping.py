@@ -4,6 +4,7 @@ from pathlib import Path
 from engram_overlay.overlays.bolttagu_2d import (
     CATEGORY_POSES,
     CLIPS,
+    HINT_ONESHOTS,
     IDLE_POSE,
     STATE_POSES,
     BolttaguAnimator,
@@ -22,15 +23,54 @@ class MappingOverrideTests(unittest.TestCase):
         )
         return path
 
-    def load(self, document: object) -> tuple[dict[str, str], dict[str, str], list[str]]:
+    def load(self, document: object):
         notes: list[str] = []
-        hints, categories = load_mapping(self.write(document), log=notes.append)
+        hints, categories, oneshots = load_mapping(self.write(document), log=notes.append)
+        self.oneshots = oneshots
         return hints, categories, notes
 
     def test_absent_file_keeps_the_defaults(self) -> None:
-        hints, categories = load_mapping(Path(tempfile.mkdtemp()) / "nope.json")
+        hints, categories, oneshots = load_mapping(Path(tempfile.mkdtemp()) / "nope.json")
         self.assertEqual(hints, STATE_POSES)
         self.assertEqual(categories, CATEGORY_POSES)
+        self.assertEqual(oneshots, HINT_ONESHOTS)
+
+    def test_success_keeps_its_flourish_by_default(self) -> None:
+        """The success sprite is a one-shot layered over the settle pose."""
+        self.assertEqual(HINT_ONESHOTS["success"], "success")
+        self.assertEqual(STATE_POSES["success"], IDLE_POSE)
+
+    def test_a_flourish_can_be_moved_to_another_hint(self) -> None:
+        self.load({"oneshots": {"click": "success"}})
+        self.assertEqual(self.oneshots["click"], "success")
+        self.assertEqual(self.oneshots["success"], "success")
+
+    def test_a_flourish_can_be_turned_off(self) -> None:
+        _, _, notes = self.load({"oneshots": {"success": None}})
+        self.assertNotIn("success", self.oneshots)
+        self.assertEqual(notes, [])
+
+    def test_a_looping_clip_cannot_be_a_flourish(self) -> None:
+        _, _, notes = self.load({"oneshots": {"success": "wondering"}})
+        self.assertEqual(self.oneshots, HINT_ONESHOTS)
+        self.assertTrue(notes)
+
+    def test_lifecycle_clips_cannot_be_a_flourish(self) -> None:
+        """enter and exit belong to the launcher, not to a hint."""
+        for clip in ("enter", "exit"):
+            with self.subTest(clip=clip):
+                _, _, notes = self.load({"oneshots": {"idle": clip}})
+                self.assertNotIn("idle", self.oneshots)
+                self.assertTrue(notes)
+
+    def test_a_flourish_plays_once_then_settles(self) -> None:
+        hints, categories, _ = self.load({"oneshots": {"click": "success"}})
+        animator = BolttaguAnimator(
+            started_ms=0, intro=None, hints=hints, categories=categories, oneshots=self.oneshots
+        )
+        animator.apply_hint("click", 0)
+        self.assertEqual(animator.resolve(0), (("success", 0),))
+        self.assertEqual(animator.resolve(1_200), (("alert", 0),))
 
     def test_a_chosen_hint_wins(self) -> None:
         hints, _, notes = self.load({"hints": {"input": "wondering"}})

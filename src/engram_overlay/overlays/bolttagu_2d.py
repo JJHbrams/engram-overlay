@@ -129,6 +129,22 @@ CATEGORY_POSES: dict[str, str] = {
 # A hint that warrants a one-shot the moment the renderer enters it.
 HINT_ONESHOTS: dict[str, str] = {"success": "success"}
 
+# enter and exit belong to Engram's launcher, not to a hint. What is left is the
+# set of flourishes a hint may fire on arrival before settling into its pose.
+LIFECYCLE_CLIPS = ("enter", "exit")
+
+
+def selectable_poses() -> list[str]:
+    """Poses that can hold a state: idle plus everything that loops."""
+    return [IDLE_POSE] + sorted(name for name, clip in CLIPS.items() if clip.loop)
+
+
+def selectable_oneshots() -> list[str]:
+    """Clips a hint may play once on arrival."""
+    return sorted(
+        name for name, clip in CLIPS.items() if not clip.loop and name not in LIFECYCLE_CLIPS
+    )
+
 
 # Chosen in scripts/build-bolttagu-preview.py and dropped next to the installed
 # manifest, so retuning which animation means what needs no code change.
@@ -143,27 +159,32 @@ def _valid_pose(pose: object) -> bool:
     return pose == IDLE_POSE or (isinstance(pose, str) and pose in CLIPS and CLIPS[pose].loop)
 
 
+def _valid_oneshot(clip: object) -> bool:
+    return clip is None or (isinstance(clip, str) and clip in selectable_oneshots())
+
+
 def load_mapping(
     path: Path | None = None, *, log: Callable[[str], None] | None = None
-) -> tuple[dict[str, str], dict[str, str]]:
+) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
     """Merge a user mapping over the defaults, dropping anything that cannot be drawn.
 
     A bad file must never stop the renderer, so every rejected entry is reported and
     the built-in default is kept for it.
     """
     hints, categories = dict(STATE_POSES), dict(CATEGORY_POSES)
+    oneshots = dict(HINT_ONESHOTS)
     path = path or installed_mapping_path()
     if not path.is_file():
-        return hints, categories
+        return hints, categories, oneshots
     note = log or (lambda message: None)
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         note(f"{MAPPING_FILE} ignored: {exc}")
-        return hints, categories
+        return hints, categories, oneshots
     if not isinstance(document, dict):
         note(f"{MAPPING_FILE} ignored: top level must be an object")
-        return hints, categories
+        return hints, categories, oneshots
     for section, target, allowed in (
         ("hints", hints, set(STATE_POSES)),
         ("categories", categories, set(TOOL_CATEGORIES)),
@@ -181,7 +202,21 @@ def load_mapping(
                 note(f"{MAPPING_FILE}: {key!r} maps to unusable pose {pose!r}")
             else:
                 target[key] = pose
-    return hints, categories
+
+    entries = document.get("oneshots")
+    if isinstance(entries, dict):
+        for key, clip in entries.items():
+            if key not in STATE_POSES:
+                note(f"{MAPPING_FILE}: unknown hint {key!r}")
+            elif not _valid_oneshot(clip):
+                note(f"{MAPPING_FILE}: {key!r} cannot play {clip!r} once")
+            elif clip is None:
+                oneshots.pop(key, None)
+            else:
+                oneshots[key] = clip
+    elif entries is not None:
+        note(f"{MAPPING_FILE}: oneshots must be an object")
+    return hints, categories, oneshots
 
 
 def pose_for(
@@ -287,11 +322,13 @@ class BolttaguAnimator:
         rng: random.Random | None = None,
         hints: dict[str, str] | None = None,
         categories: dict[str, str] | None = None,
+        oneshots: dict[str, str] | None = None,
     ) -> None:
         if intro is not None and intro not in CLIPS:
             raise ValueError(f"unknown intro clip: {intro}")
         self.hints = STATE_POSES if hints is None else hints
         self.categories = CATEGORY_POSES if categories is None else categories
+        self.oneshots = HINT_ONESHOTS if oneshots is None else oneshots
         self.display_hint = "idle"
         self.tool_category: str | None = None
         self.state_started_ms = started_ms
@@ -326,7 +363,7 @@ class BolttaguAnimator:
         self.oneshot_holds = False
         if self.pose == IDLE_POSE and not was_idle:
             self.blink.reset(now_ms)
-        oneshot = HINT_ONESHOTS.get(resolved)
+        oneshot = self.oneshots.get(resolved)
         if oneshot is not None:
             self.oneshot = oneshot
             self.oneshot_started_ms = now_ms
@@ -388,7 +425,7 @@ class Bolttagu2dView:
         mapping_path: Path | None = None,
         log: Callable[[str], None] | None = None,
     ) -> None:
-        hints, categories = load_mapping(mapping_path, log=log)
+        hints, categories, oneshots = load_mapping(mapping_path, log=log)
         sheets, cell = load_atlas()
         self.cell = cell
         self.scale = scale
@@ -406,6 +443,7 @@ class Bolttagu2dView:
             rng=rng,
             hints=hints,
             categories=categories,
+            oneshots=oneshots,
         )
         self.mirrored = False
         self.canvas: tk.Canvas | None = None
