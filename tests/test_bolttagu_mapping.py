@@ -6,6 +6,7 @@ from engram_overlay.overlays.bolttagu_2d import (
     CLIPS,
     HINT_ONESHOTS,
     IDLE_POSE,
+    LIFECYCLE_TRANSITIONS,
     REFINABLE_CATEGORIES,
     STATE_POSES,
     BolttaguAnimator,
@@ -26,15 +27,45 @@ class MappingOverrideTests(unittest.TestCase):
 
     def load(self, document: object):
         notes: list[str] = []
-        hints, categories, oneshots = load_mapping(self.write(document), log=notes.append)
-        self.oneshots = oneshots
-        return hints, categories, notes
+        mapping = load_mapping(self.write(document), log=notes.append)
+        self.oneshots = mapping.oneshots
+        self.lifecycle = mapping.lifecycle
+        return mapping.hints, mapping.categories, notes
 
     def test_absent_file_keeps_the_defaults(self) -> None:
-        hints, categories, oneshots = load_mapping(Path(tempfile.mkdtemp()) / "nope.json")
-        self.assertEqual(hints, STATE_POSES)
-        self.assertEqual(categories, CATEGORY_POSES)
-        self.assertEqual(oneshots, HINT_ONESHOTS)
+        mapping = load_mapping(Path(tempfile.mkdtemp()) / "nope.json")
+        self.assertEqual(mapping.hints, STATE_POSES)
+        self.assertEqual(mapping.categories, CATEGORY_POSES)
+        self.assertEqual(mapping.oneshots, HINT_ONESHOTS)
+        self.assertEqual(mapping.lifecycle, LIFECYCLE_TRANSITIONS)
+
+    def test_the_launcher_transitions_are_choosable(self) -> None:
+        """overlay.show and overlay.hide are events too; what each plays is a choice."""
+        self.load({"lifecycle": {"show": "success", "hide": "waiting"}})
+        self.assertEqual(self.lifecycle, {"show": "success", "hide": "waiting"})
+
+    def test_an_unknown_transition_is_refused(self) -> None:
+        _, _, notes = self.load({"lifecycle": {"teleport": "enter"}})
+        self.assertEqual(self.lifecycle, LIFECYCLE_TRANSITIONS)
+        self.assertTrue(notes)
+
+    def test_a_transition_needs_a_real_clip(self) -> None:
+        """idle is layered, not a clip, so it cannot be a transition."""
+        for clip in ("idle", "nonsense", None):
+            with self.subTest(clip=clip):
+                _, _, notes = self.load({"lifecycle": {"show": clip}})
+                self.assertEqual(self.lifecycle, LIFECYCLE_TRANSITIONS)
+                self.assertTrue(notes)
+
+    def test_the_view_plays_the_chosen_transitions(self) -> None:
+        from engram_overlay.overlays import bolttagu_2d
+
+        path = self.write({"lifecycle": {"show": "success", "hide": "waiting"}})
+        view = bolttagu_2d.Bolttagu2dView(launcher_managed=True, mapping_path=path)
+        self.assertEqual(view.begin_enter(), CLIPS["success"].total_ms)
+        self.assertEqual(view.animator.oneshot, "success")
+        self.assertEqual(view.begin_exit(), CLIPS["waiting"].total_ms)
+        self.assertEqual(view.animator.oneshot, "waiting")
 
     def test_success_keeps_its_flourish_by_default(self) -> None:
         """The success sprite is a one-shot layered over the settle pose."""

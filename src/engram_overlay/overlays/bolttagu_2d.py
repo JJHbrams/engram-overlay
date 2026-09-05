@@ -141,6 +141,11 @@ HINT_ONESHOTS: dict[str, str] = {"success": "success"}
 # it runs. Nothing here is off limits -- every bundled clip can be chosen.
 LIFECYCLE_CLIPS = ("enter", "exit")
 
+# What the launcher's own transitions play. overlay.show and overlay.hide are
+# events in their own right, so which clip each one runs is chosen here rather
+# than hardcoded at the call site.
+LIFECYCLE_TRANSITIONS: dict[str, str] = {"show": "enter", "hide": "exit"}
+
 
 def selectable_poses() -> list[str]:
     """Every pose a state can rest in.
@@ -164,6 +169,16 @@ def installed_mapping_path() -> Path:
     return Path.home() / ".engram" / "overlays" / "bolttagu-2d" / MAPPING_FILE
 
 
+@dataclass(frozen=True)
+class Mapping:
+    """Which animation each signal draws, after any user override."""
+
+    hints: dict[str, str]
+    categories: dict[str, str]
+    oneshots: dict[str, str]
+    lifecycle: dict[str, str]
+
+
 def _valid_pose(pose: object) -> bool:
     return isinstance(pose, str) and pose in selectable_poses()
 
@@ -174,26 +189,27 @@ def _valid_oneshot(clip: object) -> bool:
 
 def load_mapping(
     path: Path | None = None, *, log: Callable[[str], None] | None = None
-) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+) -> Mapping:
     """Merge a user mapping over the defaults, dropping anything that cannot be drawn.
 
     A bad file must never stop the renderer, so every rejected entry is reported and
     the built-in default is kept for it.
     """
     hints, categories = dict(STATE_POSES), dict(CATEGORY_POSES)
-    oneshots = dict(HINT_ONESHOTS)
+    oneshots, lifecycle = dict(HINT_ONESHOTS), dict(LIFECYCLE_TRANSITIONS)
+    resolved = lambda: Mapping(hints, categories, oneshots, lifecycle)  # noqa: E731
     path = path or installed_mapping_path()
     if not path.is_file():
-        return hints, categories, oneshots
+        return resolved()
     note = log or (lambda message: None)
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         note(f"{MAPPING_FILE} ignored: {exc}")
-        return hints, categories, oneshots
+        return resolved()
     if not isinstance(document, dict):
         note(f"{MAPPING_FILE} ignored: top level must be an object")
-        return hints, categories, oneshots
+        return resolved()
     for section, target, allowed in (
         ("hints", hints, set(STATE_POSES)),
         ("categories", categories, REFINABLE_CATEGORIES),
@@ -230,7 +246,19 @@ def load_mapping(
                 oneshots[key] = clip
     elif entries is not None:
         note(f"{MAPPING_FILE}: oneshots must be an object")
-    return hints, categories, oneshots
+
+    entries = document.get("lifecycle")
+    if isinstance(entries, dict):
+        for key, clip in entries.items():
+            if key not in LIFECYCLE_TRANSITIONS:
+                note(f"{MAPPING_FILE}: unknown transition {key!r}")
+            elif not isinstance(clip, str) or clip not in CLIPS:
+                note(f"{MAPPING_FILE}: {key!r} cannot play {clip!r}")
+            else:
+                lifecycle[key] = clip
+    elif entries is not None:
+        note(f"{MAPPING_FILE}: lifecycle must be an object")
+    return resolved()
 
 
 def pose_for(
@@ -441,7 +469,8 @@ class Bolttagu2dView:
         mapping_path: Path | None = None,
         log: Callable[[str], None] | None = None,
     ) -> None:
-        hints, categories, oneshots = load_mapping(mapping_path, log=log)
+        mapping = load_mapping(mapping_path, log=log)
+        self.mapping = mapping
         sheets, cell = load_atlas()
         self.cell = cell
         self.scale = scale
@@ -457,9 +486,9 @@ class Bolttagu2dView:
             started_ms=self._now_ms(),
             intro=None if launcher_managed else "enter",
             rng=rng,
-            hints=hints,
-            categories=categories,
-            oneshots=oneshots,
+            hints=mapping.hints,
+            categories=mapping.categories,
+            oneshots=mapping.oneshots,
         )
         self.mirrored = False
         self.canvas: tk.Canvas | None = None
@@ -499,10 +528,13 @@ class Bolttagu2dView:
         return self.width, self.height
 
     def begin_enter(self) -> int:
-        return self.animator.play_lifecycle("enter", self._now_ms())
+        return self.animator.play_lifecycle(self.mapping.lifecycle["show"], self._now_ms())
 
     def begin_exit(self) -> int:
-        return self.animator.play_lifecycle("exit", self._now_ms(), hold_last=True)
+        # Holding the final frame keeps the character gone until the window closes.
+        return self.animator.play_lifecycle(
+            self.mapping.lifecycle["hide"], self._now_ms(), hold_last=True
+        )
 
     def tick(self, pointer_x: int, pointer_y: int, window_x: int, window_y: int) -> None:
         if self.face_pointer:

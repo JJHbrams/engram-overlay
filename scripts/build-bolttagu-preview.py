@@ -34,6 +34,7 @@ from engram_overlay.overlays.bolttagu_2d import (  # noqa: E402
     EYE_CELLS,
     HINT_ONESHOTS,
     IDLE_POSE,
+    LIFECYCLE_TRANSITIONS,
     MAPPING_FILE,
     REFINABLE_CATEGORIES,
     STATE_POSES,
@@ -104,6 +105,13 @@ def build_payload() -> dict[str, object]:
         },
         "poses": selectable_poses(),
         "oneshots": selectable_oneshots(),
+        "allClips": sorted(CLIPS),
+        "lifecycle": [
+            {"key": "show", "event": "overlay.show", "note": "런처로 펼칠 때",
+             "default": LIFECYCLE_TRANSITIONS["show"]},
+            {"key": "hide", "event": "overlay.hide", "note": "런처로 접을 때",
+             "default": LIFECYCLE_TRANSITIONS["hide"]},
+        ],
         "hints": [
             {
                 "key": key,
@@ -215,6 +223,13 @@ TEMPLATE = """<!doctype html>
     <tbody id="cats"></tbody>
   </table>
 
+  <h2>런처 전환</h2>
+  <p class="hint" style="margin:-.5rem 0 1rem">Engram의 플로팅 런처가 캐릭터를 펼치고 접을 때 재생할 동작이다. display hint와 무관하게 항상 이쪽이 우선한다.</p>
+  <table>
+    <thead><tr><th>전환</th><th>이벤트</th><th>동작</th><th></th></tr></thead>
+    <tbody id="life"></tbody>
+  </table>
+
   <h2>적용</h2>
   <div class="bar">
     <button class="primary" id="copy">JSON 복사</button>
@@ -235,6 +250,8 @@ const images = {};
 const choice = {hints:{}, categories:{}, oneshots:{}};
 D.hints.forEach(h => { choice.hints[h.key] = h.default;
                        if (h.defaultOneshot) choice.oneshots[h.key] = h.defaultOneshot; });
+choice.lifecycle = {};
+D.lifecycle.forEach(l => choice.lifecycle[l.key] = l.default);
 D.categories.forEach(c => choice.categories[c.key] = c.default || "");
 
 document.getElementById("prov").textContent =
@@ -324,14 +341,34 @@ function row(tbody, item, bucket, allowInherit){
   return () => { sel.value = item.default || ""; choice[bucket][item.key] = item.default || "";
                  tr.classList.remove("changed"); };
 }
+function lifecycleRow(item){
+  const tr = document.createElement("tr");
+  const opts = D.allClips.map(c =>
+    `<option value="${c}"${c===item.default?" selected":""}>${c}</option>`).join("");
+  tr.innerHTML = `<td class="key">${item.key}</td><td class="note"><code>${item.event}</code> · ${item.note}</td>` +
+                 `<td><select>${opts}</select></td><td class="thumb"><canvas></canvas></td>`;
+  document.getElementById("life").appendChild(tr);
+  const sel = tr.querySelector("select");
+  sel.value = choice.lifecycle[item.key];
+  sel.addEventListener("change", () => {
+    choice.lifecycle[item.key] = sel.value;
+    tr.classList.toggle("changed", sel.value !== item.default);
+    emit();
+  });
+  addCanvas(tr.querySelector("canvas"), () => choice.lifecycle[item.key], item.key.length + 7);
+  return () => { sel.value = item.default; choice.lifecycle[item.key] = item.default;
+                 tr.classList.remove("changed"); };
+}
+
 const resetters = [];
 D.hints.forEach(h => resetters.push(row(document.getElementById("hints"), h, "hints", false)));
 D.categories.forEach(c => resetters.push(row(document.getElementById("cats"), c, "categories", true)));
+D.lifecycle.forEach(l => resetters.push(lifecycleRow(l)));
 
 /* ---- export ---- */
 function payload(){
   const doc = {version:1};
-  const hints = {}, cats = {}, ones = {};
+  const hints = {}, cats = {}, ones = {}, life = {};
   D.hints.forEach(h => {
     if (choice.hints[h.key] !== h.default) hints[h.key] = choice.hints[h.key];
     const now = choice.oneshots[h.key] || "";
@@ -343,13 +380,15 @@ function payload(){
   if (Object.keys(hints).length) doc.hints = hints;
   if (Object.keys(cats).length) doc.categories = cats;
   if (Object.keys(ones).length) doc.oneshots = ones;
+  D.lifecycle.forEach(l => { if (choice.lifecycle[l.key] !== l.default) life[l.key] = choice.lifecycle[l.key]; });
+  if (Object.keys(life).length) doc.lifecycle = life;
   return doc;
 }
 const out = document.getElementById("out");
 const said = document.getElementById("said");
 function emit(){
   const doc = payload();
-  out.value = (doc.hints || doc.categories || doc.oneshots)
+  out.value = (doc.hints || doc.categories || doc.oneshots || doc.lifecycle)
     ? JSON.stringify(doc, null, 2)
     : "// 기본값 그대로다. 바꾼 항목이 없으면 파일을 둘 필요가 없다.";
   said.textContent = "";
