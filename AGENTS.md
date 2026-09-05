@@ -9,7 +9,8 @@ Before creating or changing an overlay, read `docs/llm-overlay-authoring.md` and
 - Consume metadata-only events. Do not request or infer conversation text, thinking, tool payloads, or file paths.
 - Keep Engram-owned protocol/lifecycle behavior in shared code and artwork-specific behavior inside the overlay.
 - Treat unknown event types and fields as forward-compatible input.
-- Use argv manifests. Never introduce shell command strings or arbitrary command execution.
+- Never introduce shell command strings or arbitrary command execution.
+- Read the host's address and token from the discovery file only. Keep the token out of argv, config, logs and errors.
 - Preserve both `observer` and `replace` semantics. Do not persist observer-local drag as Engram's bundled rect.
 - Keep screen coordinates, client coordinates, and mixed-DPI conversions explicit.
 
@@ -29,8 +30,10 @@ Every overlay change must include focused behavior tests and pass:
 
 ```powershell
 python -m unittest discover -s tests
-python scripts/verify-engram.py --engram-source <engram-source> --manifest <installed-manifest>
+python scripts/verify-connection.py --overlay <id>
 ```
+
+`verify-connection.py` needs a running Engram and exits 2 when there is none, which is not a failure of the change.
 
 Do not change the user's installed Engram selection, publish a release, or add large generated assets unless the
 request explicitly includes that action.

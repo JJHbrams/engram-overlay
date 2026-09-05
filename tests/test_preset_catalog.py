@@ -1,31 +1,29 @@
 """The bundled preset roster, and the listing built from it.
 
 The registry is the single source of truth for a preset's display name: the CLI
-listing and both install scripts read it from there instead of keeping their own
-copy. These tests guard that roster and its agreement with the reference
-manifests under manifests/.
+listing, both install scripts and the v2 registration all read it from there
+instead of keeping their own copy. These tests guard that roster against
+roster.json, a snapshot of the identities Engram has already seen.
 """
 
 import contextlib
 import io
-import re
+import json
 import unittest
 from pathlib import Path
 
 from engram_overlay.__main__ import main
-from engram_overlay.registry import OVERLAYS, format_catalog, overlay_catalog, overlay_ids
+from engram_overlay.registry import (
+    OVERLAYS,
+    format_catalog,
+    overlay_catalog,
+    overlay_ids,
+    renderer_id,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MANIFEST_DIR = REPO_ROOT / "manifests"
-
-
-def manifest_field(path: Path, field: str) -> str:
-    """Read one top-level scalar without requiring PyYAML in the test environment."""
-    for line in path.read_text(encoding="utf-8").splitlines():
-        match = re.match(rf"^{field}:\s*(.+?)\s*$", line)
-        if match:
-            return match.group(1).strip().strip('"').strip("'")
-    raise AssertionError(f"{path} has no {field}")
+ROSTER_PATH = Path(__file__).with_name("roster.json")
+ROSTER = json.loads(ROSTER_PATH.read_text(encoding="utf-8"))
 
 
 class CatalogTests(unittest.TestCase):
@@ -45,18 +43,26 @@ class CatalogTests(unittest.TestCase):
         names = [spec.name for spec in overlay_catalog()]
         self.assertEqual(len(names), len(set(names)))
 
-    def test_registry_names_match_the_reference_manifests(self) -> None:
-        """A new preset must not leave manifests/ and the packaged roster disagreeing."""
-        for spec in overlay_catalog():
-            manifest = MANIFEST_DIR / spec.id / "manifest.yaml"
-            with self.subTest(overlay=spec.id):
-                self.assertTrue(manifest.is_file(), f"missing {manifest}")
-                self.assertEqual(manifest_field(manifest, "id"), spec.id)
-                self.assertEqual(manifest_field(manifest, "name"), spec.name)
+    def test_registry_matches_the_recorded_roster(self) -> None:
+        """Both fields are what a user sees and what Engram remembers them picking.
 
-    def test_every_reference_manifest_has_a_registry_entry(self) -> None:
-        on_disk = {path.parent.name for path in MANIFEST_DIR.glob("*/manifest.yaml")}
-        self.assertEqual(on_disk, set(overlay_ids()))
+        Renaming either is allowed; doing it without noticing is not, so the
+        change has to show up as a diff in roster.json.
+        """
+        for spec in overlay_catalog():
+            with self.subTest(overlay=spec.id):
+                recorded = ROSTER.get(spec.id)
+                self.assertIsNotNone(recorded, f"{spec.id} is missing from {ROSTER_PATH.name}")
+                self.assertEqual(recorded["name"], spec.name)
+                self.assertEqual(recorded["renderer_id"], renderer_id(spec.id))
+
+    def test_the_roster_has_no_entries_the_registry_dropped(self) -> None:
+        self.assertEqual(set(ROSTER), set(overlay_ids()))
+
+    def test_renderer_ids_are_unique(self) -> None:
+        """The host keys a selection on this; a collision silently swaps overlays."""
+        ids = [renderer_id(overlay_id) for overlay_id in overlay_ids()]
+        self.assertEqual(len(ids), len(set(ids)))
 
 
 class FormatCatalogTests(unittest.TestCase):

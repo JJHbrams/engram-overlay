@@ -56,7 +56,7 @@ renderer가 Engram을 찾는 방법:
 
 ### 3. 자신의 overlay 만들기
 
-coding agent에는 저장소의 `create-engram-overlay` skill을 쓰게 한다. backend 선택, module/registry, manifest, focused test, Event API 검증을 한 흐름으로 묶는다.
+coding agent에는 저장소의 `create-engram-overlay` skill을 쓰게 한다. backend 선택, module/registry, roster, focused test, Event API 검증을 한 흐름으로 묶는다.
 
 ```text
 create-engram-overlay skill을 사용해서 <원하는 동작과 디자인> overlay를 만들어줘.
@@ -69,18 +69,19 @@ python scripts/scaffold-overlay.py my-overlay --name "My Overlay" --dry-run
 python scripts/scaffold-overlay.py my-overlay --name "My Overlay"
 ```
 
-- scaffold가 만든 `manifests/my-overlay/manifest.yaml`의 launcher placeholder를 `.venv` 절대 경로로 바꾼다.
-- 그 파일을 `%USERPROFILE%\.engram\overlays\my-overlay\manifest.yaml`로 복사하고 Engram을 재시작한다.
+- scaffold는 module·test·registry 항목과 `tests/roster.json` 항목을 만든다. 등록할 manifest는 없다.
+- `install-dev.ps1`로 editable install 후 `--overlay my-overlay`로 실행하면 Engram에 나타난다.
 
 ### 4. 검증
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests
-@() | .\.venv\Scripts\engram-custom-overlay.exe --overlay rabbit-2d --mode replace --headless
-python scripts/verify-engram.py --engram-source <engram-source> --manifest "$HOME\.engram\overlays\rabbit-2d\manifest.yaml"
+@() | .\.venv\Scripts\engram-custom-overlay.exe --overlay rabbit-2d --v1-stdio --headless
+python scripts/verify-connection.py --overlay rabbit-2d
 ```
 
-세 줄은 각각 단위 테스트, JSONL handshake, 실제 Engram source와 설치된 manifest의 계약 검증이다.
+세 줄은 각각 단위 테스트, JSONL 파싱 계약, 실제 Engram 접속·등록 검증이다.
+마지막 줄은 Engram이 떠 있어야 하고, 없으면 실패가 아니라 exit 2로 알린다.
 
 ## 포함된 preset
 

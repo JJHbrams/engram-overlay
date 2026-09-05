@@ -25,9 +25,10 @@ OverlayFactory = Callable[..., OverlayRunner]
 class OverlaySpec:
     """One bundled preset. ``name`` is the label Engram shows in Settings > Overlay.
 
-    The display name lives here rather than only in ``manifests/<id>/manifest.yaml`` so
-    it travels with the installed package: the CLI listing and the install script both
-    read it from here instead of keeping their own copy of the roster.
+    Under Event API v2 the name is not an install detail: it is sent in
+    ``overlay.register`` and is what a user picks by. It lives here so it travels
+    with the installed package, and the CLI listing, the install scripts and the
+    registration all read it from here rather than keeping their own copy.
     """
 
     id: str
@@ -69,6 +70,15 @@ OVERLAYS: dict[str, OverlaySpec] = {
 
 def overlay_ids() -> tuple[str, ...]:
     return tuple(sorted(OVERLAYS))
+
+
+def renderer_id(overlay_id: str) -> str:
+    """The id this renderer registers under with the v2 host.
+
+    Engram keys a saved selection on it, so it is a compatibility surface: change
+    it and every user's chosen overlay silently stops being the one they chose.
+    """
+    return f"engram.{overlay_id}"
 
 
 def overlay_catalog() -> tuple[OverlaySpec, ...]:

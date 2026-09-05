@@ -27,7 +27,7 @@ Resolved = dict[str, dict[str, Choice]]
 
 
 def installed_mapping_path(overlay_id: str) -> Path:
-    """Where Engram's installed manifest for this overlay lives."""
+    """Where this overlay's hand-picked event mapping lives."""
     return Path.home() / ".engram" / "overlays" / overlay_id / MAPPING_FILE
 
 

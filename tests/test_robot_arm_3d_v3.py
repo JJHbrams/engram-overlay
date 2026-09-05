@@ -30,8 +30,7 @@ class RobotArm3DV3Tests(unittest.TestCase):
         self.assertEqual(OVERLAYS["robot-arm-3d-v3"].backend, "tk-textured-software-3d")
         args = build_parser().parse_args(("--overlay", "robot-arm-3d-v3", "--eye-emission"))
         self.assertTrue(args.eye_emission)
-        manifest = Path(__file__).parents[1] / "manifests" / "robot-arm-3d-v3" / "manifest.yaml"
-        self.assertIn("name: CCTV", manifest.read_text(encoding="utf-8"))
+        self.assertEqual(OVERLAYS["robot-arm-3d-v3"].name, "CCTV")
 
     def test_gaze_cone_is_directional_and_finite(self) -> None:
         self.assertTrue(point_in_gaze_cone((50.0, 12.0), (0.0, 0.0), (100.0, 0.0), half_angle_degrees=15.0))
