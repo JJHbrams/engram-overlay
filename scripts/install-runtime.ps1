@@ -12,6 +12,11 @@
     into it, copied rather than linked: once installed it owes nothing to this
     checkout, and deleting or moving the repository leaves it running.
 
+    It also starts the renderer, because under v2 installing one on its own
+    changes nothing anybody can see: Engram lists renderers that are connected,
+    so a renderer that is merely present is a renderer that does not exist.
+    Pass -NoStart to install without starting.
+
     Use scripts/install-dev.ps1 instead while working on the code -- that one
     links the checkout so edits take effect without reinstalling.
 #>
@@ -25,7 +30,7 @@ param(
     [switch]$NoFacePointer,
     [switch]$Autostart,
     [switch]$RemoveAutostart,
-    [switch]$Start,
+    [switch]$NoStart,
     [switch]$List,
     [switch]$RemoveLegacyManifests
 )
@@ -89,7 +94,7 @@ function Remove-LegacyManifests {
 
 if ($RemoveLegacyManifests) {
     Remove-LegacyManifests
-    if (-not ($Autostart -or $RemoveAutostart -or $Start -or $List)) {
+    if (-not ($Autostart -or $RemoveAutostart -or $List)) {
         exit 0
     }
 }
@@ -104,11 +109,53 @@ if ($RemoveAutostart) {
     exit 0
 }
 
+function Get-RunningRenderer {
+    <#
+        Anything running out of this runtime is a renderer of ours. Win32_Process
+        is used rather than Get-Process because reading .Path throws on processes
+        this user cannot open, and the answer here must not depend on what else
+        happens to be running.
+    #>
+    $prefix = Join-Path $runtime "Scripts"
+    return @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+        $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, "OrdinalIgnoreCase")
+    })
+}
+
 if (-not (Test-Path -LiteralPath $runtimePython)) {
     New-Item -ItemType Directory -Force -Path $Root | Out-Null
     python -m venv $runtime
     if ($LASTEXITCODE -ne 0) {
         throw "Could not create the runtime venv at $runtime"
+    }
+}
+
+# A running renderer holds its own launcher open, and Windows will not let pip
+# replace a file that is in use -- the upgrade fails with WinError 32 rather than
+# doing anything partial. So the renderer comes down first and back up at the end,
+# which also makes re-running this script the way to change its options.
+$wasRunning = Get-RunningRenderer
+if ($wasRunning) {
+    Write-Output "Stopping the running renderer (pid $($wasRunning.ProcessId -join ', ')) to replace its files."
+    Stop-Process -Id $wasRunning.ProcessId -Force -ErrorAction SilentlyContinue
+    # Handles outlive the process by a moment; pip fails hard if it loses the race.
+    for ($attempt = 0; $attempt -lt 25 -and (Get-RunningRenderer); $attempt++) {
+        Start-Sleep -Milliseconds 200
+    }
+    if (Get-RunningRenderer) {
+        throw "A renderer from $runtime is still running; close it and re-run."
+    }
+}
+
+# When pip cannot replace a locked file it leaves the half-renamed original behind
+# as `~name`. Those shadow the real package on sys.path and pip warns about them on
+# every later run, so they are swept -- but only inside this runtime, and only
+# entries pip itself names that way.
+$sitePackages = Join-Path $runtime "Lib\site-packages"
+if (Test-Path -LiteralPath $sitePackages) {
+    foreach ($orphan in Get-ChildItem -LiteralPath $sitePackages -Filter "~*" -Force -ErrorAction SilentlyContinue) {
+        Remove-Item -LiteralPath $orphan.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Output "Removed an interrupted install's leftover: $($orphan.Name)"
     }
 }
 
@@ -195,11 +242,20 @@ if ($Autostart) {
     }
 }
 Write-Output ""
-Write-Output "The renderer connects to Engram on its own and waits if Engram is not running."
-Write-Output "Start it, then pick it in Settings > Overlay; Engram lists renderers that are connected."
 
-if ($Start) {
+if ($NoStart) {
+    Write-Output "Not started (-NoStart). Engram lists renderers that are connected,"
+    Write-Output "so it will not appear in Settings > Overlay until you run:"
+    Write-Output "  $startScript"
+    if ($wasRunning) {
+        Write-Output "The renderer stopped for the install was not brought back."
+    }
+} else {
     Start-Process -FilePath $windowedLauncher -ArgumentList $rendererArgs
-    Write-Output ""
-    Write-Output "Started."
+    $verb = if ($wasRunning) { "Restarted" } else { "Started" }
+    Write-Output "$verb. It appears in Settings > Overlay once it connects;"
+    Write-Output "reopen that page if it was already showing."
 }
+Write-Output ""
+Write-Output "It connects to Engram on its own and waits if Engram is not running."
+

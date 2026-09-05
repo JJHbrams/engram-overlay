@@ -27,15 +27,16 @@ Engram은 Event API v2에서 loopback API만 제공하고 renderer를 실행하�
 
 ```powershell
 .\scripts\install-runtime.ps1 -List                          # 목록만 보기
-.\scripts\install-runtime.ps1 -Overlay rabbit-2d -Start      # 설치하고 바로 실행
+.\scripts\install-runtime.ps1 -Overlay rabbit-2d             # 설치하고 실행
 .\scripts\install-runtime.ps1 -Overlay rabbit-2d -Autostart  # Windows 시작 시 자동 실행
 python scripts/build-sprite-preview.py                       # 신호별 동작 고르기
 ```
 
 - 런타임 위치는 `%LOCALAPPDATA%\engram-overlay\`이고, checkout을 지우거나 옮겨도 계속 동작한다.
-- 실행 중인 renderer만 Engram `Settings > Overlay`에 나온다. 먼저 켜고 고른다.
+- **실행 중인 renderer만** Engram `Settings > Overlay`에 나온다. 설치만으로는 목록에 안 뜬다.
 - 옵션: `-Scale`·`-Presentation`·`-NoFacePointer`(bolttagu-2d), `-EyeEmission`(robot-arm-3d-v2/v3).
-- 다시 켤 때는 `%LOCALAPPDATA%\engram-overlay\start-overlay.cmd`. 자동 실행 해제는 `-RemoveAutostart`.
+- 설치하면 바로 실행된다. 옵션을 바꿀 때도 다시 실행하면 renderer를 내렸다 새로 띄운다. 설치만 하려면 `-NoStart`.
+- 수동 실행은 `%LOCALAPPDATA%\engram-overlay\start-overlay.cmd`. 자동 실행 해제는 `-RemoveAutostart`.
 - v1 시절 `%USERPROFILE%\.engram\overlays\*\manifest.yaml`은 이제 동작하지 않는다.
   `-RemoveLegacyManifests`가 manifest만 지우고 `mapping.json` 같은 나머지는 남긴다.
 - 코드를 고치며 쓸 때는 `install-dev.ps1`. checkout을 editable로 연결해 수정이 바로 반영된다.

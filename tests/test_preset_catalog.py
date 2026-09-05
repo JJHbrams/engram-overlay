@@ -149,11 +149,39 @@ class InstallScriptTests(unittest.TestCase):
         self.assertRegex(self.runtime, r"\[switch\]\$Autostart")
         self.assertRegex(self.runtime, r"\[switch\]\$RemoveAutostart")
 
+    def test_the_runtime_install_starts_the_renderer(self) -> None:
+        """Engram lists renderers that are connected, so an install that only
+        copies files leaves Settings > Overlay exactly as empty as before it ran.
+        """
+        self.assertIn("Start-Process -FilePath $windowedLauncher", self.runtime)
+        self.assertRegex(self.runtime, r"\[switch\]\$NoStart")
+        self.assertNotRegex(self.runtime, r"\[switch\]\$Start\b")
+
+    def test_the_runtime_install_stops_a_running_renderer_before_pip(self) -> None:
+        """A running renderer holds its own launcher open and Windows refuses to
+        replace a file in use, so pip fails with WinError 32 unless it goes first.
+        """
+        source = self.runtime
+        self.assertIn("Stop-Process -Id $wasRunning.ProcessId", source)
+        self.assertLess(
+            source.index("$wasRunning = Get-RunningRenderer"),
+            source.index("pip install"),
+            "the renderer must be stopped before the install, not after",
+        )
+
+    def legacy_cleanup_body(self) -> str:
+        """Just the manifest cleanup, since the rest of the script may delete
+        things this function must not."""
+        start = self.runtime.index("function Remove-LegacyManifests")
+        return self.runtime[start : self.runtime.index("\n}", start)]
+
     def test_the_legacy_cleanup_removes_manifests_and_nothing_else(self) -> None:
         """mapping.json next to a manifest is hand-built state, not litter."""
         self.assertRegex(self.runtime, r"\[switch\]\$RemoveLegacyManifests")
-        self.assertIn("Remove-Item -LiteralPath $manifest -Force", self.runtime)
-        self.assertNotRegex(self.runtime, r"Remove-Item.*-Recurse")
+        body = self.legacy_cleanup_body()
+        self.assertIn("Remove-Item -LiteralPath $manifest -Force", body)
+        # Recursive deletion here would take the whole overlay directory with it.
+        self.assertNotRegex(body, r"Remove-Item.*-Recurse")
 
 
 if __name__ == "__main__":
