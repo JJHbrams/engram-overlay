@@ -92,6 +92,8 @@ ack한다. 의미 이벤트는 observer를 포함한 등록 client에 broadcast�
 {"schema_version":2,"type":"overlay.heartbeat","payload":{}}
 ```
 
+- `renderer.ready {renderer_id}`는 catalog provider만 보내며 현재 assignment의 worker surface가 hidden 상태로
+  준비되고 snapshot/assignment를 받은 뒤 전송한다.
 - geometry의 `x/y`는 -1,000,000–1,000,000 정수, `width/height`는 1–100,000 정수다.
 - 좌표 없는 pointer action은 `left_click`, `pointer_enter`, `pointer_leave`, `drag_begin`, `overlay_close`,
   `menu_dismiss`다.
