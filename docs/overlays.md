@@ -77,6 +77,7 @@ python scripts/build-bolttagu-preview.py --open
 
 - 11개 동작을 **오버레이가 실제로 그리는 패킹된 셀**로, 같은 타이밍으로 재생한다. 원본 팩이 아니다.
 - display hint 12종과 도구 범주별로 동작을 고르면 그 자리에서 미리 보인다.
+- `lifecycle`은 런처가 펼치고 접을 때(`overlay.show`/`overlay.hide`) 재생할 동작이다. display hint와 무관하며 항상 우선한다.
 - 신호마다 두 층을 고른다. **지속 동작**은 그 상태에 머무는 동안 반복되고, **1회 재생**은 진입할 때 그 위로 한 번 얹힌 뒤 지속 동작으로 가라앉는다. 기본값은 `success` 신호에 `success` 1회 재생 + `idle` 지속이다.
 - 바꾼 항목만 JSON으로 내보낸다. 기본값과 같으면 쓰지 않는다.
 
@@ -87,7 +88,8 @@ python scripts/build-bolttagu-preview.py --open
   "version": 1,
   "hints": {"input": "wondering"},
   "categories": {"read": "waiting"},
-  "oneshots": {"click": "success", "success": null}
+  "oneshots": {"click": "success", "success": null},
+  "lifecycle": {"show": "enter", "hide": "exit"}
 }
 ```
 
