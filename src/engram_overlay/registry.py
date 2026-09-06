@@ -25,9 +25,10 @@ OverlayFactory = Callable[..., OverlayRunner]
 class OverlaySpec:
     """One bundled preset. ``name`` is the label Engram shows in Settings > Overlay.
 
-    The display name lives here rather than only in ``manifests/<id>/manifest.yaml`` so
-    it travels with the installed package: the CLI listing and the install script both
-    read it from here instead of keeping their own copy of the roster.
+    Under Event API v2 the name is not an install detail: it is sent in
+    ``overlay.register`` and is what a user picks by. It lives here so it travels
+    with the installed package, and the CLI listing, the install scripts and the
+    registration all read it from here rather than keeping their own copy.
     """
 
     id: str
@@ -71,6 +72,25 @@ def overlay_ids() -> tuple[str, ...]:
     return tuple(sorted(OVERLAYS))
 
 
+def renderer_id(overlay_id: str) -> str:
+    """The id this renderer registers under with the v2 host.
+
+    Engram keys a saved selection on it, so it is a compatibility surface: change
+    it and every user's chosen overlay silently stops being the one they chose.
+    """
+    return f"engram.{overlay_id}"
+
+
+def provider_catalog() -> tuple[dict[str, object], ...]:
+    """Bounded v2 catalog preserving every preset's existing renderer ID."""
+    return tuple({
+        "renderer_id": renderer_id(spec.id),
+        "name": spec.name,
+        "supported_modes": ["observer", "replace"],
+        "capabilities": ["overlay.presentation", *(["overlay.set_size"] if spec.id == "bolttagu-2d" else [])],
+    } for spec in overlay_catalog())
+
+
 def overlay_catalog() -> tuple[OverlaySpec, ...]:
     """Every bundled preset, ordered by id."""
     return tuple(OVERLAYS[overlay_id] for overlay_id in overlay_ids())
@@ -85,7 +105,7 @@ def format_catalog() -> str:
         lines.append(f"  {spec.id.ljust(width)}  {spec.name}")
         lines.append(f"  {' ' * width}  {spec.backend} - {spec.summary}")
     lines.append("")
-    lines.append("Install one with scripts/install-dev.ps1 -Overlay <id>, or all of them with -All.")
+    lines.append("Run one with --overlay <id>; install it with scripts/install-runtime.ps1 -Overlay <id>.")
     return "\n".join(lines)
 
 
@@ -97,6 +117,7 @@ def create_overlay(
     eye_emission: bool = False,
     face_pointer: bool = True,
     scale: float = 1.0,
+    launcher_managed: bool = False,
 ) -> OverlayRunner:
     try:
         spec = OVERLAYS[overlay_id]
@@ -104,14 +125,25 @@ def create_overlay(
         raise ValueError(f"unknown overlay: {overlay_id}") from exc
     module = importlib.import_module(spec.module)
     factory = cast(OverlayFactory, getattr(module, spec.factory))
+
+    def finish(runner: OverlayRunner) -> OverlayRunner:
+        if launcher_managed and overlay_id != "bolttagu-2d":
+            enable = getattr(runner, "enable_launcher_management", None)
+            if not callable(enable):
+                raise ValueError(f"launcher-managed presentation is unavailable for {overlay_id}")
+            enable()
+        return runner
+
     if overlay_id in {"robot-arm-3d-v2", "robot-arm-3d-v3"}:
-        return factory(transport, mode, eye_emission=eye_emission)
+        return finish(factory(transport, mode, eye_emission=eye_emission))
     if eye_emission:
         raise ValueError("eye emission is only supported by robot-arm-3d-v2 and robot-arm-3d-v3")
     if overlay_id == "bolttagu-2d":
-        return factory(transport, mode, face_pointer=face_pointer, scale=scale)
+        return finish(factory(
+            transport, mode, face_pointer=face_pointer, scale=scale, launcher_managed=launcher_managed
+        ))
     if not face_pointer:
         raise ValueError("pointer facing is only supported by bolttagu-2d")
     if scale != 1.0:
         raise ValueError("scale is only supported by bolttagu-2d")
-    return factory(transport, mode)
+    return finish(factory(transport, mode))

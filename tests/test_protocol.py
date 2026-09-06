@@ -3,17 +3,56 @@ import json
 import unittest
 
 from engram_overlay.protocol import (
+    PRESENTATION_CAPABILITY,
+    TOOL_CATEGORIES,
     JsonlTransport,
     ProtocolError,
     geometry_message,
     hello_message,
     parse_message,
     pointer_message,
+    visibility_message,
 )
 from engram_overlay.state import OverlayState
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_completion_is_finite_success_then_restores_idle_work(self) -> None:
+        state = OverlayState()
+        state.apply({"schema_version": 2, "type": "generation.started", "display_hint": "generating", "payload": {}})
+        state.apply({"schema_version": 2, "type": "generation.completed", "display_hint": "success", "payload": {}})
+        self.assertEqual(state.display_hint, "success")
+        self.assertTrue(state.transient_active)
+        self.assertTrue(state.finish_transient())
+        self.assertEqual(state.display_hint, "idle")
+
+    def test_tool_failure_returns_to_active_work_but_provider_failure_returns_idle(self) -> None:
+        state = OverlayState()
+        state.apply({"schema_version": 2, "type": "generation.started", "display_hint": "generating", "payload": {}})
+        state.apply({"schema_version": 2, "type": "tool.failed", "display_hint": "error", "payload": {}})
+        state.finish_transient()
+        self.assertEqual(state.display_hint, "generating")
+        state.apply({"schema_version": 2, "type": "provider.failed", "display_hint": "provider_error", "payload": {}})
+        state.finish_transient()
+        self.assertEqual(state.display_hint, "idle")
+
+    def test_lifecycle_edges_distinguish_controls_from_new_durable_work(self) -> None:
+        state = OverlayState()
+        self.assertEqual(
+            state.apply({"type": "generation.completed", "display_hint": "success", "payload": {}}),
+            "transient_started",
+        )
+        self.assertEqual(
+            state.apply({"type": "overlay.set_position", "display_hint": "idle", "payload": {"x": 1, "y": 2}}),
+            "unchanged",
+        )
+        self.assertTrue(state.transient_active)
+        self.assertEqual(
+            state.apply({"type": "generation.started", "display_hint": "generating", "payload": {}}),
+            "durable",
+        )
+        self.assertFalse(state.transient_active)
+
     def test_hello_contract(self) -> None:
         self.assertEqual(
             hello_message(),
@@ -53,6 +92,24 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(json.loads(stdout.getvalue())["type"], "overlay.hello")
         self.assertEqual(stderr.getvalue(), "diagnostic\n")
 
+    def test_transport_stamps_all_backend_outbound_messages_with_active_v2_schema(self) -> None:
+        messages = (
+            geometry_message(1, 2, 3, 4),
+            visibility_message(False),
+            pointer_message("left_click"),
+            {"schema_version": 1, "type": "overlay.heartbeat", "payload": {}},
+        )
+        for message in messages:
+            with self.subTest(message_type=message["type"]):
+                wire = io.StringIO()
+                JsonlTransport(io.StringIO(), wire, io.StringIO(), schema_version=2).send(message)
+                self.assertEqual(json.loads(wire.getvalue())["schema_version"], 2)
+
+    def test_explicit_v1_transport_keeps_backend_outbound_schema_one(self) -> None:
+        wire = io.StringIO()
+        JsonlTransport(io.StringIO(), wire, io.StringIO()).send(pointer_message("left_click"))
+        self.assertEqual(json.loads(wire.getvalue())["schema_version"], 1)
+
     def test_unknown_hint_falls_back_to_idle(self) -> None:
         state = OverlayState()
         state.apply({"schema_version": 1, "type": "future.event", "display_hint": "future", "payload": {}})
@@ -74,6 +131,107 @@ class ProtocolTests(unittest.TestCase):
             state.apply({"schema_version": 1, "type": "overlay.set_size", "payload": {"width": width, "height": height}})
         self.assertIsNone(state.width)
         self.assertIsNone(state.height)
+
+    def tool_event(self, category: object) -> dict:
+        payload = {} if category is None else {"category": category}
+        return {"schema_version": 1, "type": "tool.started", "display_hint": "generating", "payload": payload}
+
+    def test_tool_category_is_captured(self) -> None:
+        state = OverlayState()
+        for category in TOOL_CATEGORIES:
+            with self.subTest(category=category):
+                state.apply(self.tool_event(category))
+                self.assertEqual(state.tool_category, category)
+
+    def test_unknown_tool_category_is_dropped(self) -> None:
+        state = OverlayState()
+        for category in ("future", "", 7, None):
+            with self.subTest(category=category):
+                state.apply(self.tool_event(category))
+                self.assertIsNone(state.tool_category)
+
+    def test_a_semantic_event_without_a_category_clears_the_previous_one(self) -> None:
+        """category describes its own message; tool.completed must not leave it stale."""
+        state = OverlayState()
+        state.apply(self.tool_event("write"))
+        self.assertEqual(state.tool_category, "write")
+        state.apply({"schema_version": 1, "type": "tool.completed", "display_hint": "generating", "payload": {}})
+        self.assertIsNone(state.tool_category)
+
+    def test_visibility_ack_carries_a_boolean(self) -> None:
+        self.assertEqual(
+            visibility_message(False),
+            {"schema_version": 1, "type": "overlay.visibility_changed", "payload": {"visible": False}},
+        )
+        self.assertIs(visibility_message(1)["payload"]["visible"], True)
+
+    def test_presentation_capability_is_named_once(self) -> None:
+        """Engram keys the launcher off this exact string."""
+        self.assertEqual(PRESENTATION_CAPABILITY, "overlay.presentation")
+        self.assertEqual(
+            hello_message(capabilities=[PRESENTATION_CAPABILITY])["payload"]["capabilities"],
+            ["overlay.presentation"],
+        )
+
+    def test_show_and_hide_set_the_requested_presentation(self) -> None:
+        state = OverlayState()
+        self.assertIsNone(state.presentation)
+        state.apply({"schema_version": 1, "type": "overlay.show", "payload": {}})
+        self.assertEqual(state.presentation, "shown")
+        state.apply({"schema_version": 1, "type": "overlay.hide", "payload": {}})
+        self.assertEqual(state.presentation, "hidden")
+
+    def test_presentation_is_independent_of_the_display_hint(self) -> None:
+        state = OverlayState()
+        state.apply({"schema_version": 1, "type": "overlay.hide", "payload": {}})
+        state.apply({"schema_version": 1, "type": "generation.started", "display_hint": "generating", "payload": {}})
+        # A hint arriving while collapsed updates the pose but must not reveal it.
+        self.assertEqual(state.display_hint, "generating")
+        self.assertEqual(state.presentation, "hidden")
+
+    def test_geometry_messages_leave_the_category_alone(self) -> None:
+        """set_position/set_size carry no display_hint, so they are not semantic events."""
+        state = OverlayState()
+        state.apply(self.tool_event("execute"))
+        state.apply({"schema_version": 1, "type": "overlay.set_position", "payload": {"x": 1, "y": 2}})
+        state.apply({"schema_version": 1, "type": "overlay.set_size", "payload": {"width": 10, "height": 20}})
+        self.assertEqual(state.tool_category, "execute")
+
+    def test_pointer_leave_restores_active_generation_instead_of_idle(self) -> None:
+        state = OverlayState()
+        state.apply({"schema_version": 2, "type": "generation.started", "display_hint": "generating", "payload": {}})
+        state.apply({"schema_version": 2, "type": "pointer.entered", "display_hint": "hover", "payload": {}})
+        self.assertEqual(state.display_hint, "hover")
+        state.apply({"schema_version": 2, "type": "pointer.left", "display_hint": "idle", "payload": {}})
+        self.assertEqual(state.display_hint, "generating")
+
+    def test_input_idle_restores_active_tool_hint_and_category(self) -> None:
+        state = OverlayState()
+        state.apply({"schema_version": 2, "type": "tool.started", "display_hint": "search", "payload": {"category": "search"}})
+        state.apply({"schema_version": 2, "type": "conversation.input_active", "display_hint": "input", "payload": {}})
+        self.assertEqual(state.display_hint, "input")
+        state.apply({"schema_version": 2, "type": "conversation.input_idle", "display_hint": "idle", "payload": {}})
+        self.assertEqual(state.display_hint, "search")
+        self.assertEqual(state.tool_category, "search")
+
+    def test_work_update_during_input_is_revealed_when_input_ends(self) -> None:
+        state = OverlayState()
+        state.apply({"schema_version": 2, "type": "conversation.input_active", "display_hint": "input", "payload": {}})
+        state.apply({"schema_version": 2, "type": "generation.thinking", "display_hint": "thought", "payload": {}})
+        self.assertEqual(state.display_hint, "input")
+        state.apply({"schema_version": 2, "type": "conversation.input_idle", "display_hint": "idle", "payload": {}})
+        self.assertEqual(state.display_hint, "thought")
+
+    def test_v2_snapshot_restores_the_current_bounded_tool_category(self) -> None:
+        state = OverlayState()
+        state.apply({
+            "schema_version": 2,
+            "type": "state.snapshot",
+            "display_hint": "search",
+            "payload": {"generation_active": True, "tool_category": "search"},
+        })
+        self.assertEqual(state.display_hint, "search")
+        self.assertEqual(state.tool_category, "search")
 
 
 if __name__ == "__main__":

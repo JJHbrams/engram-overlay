@@ -4,8 +4,9 @@ This is the canonical project guide for an LLM creating a personal Engram extern
 
 ## Ownership boundary
 
-Engram owns the Event API, process lifecycle, mode selection, geometry contract, and bundled fallback. This repository's
-renderer owns its character, theme, animation, assets, and renderer-specific options. The integration receives semantic
+Engram owns the Event API host, mode selection, geometry contract, and bundled fallback. The external application owns
+its renderer process, startup, restart, installation path, arguments, character, theme, animation, assets, and
+renderer-specific options. Engram does not launch, stop, locate, or configure that process. The integration receives semantic
 metadata only; it must not depend on conversation text, thinking, tool arguments/results, or user file paths.
 
 ## Pick the rendering layer
@@ -27,7 +28,7 @@ overlay's view class.
 ```text
 src/engram_overlay/overlays/<id>.py     renderer behavior and factory
 src/engram_overlay/registry.py          lazy-loaded id/backend/factory mapping
-manifests/<id>/manifest.yaml            install and selection contract
+tests/roster.json                       display name and renderer id snapshot
 tests/test_<id>.py                      behavior and registration tests
 ```
 
@@ -36,14 +37,21 @@ asset path.
 
 ## Protocol and window invariants
 
-1. `overlay.hello` is the first stdout line. stdout contains no logs, banners, or tracebacks.
-2. Logs go to stderr. Invalid JSONL and unknown events fail soft where the public contract permits.
-3. Manifest commands are argv arrays with an absolute installed executable. They are not shell strings.
+1. The default is Event API v2: read `~/.engram/overlay-event-api-v2.json`, connect to its loopback endpoint,
+   send `overlay.register` first, and reconnect with bounded backoff after either startup order or host restart.
+2. Protocol uses the TCP socket. Logs go to stderr; token, instance credentials, and wire payloads do not.
+   Invalid JSONL and unknown events fail soft where the public contract permits.
+3. The external application owns launch and installation. Do not create an Engram command manifest or depend on
+   Engram knowing an executable, argv, cwd, asset path, or virtual environment.
 4. `screen_x` and `screen_y` on drag events describe the window's top-left position, not the raw cursor.
 5. `observer` keeps its local visual position and reports geometry; `replace` participates in Engram-owned positioning.
-6. A renderer may advertise `"overlay.set_size"` in `overlay.hello.payload.capabilities`. Only an opted-in `replace` renderer then receives physical `width`/`height` requests; preserve its artwork aspect ratio, bound the result, and emit `overlay.geometry_changed` after applying it. Old renderers and observer mode receive no size request.
+6. A renderer may advertise `"overlay.set_size"` in `overlay.register.payload.capabilities`. Only an opted-in selected `replace` renderer then receives physical `width`/`height` requests; preserve its artwork aspect ratio, bound the result, and emit `overlay.geometry_changed` after applying it. Observer mode receives no size request.
 7. Convert between physical screen, Tk client, and logical canvas coordinates explicitly on mixed-DPI Windows systems.
-8. A failed renderer must be safe for Engram to terminate and replace with the bundled renderer.
+8. A disconnected renderer yields ownership to Engram's bundled fallback. Engram does not terminate the external process;
+   the renderer remains responsible for its lifecycle and reconnect.
+
+`--v1-stdio` preserves the old `overlay.hello` stdin/stdout protocol for legacy tests only. Do not use it as the
+normal installation or ownership model.
 
 ## State and personalization
 
@@ -54,12 +62,12 @@ renderer arguments or assets, not arbitrary settings injected into Engram.
 ## Acceptance contract
 
 - The overlay is lazily registered and can start in every declared mode.
-- Handshake and outbound envelopes remain schema-valid.
+- v2 registration and every outbound envelope remain schema-valid; explicit v1 stdio remains schema 1.
 - Unknown input does not terminate the process.
 - Pure behavior and geometry have focused tests.
 - Packaged assets exist in a built wheel, not only the source tree.
 - The full unittest suite passes.
-- `scripts/verify-engram.py` passes against an installed manifest and the intended Engram source/runtime.
+- `scripts/verify-connection.py` registers with a running Engram, or reports exit 2 because none is running.
 - No active overlay selection or external release is changed without explicit authorization.
 
 ## Useful request shape

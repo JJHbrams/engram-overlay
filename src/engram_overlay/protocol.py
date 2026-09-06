@@ -1,4 +1,4 @@
-"""Engram External Overlay Event API v1 JSONL helpers."""
+"""Shared Engram External Overlay Event API JSONL helpers."""
 
 from __future__ import annotations
 
@@ -24,6 +24,18 @@ DISPLAY_HINTS = frozenset(
         "error",
     }
 )
+# Engram's launcher icon owns whether the character is on screen. A renderer that
+# advertises this capability starts collapsed and is shown or hidden by the host;
+# one that does not keeps the always-visible behaviour.
+MODES = frozenset({"observer", "replace"})
+PRESENTATION_CAPABILITY = "overlay.presentation"
+SHOW_MESSAGE = "overlay.show"
+HIDE_MESSAGE = "overlay.hide"
+
+# The only tool information Engram publishes: a category, never a tool name.
+TOOL_CATEGORIES = frozenset(
+    {"memory", "search", "read", "write", "execute", "communication", "other"}
+)
 POINTER_ACTIONS = frozenset(
     {
         "left_click",
@@ -40,7 +52,7 @@ COORDINATE_ACTIONS = frozenset({"right_click", "drag_move", "drag_end"})
 
 
 class ProtocolError(ValueError):
-    """Raised when a JSONL line is not a valid v1 protocol object."""
+    """Raised when a JSONL line is not valid for the selected protocol version."""
 
 
 def hello_message(*, capabilities: list[str] | None = None) -> dict[str, Any]:
@@ -61,6 +73,15 @@ def geometry_message(x: int, y: int, width: int, height: int) -> dict[str, Any]:
     }
 
 
+def visibility_message(visible: bool) -> dict[str, Any]:
+    """Reported once the show or hide animation has finished, not when it starts."""
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "type": "overlay.visibility_changed",
+        "payload": {"visible": bool(visible)},
+    }
+
+
 def pointer_message(action: str, *, screen_x: int | None = None, screen_y: int | None = None) -> dict[str, Any]:
     if action not in POINTER_ACTIONS:
         raise ProtocolError(f"unsupported pointer action: {action}")
@@ -72,14 +93,15 @@ def pointer_message(action: str, *, screen_x: int | None = None, screen_y: int |
     return {"schema_version": SCHEMA_VERSION, "type": "pointer.action", "payload": payload}
 
 
-def parse_message(line: str) -> dict[str, Any]:
+def parse_message(line: str, *, schema_version: int = SCHEMA_VERSION) -> dict[str, Any]:
+    """Parse one JSONL line, accepting only the schema the caller speaks."""
     try:
         message = json.loads(line)
     except json.JSONDecodeError as exc:
         raise ProtocolError("invalid JSONL") from exc
     if not isinstance(message, dict):
         raise ProtocolError("message must be a JSON object")
-    if message.get("schema_version") != SCHEMA_VERSION:
+    if message.get("schema_version") != schema_version:
         raise ProtocolError("unsupported schema_version")
     if not isinstance(message.get("type"), str):
         raise ProtocolError("message type must be a string")
@@ -91,17 +113,25 @@ def parse_message(line: str) -> dict[str, Any]:
 
 @dataclass
 class JsonlTransport:
-    """Thread-safe JSONL transport. Protocol data uses stdout; diagnostics use stderr."""
+    """Thread-safe JSONL transport. Protocol data uses stdout; diagnostics use stderr.
+
+    ``schema_version`` is the version this end speaks. A line announcing anything
+    else is not ours to interpret, so it is reported and skipped rather than
+    guessed at -- which is how a v2 host's events looked like noise to a v1 parser.
+    """
 
     reader: IO[str]
     writer: IO[str]
     diagnostics: IO[str]
+    schema_version: int = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
         self._write_lock = threading.Lock()
 
     def send(self, message: dict[str, Any]) -> None:
-        encoded = json.dumps(message, ensure_ascii=False, separators=(",", ":"))
+        outbound = dict(message)
+        outbound["schema_version"] = self.schema_version
+        encoded = json.dumps(outbound, ensure_ascii=False, separators=(",", ":"))
         with self._write_lock:
             self.writer.write(encoded + "\n")
             self.writer.flush()
@@ -115,7 +145,7 @@ class JsonlTransport:
             if not line.strip():
                 continue
             try:
-                yield parse_message(line)
+                yield parse_message(line, schema_version=self.schema_version)
             except ProtocolError as exc:
                 self.log(str(exc))
 

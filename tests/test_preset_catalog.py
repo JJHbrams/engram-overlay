@@ -1,31 +1,32 @@
 """The bundled preset roster, and the listing built from it.
 
 The registry is the single source of truth for a preset's display name: the CLI
-listing and install-dev.ps1 both read it from there instead of keeping their own
-copy. These tests guard that roster and its agreement with the reference
-manifests under manifests/.
+listing, both install scripts and the v2 registration all read it from there
+instead of keeping their own copy. These tests guard that roster against
+roster.json, a snapshot of the identities Engram has already seen.
 """
 
 import contextlib
 import io
-import re
+import json
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 from engram_overlay.__main__ import main
-from engram_overlay.registry import OVERLAYS, format_catalog, overlay_catalog, overlay_ids
+from engram_overlay.registry import (
+    OVERLAYS,
+    format_catalog,
+    overlay_catalog,
+    overlay_ids,
+    renderer_id,
+    create_overlay,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MANIFEST_DIR = REPO_ROOT / "manifests"
-
-
-def manifest_field(path: Path, field: str) -> str:
-    """Read one top-level scalar without requiring PyYAML in the test environment."""
-    for line in path.read_text(encoding="utf-8").splitlines():
-        match = re.match(rf"^{field}:\s*(.+?)\s*$", line)
-        if match:
-            return match.group(1).strip().strip('"').strip("'")
-    raise AssertionError(f"{path} has no {field}")
+ROSTER_PATH = Path(__file__).with_name("roster.json")
+ROSTER = json.loads(ROSTER_PATH.read_text(encoding="utf-8"))
 
 
 class CatalogTests(unittest.TestCase):
@@ -45,18 +46,44 @@ class CatalogTests(unittest.TestCase):
         names = [spec.name for spec in overlay_catalog()]
         self.assertEqual(len(names), len(set(names)))
 
-    def test_registry_names_match_the_reference_manifests(self) -> None:
-        """A new preset must not leave manifests/ and the packaged roster disagreeing."""
-        for spec in overlay_catalog():
-            manifest = MANIFEST_DIR / spec.id / "manifest.yaml"
-            with self.subTest(overlay=spec.id):
-                self.assertTrue(manifest.is_file(), f"missing {manifest}")
-                self.assertEqual(manifest_field(manifest, "id"), spec.id)
-                self.assertEqual(manifest_field(manifest, "name"), spec.name)
+    def test_registry_matches_the_recorded_roster(self) -> None:
+        """Both fields are what a user sees and what Engram remembers them picking.
 
-    def test_every_reference_manifest_has_a_registry_entry(self) -> None:
-        on_disk = {path.parent.name for path in MANIFEST_DIR.glob("*/manifest.yaml")}
-        self.assertEqual(on_disk, set(overlay_ids()))
+        Renaming either is allowed; doing it without noticing is not, so the
+        change has to show up as a diff in roster.json.
+        """
+        for spec in overlay_catalog():
+            with self.subTest(overlay=spec.id):
+                recorded = ROSTER.get(spec.id)
+                self.assertIsNotNone(recorded, f"{spec.id} is missing from {ROSTER_PATH.name}")
+                self.assertEqual(recorded["name"], spec.name)
+                self.assertEqual(recorded["renderer_id"], renderer_id(spec.id))
+
+    def test_the_roster_has_no_entries_the_registry_dropped(self) -> None:
+        self.assertEqual(set(ROSTER), set(overlay_ids()))
+
+    def test_renderer_ids_are_unique(self) -> None:
+        """The host keys a selection on this; a collision silently swaps overlays."""
+        ids = [renderer_id(overlay_id) for overlay_id in overlay_ids()]
+        self.assertEqual(len(ids), len(set(ids)))
+
+    def test_every_generic_preset_can_start_launcher_managed(self) -> None:
+        class Runner:
+            def __init__(self):
+                self.enabled = 0
+
+            def enable_launcher_management(self):
+                self.enabled += 1
+
+        for overlay_id in set(overlay_ids()) - {"bolttagu-2d"}:
+            runner = Runner()
+            module = SimpleNamespace(**{OVERLAYS[overlay_id].factory: lambda *args, **kwargs: runner})
+            with self.subTest(overlay=overlay_id), mock.patch(
+                "engram_overlay.registry.importlib.import_module", return_value=module
+            ):
+                created = create_overlay(overlay_id, mock.Mock(), "replace", launcher_managed=True)
+                self.assertIs(created, runner)
+                self.assertEqual(runner.enabled, 1)
 
 
 class FormatCatalogTests(unittest.TestCase):
@@ -103,19 +130,85 @@ class ListOverlaysCliTests(unittest.TestCase):
 
 
 class InstallScriptTests(unittest.TestCase):
-    """The script must not carry its own copy of the roster."""
+    """Neither script may carry its own copy of the roster."""
 
     def setUp(self) -> None:
-        self.source = (REPO_ROOT / "scripts" / "install-dev.ps1").read_text(encoding="utf-8")
+        scripts = REPO_ROOT / "scripts"
+        self.dev = (scripts / "install-dev.ps1").read_text(encoding="utf-8")
+        self.runtime = (scripts / "install-runtime.ps1").read_text(encoding="utf-8")
 
-    def test_script_reads_the_registry_instead_of_hardcoding_ids(self) -> None:
-        self.assertIn("overlay_catalog", self.source)
-        # A ValidateSet over overlay ids is exactly the copy that used to drift.
-        self.assertNotIn('ValidateSet("xeyes"', self.source)
+    def scripts(self):
+        return (("dev", self.dev), ("runtime", self.runtime))
 
-    def test_script_offers_bulk_and_listing_switches(self) -> None:
-        self.assertRegex(self.source, r"\[switch\]\$All")
-        self.assertRegex(self.source, r"\[switch\]\$List")
+    def test_both_scripts_read_the_registry_instead_of_hardcoding_ids(self) -> None:
+        for name, source in self.scripts():
+            with self.subTest(script=name):
+                self.assertIn("overlay_catalog", source)
+                # A ValidateSet over overlay ids is exactly the copy that used to drift.
+                self.assertNotIn('ValidateSet("xeyes"', source)
+
+    def test_both_scripts_can_install_the_presentation_flag(self) -> None:
+        """Without this there is no supported way to opt into Engram's launcher."""
+        for name, source in self.scripts():
+            with self.subTest(script=name):
+                self.assertRegex(source, r"\[switch\]\$Presentation")
+                self.assertIn('"--presentation"', source)
+
+    def test_neither_script_writes_a_v1_manifest(self) -> None:
+        """v2 never spawns a renderer, so a spawn manifest is a dead file that
+        still names whichever checkout wrote it."""
+        for name, source in self.scripts():
+            with self.subTest(script=name):
+                self.assertNotIn("schema_version: 1", source)
+
+    def test_the_runtime_install_does_not_link_the_checkout(self) -> None:
+        """An editable install would leave the runtime broken the moment this
+        repository is moved or deleted."""
+        self.assertNotRegex(self.runtime, r"pip install.*\s-e\s")
+
+    def test_the_runtime_install_offers_autostart_both_ways(self) -> None:
+        self.assertRegex(self.runtime, r"\[switch\]\$Autostart")
+        self.assertRegex(self.runtime, r"\[switch\]\$RemoveAutostart")
+
+    def test_the_runtime_install_starts_the_renderer(self) -> None:
+        """Engram lists renderers that are connected, so an install that only
+        copies files leaves Settings > Overlay exactly as empty as before it ran.
+        """
+        self.assertIn("Start-Process -FilePath $windowedLauncher", self.runtime)
+        self.assertRegex(self.runtime, r"\[switch\]\$NoStart")
+        self.assertNotRegex(self.runtime, r"\[switch\]\$Start\b")
+
+    def test_runtime_all_starts_one_catalog_provider(self) -> None:
+        self.assertRegex(self.runtime, r"\[switch\]\$All")
+        self.assertIn('if ($All) { @("--provider") }', self.runtime)
+        self.assertEqual(self.runtime.count("Start-Process -FilePath $windowedLauncher"), 1)
+        self.assertIn("one catalog provider advertising", self.runtime)
+
+    def test_the_runtime_install_stops_a_running_renderer_before_pip(self) -> None:
+        """A running renderer holds its own launcher open and Windows refuses to
+        replace a file in use, so pip fails with WinError 32 unless it goes first.
+        """
+        source = self.runtime
+        self.assertIn("Stop-Process -Id $wasRunning.ProcessId", source)
+        self.assertLess(
+            source.index("$wasRunning = Get-RunningRenderer"),
+            source.index("pip install"),
+            "the renderer must be stopped before the install, not after",
+        )
+
+    def legacy_cleanup_body(self) -> str:
+        """Just the manifest cleanup, since the rest of the script may delete
+        things this function must not."""
+        start = self.runtime.index("function Remove-LegacyManifests")
+        return self.runtime[start : self.runtime.index("\n}", start)]
+
+    def test_the_legacy_cleanup_removes_manifests_and_nothing_else(self) -> None:
+        """mapping.json next to a manifest is hand-built state, not litter."""
+        self.assertRegex(self.runtime, r"\[switch\]\$RemoveLegacyManifests")
+        body = self.legacy_cleanup_body()
+        self.assertIn("Remove-Item -LiteralPath $manifest -Force", body)
+        # Recursive deletion here would take the whole overlay directory with it.
+        self.assertNotRegex(body, r"Remove-Item.*-Recurse")
 
 
 if __name__ == "__main__":

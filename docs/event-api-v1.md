@@ -1,5 +1,8 @@
 # Engram External Overlay Event API v1
 
+> **Legacy/test-only.** 현재 기본 경로는 독립 renderer가 host에 연결하는 [Event API v2](event-api-v2.md)다.
+> 이 문서는 명시적 `--v1-stdio` 호환 테스트를 위해 보존하며, manifest나 Engram child launch를 새 구현에 사용하지 않는다.
+
 > renderer는 stdout으로 Engram에 메시지를 보내고, stdin으로 Engram 이벤트를 받는다. stdout에는 JSONL 프로토콜만 쓰고 로그는 stderr로 보낸다.
 
 ## 시작 순서
@@ -30,6 +33,8 @@ Engram은 성공한 handshake 뒤 `engram.welcome`과 `state.snapshot`을 보낸
 
 | type | display hint | 공개 payload |
 | --- | --- | --- |
+| `conversation.input_active` | `input` | `{}` |
+| `conversation.input_idle` | `idle` | `{}` |
 | `conversation.input_submitted` | `input` | `{}` |
 | `generation.started` | `generating` | `{}` |
 | `generation.thinking` | `thought` | `{}` |
@@ -39,6 +44,8 @@ Engram은 성공한 handshake 뒤 `engram.welcome`과 `state.snapshot`을 보낸
 | `generation.completed` | `success` | `{outcome: success}` |
 | `provider.failed` | `provider_error` | `{}` |
 | `overlay.set_position` | 없음 | `{x, y}` |
+
+`conversation.input_active`는 입력창을 열거나 포커스한 것만으로는 발생하지 않는다. 출력 가능한 문자·Backspace/Delete·커서 이동 같은 실제 편집 키 입력에서 시작하며, 마지막 해당 키 입력 후 700ms 동안 추가 입력이 없거나 포커스 이탈·숨김·취소·제출 시 `conversation.input_idle`로 끝난다. 두 이벤트는 입력 원문이나 키 값을 포함하지 않는 metadata-only 신호다. Return/Escape와 modifier-only 입력은 활동을 시작하지 않으며, `conversation.input_submitted`은 실제 제출을 나타내는 별도 이벤트로 유지된다.
 
 의미 이벤트 envelope은 `schema_version`, `id`, `sequence`, `timestamp`, `type`,
 `display_hint`, `payload`를 포함한다. 지원 hint는 `default`, `idle`, `hover`, `click`,

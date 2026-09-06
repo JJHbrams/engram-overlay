@@ -20,7 +20,7 @@ class ScaffoldPlan:
     class_name: str
     factory_name: str
     module_path: Path
-    manifest_path: Path
+    roster_path: Path
     test_path: Path
     registry_path: Path
 
@@ -39,7 +39,7 @@ def build_plan(root: Path, overlay_id: str, display_name: str | None = None) -> 
         class_name=class_name,
         factory_name=factory_name,
         module_path=root / "src" / "engram_overlay" / "overlays" / f"{module_name}.py",
-        manifest_path=root / "manifests" / overlay_id / "manifest.yaml",
+        roster_path=root / "tests" / "roster.json",
         test_path=root / "tests" / f"test_{module_name}.py",
         registry_path=root / "src" / "engram_overlay" / "registry.py",
     )
@@ -88,19 +88,22 @@ def {plan.factory_name}(transport: JsonlTransport, mode: str) -> TkOverlayHost:
 '''
 
 
-def manifest_source(plan: ScaffoldPlan) -> str:
-    display_name = json.dumps(plan.display_name)
-    return f'''schema_version: 1
-id: {plan.overlay_id}
-name: {display_name}
-command:
-  - "C:/absolute/path/to/.venv/Scripts/engram-custom-overlay.exe"
-  - "--overlay"
-  - "{plan.overlay_id}"
-  - "--mode"
-  - "replace"
-supported_modes: [observer, replace]
-'''
+def roster_source(plan: ScaffoldPlan, current: str) -> str:
+    """Add the new preset to the recorded roster.
+
+    Engram shows the name and remembers the renderer id, so both are pinned by a
+    snapshot test. Writing the entry here keeps a freshly scaffolded overlay from
+    failing that test on its first run.
+    """
+    roster = json.loads(current)
+    if plan.overlay_id in roster:
+        raise FileExistsError(f"roster already contains {plan.overlay_id}")
+    roster[plan.overlay_id] = {
+        "name": plan.display_name,
+        "renderer_id": f"engram.{plan.overlay_id}",
+    }
+    ordered = {key: roster[key] for key in sorted(roster)}
+    return json.dumps(ordered, indent=2, ensure_ascii=False) + "\n"
 
 
 def test_source(plan: ScaffoldPlan) -> str:
@@ -141,19 +144,23 @@ def registry_source(plan: ScaffoldPlan, current: str) -> str:
 def scaffold(plan: ScaffoldPlan, *, dry_run: bool = False) -> tuple[Path, ...]:
     if not plan.registry_path.is_file():
         raise FileNotFoundError(f"missing registry: {plan.registry_path}")
-    generated = (plan.module_path, plan.manifest_path, plan.test_path)
+    if not plan.roster_path.is_file():
+        raise FileNotFoundError(f"missing roster: {plan.roster_path}")
+    generated = (plan.module_path, plan.test_path)
     existing = [path for path in generated if path.exists()]
     if existing:
         raise FileExistsError("refusing to overwrite: " + ", ".join(str(path) for path in existing))
     registry = registry_source(plan, plan.registry_path.read_text(encoding="utf-8"))
-    changed = (*generated, plan.registry_path)
+    roster = roster_source(plan, plan.roster_path.read_text(encoding="utf-8"))
+    changed = (*generated, plan.registry_path, plan.roster_path)
     if dry_run:
         return changed
-    contents = (module_source(plan), manifest_source(plan), test_source(plan))
+    contents = (module_source(plan), test_source(plan))
     for path, content in zip(generated, contents, strict=True):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8", newline="\n")
     plan.registry_path.write_text(registry, encoding="utf-8", newline="\n")
+    plan.roster_path.write_text(roster, encoding="utf-8", newline="\n")
     return changed
 
 

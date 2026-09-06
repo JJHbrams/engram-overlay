@@ -12,7 +12,7 @@ class ChildSmokeTests(unittest.TestCase):
         environment = os.environ.copy()
         environment["PYTHONPATH"] = str(repository / "src")
         child = subprocess.run(
-            [sys.executable, "-m", "engram_overlay", "--overlay", "xeyes", "--headless"],
+            [sys.executable, "-m", "engram_overlay", "--overlay", "xeyes", "--v1-stdio", "--headless"],
             input='{"schema_version":1,"type":"state.snapshot","display_hint":"idle","payload":{}}\n',
             capture_output=True,
             text=True,
@@ -25,6 +25,23 @@ class ChildSmokeTests(unittest.TestCase):
         self.assertEqual(child.returncode, 0, child.stderr)
         first_line = child.stdout.splitlines()[0]
         self.assertEqual(json.loads(first_line)["type"], "overlay.hello")
+
+    def test_headless_requires_the_explicit_legacy_v1_switch(self) -> None:
+        repository = Path(__file__).resolve().parents[1]
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = str(repository / "src")
+        child = subprocess.run(
+            [sys.executable, "-m", "engram_overlay", "--overlay", "xeyes", "--headless"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=environment,
+            cwd=repository,
+            timeout=5,
+            check=False,
+        )
+        self.assertEqual(child.returncode, 2)
+        self.assertIn("requires --v1-stdio", child.stderr)
 
 
 if __name__ == "__main__":

@@ -1,29 +1,54 @@
 import random
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from PIL import Image
 
-from engram_overlay.overlays.rabbit_2d import STATE_FRAMES, atlas_frames, choose_frame
+from engram_overlay.overlays.rabbit_2d import Rabbit2DView, STATE_FRAMES, atlas_frames, choose_frame
+from engram_overlay.overlays.spritemap import Rotation
 from engram_overlay.registry import OVERLAYS, overlay_ids
 
 
 class Rabbit2DTests(unittest.TestCase):
+    def test_tick_renders_without_obsolete_rotation_state(self) -> None:
+        class Canvas:
+            def itemconfigure(self, image_id, **kwargs):
+                self.last = (image_id, kwargs)
+
+        view = Rabbit2DView.__new__(Rabbit2DView)
+        view.canvas = Canvas()
+        view.image_id = 7
+        view.frames = (object(),) * 5
+        view.frames_by_hint = {"idle": (0,)}
+        view.rotation = Rotation(random.Random(1))
+        view.display_hint = "idle"
+        view.state_started_at = 0.0
+        view.current_frame = -1
+        with patch("engram_overlay.overlays.rabbit_2d.time.monotonic", return_value=0.0), \
+                patch("engram_overlay.overlays.rabbit_2d.ImageTk.PhotoImage", return_value="frame"):
+            view.tick(0, 0, 0, 0)
+        self.assertEqual(view.canvas.last, (7, {"image": "frame"}))
+
     def test_registry_exposes_rabbit(self) -> None:
         self.assertIn("rabbit-2d", overlay_ids())
         self.assertEqual(OVERLAYS["rabbit-2d"].backend, "tk-sprite-grid")
 
     def test_random_choice_is_stable_per_bucket_and_avoids_repeat(self) -> None:
-        choices: dict[tuple[str, int], int] = {}
-        rng = random.Random(7)
-        first = choose_frame("idle", 0, choices, rng)
-        self.assertEqual(first, choose_frame("idle", 0, choices, rng))
-        second = choose_frame("idle", 1, choices, rng)
+        rotation = Rotation(random.Random(7))
+        first = choose_frame("idle", 0, rotation)
+        self.assertEqual(first, choose_frame("idle", 0, rotation))
+        second = choose_frame("idle", 1, rotation)
         self.assertNotEqual(first, second)
 
     def test_unknown_hint_uses_idle_rotation(self) -> None:
-        frame = choose_frame("future-state", 0, {}, random.Random(2))
+        frame = choose_frame("future-state", 0, Rotation(random.Random(2)))
         self.assertIn(frame, STATE_FRAMES["idle"])
+
+    def test_a_single_candidate_hint_never_varies(self) -> None:
+        rotation = Rotation(random.Random(3))
+        chosen = {choose_frame("input", bucket, rotation) for bucket in range(6)}
+        self.assertEqual(chosen, set(STATE_FRAMES["input"]))
 
     def test_packaged_atlas_has_five_states_and_empty_spare_cell(self) -> None:
         asset = Path(__file__).parents[1] / "src" / "engram_overlay" / "overlays" / "assets" / "rabbit_2d" / "rabbit-states.png"

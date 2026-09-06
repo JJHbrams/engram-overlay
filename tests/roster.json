@@ -1,0 +1,30 @@
+{
+  "bolttagu-2d": {
+    "name": "Bolttagu",
+    "renderer_id": "engram.bolttagu-2d"
+  },
+  "rabbit-2d": {
+    "name": "Rabbit",
+    "renderer_id": "engram.rabbit-2d"
+  },
+  "robot-arm": {
+    "name": "Engram 3-Link Robot Arm",
+    "renderer_id": "engram.robot-arm"
+  },
+  "robot-arm-3d": {
+    "name": "Engram 3D Robot Arm",
+    "renderer_id": "engram.robot-arm-3d"
+  },
+  "robot-arm-3d-v2": {
+    "name": "Engram Textured 3D Robot Arm V2",
+    "renderer_id": "engram.robot-arm-3d-v2"
+  },
+  "robot-arm-3d-v3": {
+    "name": "CCTV",
+    "renderer_id": "engram.robot-arm-3d-v3"
+  },
+  "xeyes": {
+    "name": "Engram XEyes",
+    "renderer_id": "engram.xeyes"
+  }
+}

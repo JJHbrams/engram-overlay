@@ -20,44 +20,48 @@ git checkout v1.1.0.89
 
 개발을 이어갈 때는 tag에서 개인 branch를 만들거나 저장소를 fork한다.
 
-### 2. preset 등록
+### 2. preset 실행
 
-`install-dev.ps1`이 `.venv` 생성, editable install, launcher 절대 경로가 박힌 manifest 생성을 한 번에 한다.
+Engram은 Event API v2에서 loopback API만 제공하고 renderer를 실행하지 않는다. renderer가 스스로
+접속하는 독립 프로그램이므로, 등록할 manifest가 아니라 실행할 런타임이 필요하다.
 
 ```powershell
-.\scripts\install-dev.ps1 -List               # 목록만 보기
-.\scripts\install-dev.ps1 -Overlay rabbit-2d  # 하나만 등록
-.\scripts\install-dev.ps1 -All                # 전부 등록
+.\scripts\install-runtime.ps1 -List                          # 목록만 보기
+.\scripts\install-runtime.ps1 -All                           # 7개 preset을 한 provider로 설치·실행
+.\scripts\install-runtime.ps1 -Overlay rabbit-2d             # 설치하고 실행
+.\scripts\install-runtime.ps1 -Overlay rabbit-2d -Autostart  # Windows 시작 시 자동 실행
+python scripts/build-sprite-preview.py                       # 신호별 동작 고르기
 ```
 
-- manifest 위치는 `%USERPROFILE%\.engram\overlays\<id>\manifest.yaml`이다.
-- 등록 뒤 Engram `Settings > Overlay`에서 고르고 재시작한다. 스크립트는 현재 선택을 바꾸지 않는다.
-- `-Mode observer|replace` (기본 `replace`), `-Scale`(bolttagu-2d), `-EyeEmission`(robot-arm-3d-v2/v3).
-- `-All`은 overlay별 옵션과 같이 못 쓴다. 그 옵션이 필요한 preset은 따로 등록한다.
+- 런타임 위치는 `%LOCALAPPDATA%\engram-overlay\`이고, checkout을 지우거나 옮겨도 계속 동작한다.
+- **실행 중인 renderer만** Engram `Settings > Overlay`에 나온다. 설치만으로는 목록에 안 뜬다.
+- `-All`은 checkout과 무관한 런타임 하나와 provider 프로세스 하나를 설치한다. Settings에는 기존의
+  안정된 `engram.<preset>` ID를 가진 7개 preset이 각각 나타나며 선택할 때 provider가 활성 창을 교체한다.
+- `-Overlay`는 기존처럼 preset 하나만 직접 등록한다. v2 catalog를 보내지 않는 외부 renderer도 그대로 호환된다.
+- 옵션: `-Scale`·`-Presentation`·`-NoFacePointer`(bolttagu-2d), `-EyeEmission`(robot-arm-3d-v2/v3).
+- 설치하면 바로 실행된다. 옵션을 바꿀 때도 다시 실행하면 renderer를 내렸다 새로 띄운다. 설치만 하려면 `-NoStart`.
+- 수동 실행은 `%LOCALAPPDATA%\engram-overlay\start-overlay.cmd`. 자동 실행 해제는 `-RemoveAutostart`.
+- v1 시절 `%USERPROFILE%\.engram\overlays\*\manifest.yaml`은 이제 동작하지 않는다.
+  `-RemoveLegacyManifests`가 manifest만 지우고 `mapping.json` 같은 나머지는 남긴다.
+- 코드를 고치며 쓸 때는 `install-dev.ps1`. checkout을 editable로 연결해 수정이 바로 반영된다.
 - 설치 없이 목록만 보려면 `engram-custom-overlay --list-overlays`.
 - preset 목록의 단일 출처는 `engram_overlay.registry`다. overlay를 추가해도 스크립트는 손대지 않는다.
 
-manifest 형태:
+`build-sprite-preview.py`는 스프라이트 preset에만 해당한다. localhost에 미리보기 페이지를 띄우고 브라우저를 연다.
+상단 탭으로 오버레이를 고르면 각 동작이 실제 타이밍으로 재생되고, 어떤 신호에 무엇을 붙일지 눈으로
+고를 수 있다. **바로 적용**을 누르면 그 오버레이의 `mapping.json`에 곧바로 쓴다. 코드 수정은 필요 없고,
+자세한 규칙은 [Overlay preset 상세](docs/overlays.md)에 있다.
 
-```yaml
-schema_version: 1
-id: rabbit-2d
-name: Rabbit
-command:
-  - "C:/path/to/engram-overlay/.venv/Scripts/engram-custom-overlay.exe"
-  - "--overlay"
-  - "rabbit-2d"
-  - "--mode"
-  - "replace"
-supported_modes: [observer, replace]
-```
+renderer가 Engram을 찾는 방법:
 
-- `command` 첫 항목은 실제 checkout의 launcher 절대 경로여야 한다.
-- Engram은 검증된 manifest의 argv만 실행한다. shell 문자열이 아니다.
+- `%USERPROFILE%\.engram\overlay-event-api-v2.json`에서 현재 `host`/`port`/`instance_id`/`token`을 읽는다.
+- 세 값 모두 Engram이 켜질 때마다 새로 생성되므로 캐시하지 않는다.
+- Engram이 꺼져 있으면 실패가 아니라 대기다. backoff로 재시도하다 켜지면 붙는다.
+- `token`은 argv·설정·로그 어디에도 남기지 않는다.
 
 ### 3. 자신의 overlay 만들기
 
-coding agent에는 저장소의 `create-engram-overlay` skill을 쓰게 한다. backend 선택, module/registry, manifest, focused test, Event API 검증을 한 흐름으로 묶는다.
+coding agent에는 저장소의 `create-engram-overlay` skill을 쓰게 한다. backend 선택, module/registry, roster, focused test, Event API 검증을 한 흐름으로 묶는다.
 
 ```text
 create-engram-overlay skill을 사용해서 <원하는 동작과 디자인> overlay를 만들어줘.
@@ -70,25 +74,26 @@ python scripts/scaffold-overlay.py my-overlay --name "My Overlay" --dry-run
 python scripts/scaffold-overlay.py my-overlay --name "My Overlay"
 ```
 
-- scaffold가 만든 `manifests/my-overlay/manifest.yaml`의 launcher placeholder를 `.venv` 절대 경로로 바꾼다.
-- 그 파일을 `%USERPROFILE%\.engram\overlays\my-overlay\manifest.yaml`로 복사하고 Engram을 재시작한다.
+- scaffold는 module·test·registry 항목과 `tests/roster.json` 항목을 만든다. 등록할 manifest는 없다.
+- `install-dev.ps1`로 editable install 후 `--overlay my-overlay`로 실행하면 Engram에 나타난다.
 
 ### 4. 검증
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests
-@() | .\.venv\Scripts\engram-custom-overlay.exe --overlay rabbit-2d --mode replace --headless
-python scripts/verify-engram.py --engram-source <engram-source> --manifest "$HOME\.engram\overlays\rabbit-2d\manifest.yaml"
+@() | .\.venv\Scripts\engram-custom-overlay.exe --overlay rabbit-2d --v1-stdio --headless
+python scripts/verify-connection.py --overlay rabbit-2d
 ```
 
-세 줄은 각각 단위 테스트, JSONL handshake, 실제 Engram source와 설치된 manifest의 계약 검증이다.
+세 줄은 각각 단위 테스트, JSONL 파싱 계약, 실제 Engram 접속·등록 검증이다.
+마지막 줄은 Engram이 떠 있어야 하고, 없으면 실패가 아니라 exit 2로 알린다.
 
 ## 포함된 preset
 
 | id | 이름 | backend | 설명 |
 | --- | --- | --- | --- |
-| `bolttagu-2d` | Bolttagu | Tk sprite sheet | 랜덤 눈깜빡임·커피 김을 합성하고 포인터 쪽으로 도는 2D 캐릭터 |
-| `rabbit-2d` | Rabbit | Tk sprite grid | 손그림 토끼 5개 포즈를 의미 이벤트에 맞춰 회전 |
+| `bolttagu-2d` | Bolttagu | Tk sprite sheet | 검색·작성·응답·실패 등 상태별 애니메이션과 랜덤 눈깜빡임·커피 김을 합성하는 2D 캐릭터 |
+| `rabbit-2d` | Rabbit | Tk sprite grid | 손그림 토끼 5개 포즈를 의미 이벤트에 맞춰 회전. 매핑 선택 가능 |
 | `xeyes` | Engram XEyes | Tk | mouse pointer를 따라보는 두 눈. 첫 API/입력 smoke |
 | `robot-arm` | Engram 3-Link Robot Arm | Tk | 천장에서 내려오는 iris·LED 표정의 단안 3-link arm |
 | `robot-arm-3d` | Engram 3D Robot Arm | Tk software 3D | 같은 arm을 원근 투영·depth sort·면 조명으로 렌더링 |
@@ -101,15 +106,17 @@ python scripts/verify-engram.py --engram-source <engram-source> --manifest "$HOM
 
 | 항목 | 계약 |
 | --- | --- |
-| transport | Engram이 시작한 로컬 child process의 stdin/stdout JSONL |
-| schema | `schema_version: 1` |
-| handshake | renderer stdout의 첫 줄은 `overlay.hello` |
+| transport | 독립 renderer가 Engram의 `127.0.0.1` ephemeral TCP JSONL API에 연결 |
+| schema | 기본 `schema_version: 2`; 명시적 `--v1-stdio`만 schema 1 |
+| handshake | discovery를 읽은 renderer가 socket 첫 줄로 `overlay.register` 전송 |
+| catalog | 한 provider가 선택적인 bounded catalog를 등록할 수 있고, 선택 assignment의 logical renderer ID로 활성 preset을 교체 |
 | privacy | 대화·thinking·도구 payload·파일 경로를 받지 않는 `metadata_only` |
 | modes | `observer`는 번들 캐릭터와 공존, `replace`는 번들을 대체 |
 | sizing | `overlay.set_size`를 advertise한 `replace` renderer만 크기 요청을 받는다 |
-| fallback | handshake·JSONL·child 오류 시 Engram 번들 renderer 복구 |
+| presentation | `overlay.presentation`을 advertise한 renderer는 Engram 런처가 show/hide로 표시를 소유한다 |
+| fallback | 연결·등록·JSONL 오류나 disconnect 시 Engram 번들 renderer 복구; 외부 프로세스는 외부 앱 소유 |
 
-- 세부 계약: [Event API v1](docs/event-api-v1.md)
+- 세부 계약: [Event API v2](docs/event-api-v2.md) · [v1 legacy/test-only](docs/event-api-v1.md)
 - 프로젝트 구조: [Overlay 구현 계층](docs/architecture.md)
 - 개발 순서: [개발 가이드](docs/development.md)
 - LLM으로 만들 때: [LLM authoring guide](docs/llm-overlay-authoring.md)
@@ -125,4 +132,4 @@ python scripts/verify-engram.py --engram-source <engram-source> --manifest "$HOM
 
 ## 문서 기준
 
-2026-08-25 기준 Engram의 `커스텀 오버레이 Event API v1` 매뉴얼과 `ProjectIntelContunuum/docs/overlay-event-api-v1.md`를 대조해 작성했다.
+현재 기준은 Engram의 `External Overlay Event API v2` 공개 계약이다. v1 stdin/stdout 문서는 명시적 호환 테스트용으로만 유지한다.

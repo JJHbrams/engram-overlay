@@ -1,8 +1,13 @@
-"""Bolttagu sprite overlay driven by the sprite-pack-v8 animation set.
+"""Bolttagu sprite overlay driven by the bolttagu sprite packs.
 
-The upstream pack is a set of full-canvas 1254x1254 PNGs.  ``scripts/build-bolttagu-assets.py``
+An upstream pack is a set of full-canvas 1254x1254 PNGs.  ``scripts/build-bolttagu-assets.py``
 crops them to a shared rectangle and packs them into the horizontal sheets bundled here, so every
 pose and frame stays aligned on the same feet anchor.
+
+Two sprite sets are bundled: the original v10 pack, which owns the unprefixed option names, and
+its trickcal-inspired retouch of the same character under ``trickcal-``.  Both are packed against
+one crop, so a signal may draw either set without the character shifting on screen -- the picker
+offers every option of both, and the retouch adds two activities the original never drew.
 
 Frames are described as recipes -- an ordered tuple of ``(sheet, cell)`` layers composited bottom
 up -- because idle is two independent loops at once: a random eye blink and the 24-frame steam
@@ -18,11 +23,18 @@ import time
 import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from PIL import Image, ImageTk
 
 from ..backends.tk import TkOverlayHost
-from ..protocol import JsonlTransport
+from ..protocol import TOOL_CATEGORIES, JsonlTransport
+from .spritemap import MAPPING_FILE, Layer, Option, Row, Section, SpriteMap
+from .spritemap import finished as _finished
+from .spritemap import frames_at as _frames_at
+from .spritemap import installed_mapping_path as _installed_mapping_path
+from .spritemap import resolve as _resolve
+from .spritemap import single as _single
 from ..state import OverlayState
 
 TRANSPARENT = "#010203"
@@ -30,17 +42,57 @@ ASSET_DIR = Path(__file__).parent / "assets" / "bolttagu_2d"
 
 Recipe = tuple[tuple[str, int], ...]
 
-WONDERING_FRAME_MS = 100  # sprites.json declares 10 fps for the 8-frame loop
+# Frame timings are the pack's own, from sprites.json. Every event set is three frames.
 ENTER_DURATIONS_MS = (200, 300, 220)
 EXIT_DURATIONS_MS = (220, 220, 260)
+EVENT_DURATIONS_MS: dict[str, tuple[int, int, int]] = {
+    "wondering": (320, 260, 320),
+    "searching": (650, 500, 650),
+    "writing": (320, 320, 420),
+    "speaking": (220, 220, 260),
+    "listening": (420, 420, 420),
+    "waiting": (800, 800, 800),
+    "success": (280, 360, 360),
+    "error": (260, 300, 420),
+}
+LOOPING_EVENTS = ("wondering", "searching", "writing", "speaking", "listening", "waiting", "error")
 
-# v8 idle: steam is a 24-frame 10 fps loop, blink is a fixed 210 ms sequence that
+# The trickcal retouch. It redraws every state of the original at the same timings and
+# adds two activities of its own, so it is the same table plus those two.
+TRICKCAL = "trickcal-"
+TRICKCAL_EVENT_DURATIONS_MS: dict[str, tuple[int, int, int]] = {
+    **EVENT_DURATIONS_MS,
+    "executing": (360, 300, 480),
+    "tool_use": (420, 360, 500),
+}
+TRICKCAL_LOOPING_EVENTS = LOOPING_EVENTS + ("executing", "tool_use")
+
+# Option-name prefix per bundled set, and the timings each one draws at. The original
+# set is unprefixed so every mapping written before the retouch keeps working.
+SET_DURATIONS: dict[str, dict[str, tuple[int, int, int]]] = {
+    "": EVENT_DURATIONS_MS,
+    TRICKCAL: TRICKCAL_EVENT_DURATIONS_MS,
+}
+SET_LOOPING: dict[str, tuple[str, ...]] = {
+    "": LOOPING_EVENTS,
+    TRICKCAL: TRICKCAL_LOOPING_EVENTS,
+}
+
+# idle: steam is a 24-frame 10 fps loop, blink is a fixed 210 ms sequence that
 # re-arms itself 2.5-6 s after it finishes.
 STEAM_FRAME_MS = 100
 STEAM_CELLS = 24
 EYE_CELLS = {"open": 0, "half": 1, "closed": 2}
 BLINK_SEQUENCE = (("half", 50), ("closed", 90), ("half", 70))
 BLINK_INTERVAL_MS = (2500, 6000)
+
+# Poses drawn with both hands up and no mug in them. The mug has to go somewhere,
+# so these draw the tipped mug and its puddle at her feet; without it the coffee
+# simply vanishes the moment she reacts to anything. It rides on the pose rather
+# than on the floor, so it shows with the floor layer off and never appears under
+# a pose that is still holding the mug.
+SPILL_SHEET = "spill"
+SPILL_POSES = ("alert", "wondering")
 
 # The artwork is drawn with the long cheek and the mug toward the viewer's left,
 # so the sprite already looks left and is mirrored only to turn right.
@@ -71,37 +123,274 @@ class Clip:
         return sum(self.durations_ms)
 
 
+def _event_clip(state: str, *, loop: bool, prefix: str = "") -> Clip:
+    """One three-frame event set, drawn from the named set's own sheet and timings."""
+    return Clip(
+        sheet=prefix + state,
+        cells=(0, 1, 2),
+        durations_ms=SET_DURATIONS[prefix][state],
+        loop=loop,
+    )
+
+
+def _set_clips(prefix: str) -> dict[str, Clip]:
+    """Every clip one sprite set draws, keyed by the option name that selects it."""
+    return {
+        prefix + "alert": Clip(sheet=prefix + "alert", cells=(0,), durations_ms=(1000,), loop=True),
+        prefix + "enter": Clip(
+            sheet=prefix + "enter", cells=(0, 1, 2), durations_ms=ENTER_DURATIONS_MS, loop=False
+        ),
+        # The rear-view farewell, played when Engram's launcher collapses the character.
+        prefix + "exit": Clip(
+            sheet=prefix + "exit", cells=(0, 1, 2), durations_ms=EXIT_DURATIONS_MS, loop=False
+        ),
+        # The packs' only one-shot event: play once, then settle back to idle.
+        prefix + "success": _event_clip("success", loop=False, prefix=prefix),
+        **{
+            prefix + state: _event_clip(state, loop=True, prefix=prefix)
+            for state in SET_LOOPING[prefix]
+        },
+    }
+
+
 CLIPS: dict[str, Clip] = {
-    "alert": Clip(sheet="alert", cells=(0,), durations_ms=(1000,), loop=True),
-    "wondering": Clip(
-        sheet="wondering",
-        cells=tuple(range(8)),
-        durations_ms=(WONDERING_FRAME_MS,) * 8,
-        loop=True,
-    ),
-    "enter": Clip(sheet="enter", cells=(0, 1, 2), durations_ms=ENTER_DURATIONS_MS, loop=False),
-    "exit": Clip(sheet="exit", cells=(0, 1, 2), durations_ms=EXIT_DURATIONS_MS, loop=False),
+    name: clip for prefix in SET_DURATIONS for name, clip in _set_clips(prefix).items()
 }
 
 # "idle" is the layered blink+steam pose; the rest name a looping clip above.
+# The mapping follows the intent the pack states in its own event-map.json.
 IDLE_POSE = "idle"
+# One layered resting pose per set. They are options like any other, so a mapping
+# may rest in the retouch while a flourish plays from the original, or the reverse.
+IDLE_POSES = (IDLE_POSE, TRICKCAL + IDLE_POSE)
 STATE_POSES: dict[str, str] = {
     "default": IDLE_POSE,
     "idle": IDLE_POSE,
-    "input": IDLE_POSE,
+    # The success one-shot plays over this pose and settles back into it.
     "success": IDLE_POSE,
     "hover": "alert",
     "click": "alert",
-    "error": "alert",
-    "provider_error": "alert",
-    "generating": "wondering",
-    "search": "wondering",
+    "input": "listening",
+    "generating": "speaking",
     "thought": "wondering",
-    "memory": "wondering",
+    "search": "searching",
+    # Consulting stored notes reads the same as consulting documents.
+    "memory": "searching",
+    "error": "error",
+    "provider_error": "error",
+}
+
+# payload.category refines "generating", which is Engram's catch-all for every tool
+# that is neither a search nor a memory lookup. Without this, editing a file and
+# streaming an answer look identical.
+# Engram publishes "search" and "memory" as display hints of their own, so those
+# two categories never arrive alongside "generating" and can never reach the
+# refinement below. Only the rest are configurable here; the hint table owns the
+# other two. See event_api.event_for_bubble.
+UNREACHABLE_CATEGORIES = frozenset({"search", "memory"})
+REFINABLE_CATEGORIES = frozenset(TOOL_CATEGORIES) - UNREACHABLE_CATEGORIES
+
+CATEGORY_POSES: dict[str, str] = {
+    "write": "writing",     # code, docs, artifacts: write/edit/patch/delete tools
+    "execute": "waiting",   # shell, build, test, run: work to wait on
+    "read": "searching",    # opening a document
 }
 
 # A hint that warrants a one-shot the moment the renderer enters it.
-HINT_ONESHOTS: dict[str, str] = {"provider_error": "exit"}
+# A flourish played once on arrival before settling back into the hint's pose.
+# Not offered in the picker: with non-looping poses selectable, the only thing it
+# adds is returning to idle afterwards, which is one clip and one default. The
+# mapping file still accepts an "oneshots" section.
+HINT_ONESHOTS: dict[str, str] = {"success": "success"}
+
+# Engram's launcher plays these for overlay.show and overlay.hide. A hint may use
+# them too: a lifecycle transition is a one-shot override, so it still wins while
+# it runs. Nothing here is off limits -- every bundled clip can be chosen.
+LIFECYCLE_CLIPS = ("enter", "exit")
+
+# What the launcher's own transitions play. overlay.show and overlay.hide are
+# events in their own right, so which clip each one runs is chosen here rather
+# than hardcoded at the call site.
+LIFECYCLE_TRANSITIONS: dict[str, str] = {"show": "enter", "hide": "exit"}
+
+
+def selectable_poses() -> list[str]:
+    """Every pose a state can rest in.
+
+    A clip that does not loop holds its last frame for as long as the state lasts.
+    """
+    return list(IDLE_POSES) + sorted(CLIPS)
+
+
+def selectable_oneshots() -> list[str]:
+    """Every clip a hint may play once on arrival before settling into its pose."""
+    return sorted(name for name, clip in CLIPS.items() if not clip.loop)
+
+
+OVERLAY_ID = "bolttagu-2d"
+
+
+def installed_mapping_path() -> Path:
+    return _installed_mapping_path(OVERLAY_ID)
+
+
+HINT_NOTES = {
+    "idle": "유휴", "default": "기본", "input": "사용자 입력 제출",
+    "generating": "응답 생성 · 도구 실행", "thought": "생각 중", "search": "검색 도구",
+    "memory": "기억 도구", "success": "턴 완료", "hover": "포인터 올림",
+    "click": "클릭", "error": "도구 실패", "provider_error": "provider 실패",
+}
+HINT_ORDER = (
+    "idle", "default", "input", "generating", "thought",
+    "search", "memory", "success", "hover", "click", "error", "provider_error",
+)
+CATEGORY_NOTES = {
+    "write": "write · edit · patch · delete",
+    "execute": "shell · exec · build · test · run",
+    "read": "read · open",
+    "communication": "mail · message · discord",
+    "other": "그 외",
+}
+def _idle_option(prefix: str) -> Option:
+    """The layered resting pose of one set: a random blink under its own steam."""
+    return Option(
+        prefix + IDLE_POSE,
+        (
+            # The eye rests open for an unpredictable while, then blinks.
+            Layer(
+                prefix + "idle",
+                tuple(EYE_CELLS[name] for name in ("open", "half", "closed", "half")),
+                (0,) + tuple(ms for _, ms in BLINK_SEQUENCE),
+                hold_ms=BLINK_INTERVAL_MS,
+            ),
+            Layer(prefix + "steam", tuple(range(STEAM_CELLS)), (STEAM_FRAME_MS,) * STEAM_CELLS),
+        ),
+        note=("트릭칼풍 " if prefix else "") + "눈깜빡임 + 커피 김",
+    )
+
+
+def _options() -> dict[str, Option]:
+    """Every drawable pose, described once for both the picker and the renderer."""
+    options = {prefix + IDLE_POSE: _idle_option(prefix) for prefix in SET_DURATIONS}
+    for name, clip in CLIPS.items():
+        layers = (Layer(clip.sheet, clip.cells, clip.durations_ms, clip.loop),)
+        note = "트릭칼풍" if name.startswith(TRICKCAL) else ""
+        if name.removeprefix(TRICKCAL) in SPILL_POSES:
+            # Underneath her: the puddle is on the floor at her feet. One cell held
+            # for exactly as long as the pose, so the spill cannot lengthen it.
+            layers = (Layer(SPILL_SHEET, (0,), (clip.total_ms,)),) + layers
+            note = (note + " 쏟은 커피").strip()
+        options[name] = Option(name, layers, note=note)
+    return options
+
+
+OPTIONS: dict[str, Option] = _options()
+
+
+def sprite_map() -> SpriteMap:
+    """Declarative description of this overlay for the shared picker and loader."""
+    metadata = json.loads((ASSET_DIR / "atlas.json").read_text(encoding="utf-8"))
+    sheets = {
+        Path(name).stem.removeprefix("bolttagu-"): (name, len(frames), len(frames))
+        for name, frames in metadata["sheets"].items()
+    }
+    poses = tuple(selectable_poses())
+    return SpriteMap(
+        overlay_id=OVERLAY_ID,
+        name="Bolttagu",
+        cell=tuple(metadata["cell"]),
+        asset_dir=ASSET_DIR,
+        sheets=sheets,
+        options=OPTIONS,
+        sections=(
+            Section(
+                "hints", "display hint",
+                tuple(Row(k, HINT_NOTES.get(k, ""), (STATE_POSES[k],)) for k in HINT_ORDER),
+                poses,
+                note="그 상태에 머무는 동안 반복되는 동작. 반복하지 않는 클립은 마지막 프레임에서 멈춘다. "
+                     "trickcal- 로 시작하는 항목은 같은 캐릭터의 트릭칼풍 리터치 셋이고, "
+                     "두 셋은 같은 crop 으로 맞춰져 있어 신호마다 섞어 써도 캐릭터가 튀지 않는다.",
+            ),
+            Section(
+                "oneshots", "1회 재생",
+                tuple(Row(k, HINT_NOTES.get(k, ""),
+                          (HINT_ONESHOTS[k],) if k in HINT_ONESHOTS else ())
+                      for k in HINT_ORDER),
+                tuple(selectable_oneshots()),
+                note="신호에 진입할 때 지속 동작 위로 한 번 얹힌 뒤 가라앉는다.",
+                allow_empty=True,
+                hidden=True,
+            ),
+            Section(
+                "categories", "도구 범주 — generating 세분",
+                tuple(Row(k, CATEGORY_NOTES.get(k, ""),
+                          (CATEGORY_POSES[k],) if k in CATEGORY_POSES else ())
+                      for k in ("write", "execute", "read", "communication", "other")
+                      if k in REFINABLE_CATEGORIES),
+                poses,
+                note="검색·기억 도구는 자기 display hint로 오므로 여기 없다. 비우면 generating 설정을 따른다.",
+                allow_empty=True,
+                refused={
+                    key: f"category {key!r} arrives as its own display hint, "
+                         f"so set the {key!r} hint instead"
+                    for key in sorted(UNREACHABLE_CATEGORIES)
+                },
+            ),
+            Section(
+                "lifecycle", "런처 전환",
+                (Row("show", "overlay.show · 런처로 펼칠 때", (LIFECYCLE_TRANSITIONS["show"],)),
+                 Row("hide", "overlay.hide · 런처로 접을 때", (LIFECYCLE_TRANSITIONS["hide"],))),
+                tuple(sorted(CLIPS)),
+                note="display hint와 무관하게 항상 우선한다.",
+            ),
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class Mapping:
+    """Which animation each signal draws, after any user override."""
+
+    hints: dict[str, str]
+    categories: dict[str, str]
+    oneshots: dict[str, str]
+    lifecycle: dict[str, str]
+
+
+def _valid_pose(pose: object) -> bool:
+    return isinstance(pose, str) and pose in selectable_poses()
+
+
+def _valid_oneshot(clip: object) -> bool:
+    return clip is None or (isinstance(clip, str) and clip in selectable_oneshots())
+
+
+def load_mapping(
+    path: Path | None = None, *, log: Callable[[str], None] | None = None
+) -> Mapping:
+    """Resolve this overlay's mapping through the shared loader."""
+    resolved = _resolve(sprite_map(), path, log=log)
+    return Mapping(
+        hints=_single(resolved, "hints"),
+        categories=_single(resolved, "categories"),
+        oneshots=_single(resolved, "oneshots"),
+        lifecycle=_single(resolved, "lifecycle"),
+    )
+
+
+def pose_for(
+    hint: str,
+    category: str | None,
+    hints: dict[str, str] | None = None,
+    categories: dict[str, str] | None = None,
+) -> str:
+    """Pose for one hint, refined by the tool category when Engram supplied one."""
+    hints = STATE_POSES if hints is None else hints
+    categories = CATEGORY_POSES if categories is None else categories
+    resolved = hint if hint in hints else "idle"
+    if resolved == "generating" and category in categories:
+        return categories[category]
+    return hints[resolved]
 
 
 def clip_cell(clip: Clip, elapsed_ms: int) -> int | None:
@@ -130,12 +419,6 @@ def scaled_cell(cell: tuple[int, int], scale: float) -> tuple[int, int]:
     return (max(1, round(cell[0] * scale)), max(1, round(cell[1] * scale)))
 
 
-def steam_cell(elapsed_ms: int) -> int:
-    if elapsed_ms < 0:
-        elapsed_ms = 0
-    return (elapsed_ms // STEAM_FRAME_MS) % STEAM_CELLS
-
-
 def facing_mirrored(pointer_x: int, window_x: int, width: int, *, current: bool) -> bool:
     """Whether to mirror the sprite so it looks toward the pointer.
 
@@ -148,39 +431,6 @@ def facing_mirrored(pointer_x: int, window_x: int, width: int, *, current: bool)
     return offset > 0
 
 
-class BlinkTimeline:
-    """Random eye blink on a millisecond clock and an injectable random source."""
-
-    def __init__(self, *, rng: random.Random, started_ms: int = 0) -> None:
-        self.rng = rng
-        self._blink_started_ms: int | None = None
-        self._next_blink_ms = started_ms + self._interval()
-
-    def _interval(self) -> int:
-        return self.rng.randint(*BLINK_INTERVAL_MS)
-
-    def reset(self, now_ms: int) -> None:
-        """Re-arm from scratch, as the pack's controller does on idle re-entry."""
-        self._blink_started_ms = None
-        self._next_blink_ms = now_ms + self._interval()
-
-    def eye(self, now_ms: int) -> str:
-        if self._blink_started_ms is None:
-            if now_ms < self._next_blink_ms:
-                return "open"
-            # Start from the scheduled instant, not from this tick, so a late
-            # frame does not stretch the blink itself.
-            self._blink_started_ms = self._next_blink_ms
-        elapsed = now_ms - self._blink_started_ms
-        cursor = 0
-        for name, duration in BLINK_SEQUENCE:
-            cursor += duration
-            if elapsed < cursor:
-                return name
-        self.reset(now_ms)
-        return "open"
-
-
 class BolttaguAnimator:
     """Track the active hint, any one-shot override, and the idle sub-loops."""
 
@@ -189,53 +439,71 @@ class BolttaguAnimator:
         *,
         started_ms: int = 0,
         intro: str | None = "enter",
-        rng: random.Random | None = None,
+        seed: int = 0,
+        hints: dict[str, str] | None = None,
+        categories: dict[str, str] | None = None,
+        oneshots: dict[str, str] | None = None,
     ) -> None:
         if intro is not None and intro not in CLIPS:
             raise ValueError(f"unknown intro clip: {intro}")
+        self.hints = STATE_POSES if hints is None else hints
+        self.categories = CATEGORY_POSES if categories is None else categories
+        self.oneshots = HINT_ONESHOTS if oneshots is None else oneshots
         self.display_hint = "idle"
+        self.tool_category: str | None = None
         self.state_started_ms = started_ms
         self.oneshot = intro
         self.oneshot_started_ms = started_ms
-        self.blink = BlinkTimeline(rng=rng or random.Random(), started_ms=started_ms)
+        # A farewell is terminal: nothing follows it on screen, so it holds its
+        # last frame instead of snapping back to idle before the window closes.
+        self.oneshot_holds = False
+        # Feeds the pseudo-random blink hold; two renderers on one screen need not
+        # blink in lockstep.
+        self.seed = seed
 
     @property
     def pose(self) -> str:
-        return STATE_POSES[self.display_hint]
+        return pose_for(self.display_hint, self.tool_category, self.hints, self.categories)
 
-    def apply_hint(self, hint: str, now_ms: int) -> None:
-        resolved = hint if hint in STATE_POSES else "idle"
-        if resolved == self.display_hint:
+    def play_lifecycle(self, clip: str, now_ms: int, *, hold_last: bool = False) -> int:
+        """Start a show/hide transition, overriding any hint one-shot in flight."""
+        if clip not in CLIPS:
+            raise ValueError(f"unknown lifecycle clip: {clip}")
+        self.oneshot = clip
+        self.oneshot_started_ms = now_ms
+        self.oneshot_holds = hold_last
+        return CLIPS[clip].total_ms
+
+    def apply_hint(self, hint: str, now_ms: int, category: str | None = None) -> None:
+        resolved = hint if hint in self.hints else "idle"
+        if (resolved, category) == (self.display_hint, self.tool_category):
             return
         was_idle = self.pose == IDLE_POSE
         self.display_hint = resolved
+        self.tool_category = category
         self.state_started_ms = now_ms
-        if self.pose == IDLE_POSE and not was_idle:
-            self.blink.reset(now_ms)
-        oneshot = HINT_ONESHOTS.get(resolved)
+        self.oneshot_holds = False
+        oneshot = self.oneshots.get(resolved)
         if oneshot is not None:
             self.oneshot = oneshot
             self.oneshot_started_ms = now_ms
 
     def resolve(self, now_ms: int) -> Recipe:
-        """Layers to draw for this instant, retiring a finished one-shot on the way."""
+        """Layers to draw for this instant, retiring a finished one-shot on the way.
+
+        Both a transient flourish and the resting pose are just options on the
+        shared timeline; only which one is asked for differs.
+        """
         if self.oneshot is not None:
-            clip = CLIPS[self.oneshot]
-            cell = clip_cell(clip, now_ms - self.oneshot_started_ms)
-            if cell is not None:
-                return ((clip.sheet, cell),)
+            option = OPTIONS[self.oneshot]
+            elapsed = now_ms - self.oneshot_started_ms
+            if not _finished(option, elapsed):
+                return _frames_at(option, elapsed, self.seed)
+            if self.oneshot_holds:
+                return _frames_at(option, option.total_ms, self.seed)
             self.oneshot = None
-            if self.pose == IDLE_POSE:
-                self.blink.reset(now_ms)
-        if self.pose == IDLE_POSE:
-            return (
-                ("idle", EYE_CELLS[self.blink.eye(now_ms)]),
-                ("steam", steam_cell(now_ms - self.state_started_ms)),
-            )
-        clip = CLIPS[self.pose]
-        cell = clip_cell(clip, now_ms - self.state_started_ms)
-        assert cell is not None  # looping clips never retire
-        return ((clip.sheet, cell),)
+        # A non-looping pose runs out and stands on its last frame.
+        return _frames_at(OPTIONS[self.pose], now_ms - self.state_started_ms, self.seed)
 
 
 def load_atlas() -> tuple[dict[str, tuple[Image.Image, ...]], tuple[int, int]]:
@@ -265,21 +533,37 @@ class Bolttagu2dView:
         *,
         scale: float = 1.0,
         face_pointer: bool = True,
+        launcher_managed: bool = False,
         show_floor: bool = False,
-        coffee: bool = True,
-        rng: random.Random | None = None,
+        seed: int = 0,
+        mapping_path: Path | None = None,
+        log: Callable[[str], None] | None = None,
     ) -> None:
+        mapping = load_mapping(mapping_path, log=log)
+        self.mapping = mapping
         sheets, cell = load_atlas()
         self.cell = cell
         self.scale = scale
         # Resize the finished frame rather than every cell, so memory stays flat
         # at any scale and only the <=12 redraws per second pay for it.
         self.width, self.height = scaled_cell(cell, scale)
-        self.floor = sheets["floor"][1 if coffee else 0] if show_floor else None
+        # Just the ground. The spilled coffee belongs to the poses that spill it,
+        # so a baked-in floor variant would draw it under every other pose too.
+        self.floor = sheets["floor"][0] if show_floor else None
         self.sheets = sheets
         self.face_pointer = face_pointer
-        self.animator = BolttaguAnimator(started_ms=self._now_ms(), rng=rng)
+        # When Engram's launcher owns presentation, the arrival bow belongs to
+        # overlay.show rather than to process start.
+        self.animator = BolttaguAnimator(
+            started_ms=self._now_ms(),
+            intro=None if launcher_managed else "enter",
+            seed=seed,
+            hints=mapping.hints,
+            categories=mapping.categories,
+            oneshots=mapping.oneshots,
+        )
         self.mirrored = False
+        self._pointer_frozen = False
         self.canvas: tk.Canvas | None = None
         self.image_id: int | None = None
         self.photo: ImageTk.PhotoImage | None = None
@@ -306,7 +590,7 @@ class Bolttagu2dView:
         self.drawn = target
 
     def apply_state(self, state: OverlayState) -> None:
-        self.animator.apply_hint(state.display_hint, self._now_ms())
+        self.animator.apply_hint(state.display_hint, self._now_ms(), state.tool_category)
 
     def resize(self, requested_width: int, requested_height: int) -> tuple[int, int]:
         """Apply host physical height within the safe scale range without stretching art."""
@@ -316,8 +600,24 @@ class Bolttagu2dView:
         self.drawn = None
         return self.width, self.height
 
+    def begin_enter(self) -> int:
+        self._pointer_frozen = False
+        return self.animator.play_lifecycle(self.mapping.lifecycle["show"], self._now_ms())
+
+    def begin_exit(self) -> int:
+        now_ms = self._now_ms()
+        # Freeze orientation before starting or drawing the farewell so a late
+        # pointer sample cannot flip any of its frames.
+        self._pointer_frozen = True
+        # Holding the final frame keeps the character gone until the window closes.
+        hold_ms = self.animator.play_lifecycle(
+            self.mapping.lifecycle["hide"], now_ms, hold_last=True
+        )
+        self._redraw((self.animator.resolve(now_ms), self.mirrored))
+        return hold_ms
+
     def tick(self, pointer_x: int, pointer_y: int, window_x: int, window_y: int) -> None:
-        if self.face_pointer:
+        if self.face_pointer and not self._pointer_frozen:
             self.mirrored = facing_mirrored(pointer_x, window_x, self.width, current=self.mirrored)
         self._redraw((self.animator.resolve(self._now_ms()), self.mirrored))
 
@@ -339,6 +639,14 @@ def create_bolttagu_2d(
     *,
     face_pointer: bool = True,
     scale: float = 1.0,
+    launcher_managed: bool = False,
 ) -> TkOverlayHost:
-    view = Bolttagu2dView(face_pointer=face_pointer, scale=scale)
-    return TkOverlayHost(transport, view, mode=mode, title="Bolttagu")
+    view = Bolttagu2dView(
+        face_pointer=face_pointer,
+        scale=scale,
+        launcher_managed=launcher_managed,
+        log=transport.log,
+    )
+    return TkOverlayHost(
+        transport, view, mode=mode, title="Bolttagu", start_hidden=launcher_managed
+    )

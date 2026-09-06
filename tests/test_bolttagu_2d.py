@@ -1,44 +1,44 @@
 import json
 import random
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import Mock
 
 from engram_overlay.overlays import bolttagu_2d
 from engram_overlay.overlays.bolttagu_2d import (
     ASSET_DIR,
     BLINK_INTERVAL_MS,
+    BLINK_SEQUENCE,
+    CATEGORY_POSES,
     CLIPS,
+    OPTIONS,
+    EVENT_DURATIONS_MS,
     EYE_CELLS,
     HINT_ONESHOTS,
     IDLE_POSE,
+    IDLE_POSES,
     STATE_POSES,
     SCALE_RANGE,
+    SPILL_POSES,
+    SPILL_SHEET,
     STEAM_CELLS,
-    BlinkTimeline,
+    TRICKCAL,
+    TRICKCAL_EVENT_DURATIONS_MS,
     BolttaguAnimator,
     Clip,
-    clip_cell,
     facing_mirrored,
     load_atlas,
+    pose_for,
     scaled_cell,
-    steam_cell,
 )
+from engram_overlay.overlays.spritemap import cell_at, finished
 from engram_overlay.protocol import DISPLAY_HINTS
 from engram_overlay.registry import OVERLAYS, create_overlay, overlay_ids
 from engram_overlay.state import OverlayState
 
-
-class FixedIntervalRandom(random.Random):
-    """Random source whose blink gaps are predictable but still range-checked."""
-
-    def __init__(self, interval: int) -> None:
-        super().__init__(0)
-        self.interval = interval
-        self.calls = 0
-
-    def randint(self, a: int, b: int) -> int:  # type: ignore[override]
-        assert (a, b) == BLINK_INTERVAL_MS
-        self.calls += 1
-        return self.interval
+# The layer every spilling pose draws beneath itself, held for the pose's length.
+SPILL = (SPILL_SHEET, 0)
 
 
 class ClipTests(unittest.TestCase):
@@ -57,89 +57,104 @@ class ClipTests(unittest.TestCase):
 
 class BolttaguResizeTests(unittest.TestCase):
     def test_host_height_resize_preserves_atlas_aspect_and_bounds(self) -> None:
-        view = bolttagu_2d.Bolttagu2dView()
+        view = bolttagu_2d.Bolttagu2dView(mapping_path=UNMAPPED)
         width, height = view.resize(9999, 9999)
         self.assertEqual((width, height), scaled_cell(view.cell, SCALE_RANGE[1]))
         self.assertAlmostEqual(width / height, view.cell[0] / view.cell[1], places=2)
 
 
-class ClipCellTests(unittest.TestCase):
-    def test_wondering_advances_at_ten_fps_and_wraps(self) -> None:
-        clip = CLIPS["wondering"]
-        self.assertEqual(clip.total_ms, 800)
-        self.assertEqual(clip_cell(clip, 0), 0)
-        self.assertEqual(clip_cell(clip, 99), 0)
-        self.assertEqual(clip_cell(clip, 100), 1)
-        self.assertEqual(clip_cell(clip, 750), 7)
-        self.assertEqual(clip_cell(clip, 800), 0)
 
-    def test_enter_uses_pack_durations_then_retires(self) -> None:
-        clip = CLIPS["enter"]
-        self.assertEqual(clip.durations_ms, (200, 300, 220))
-        self.assertEqual(clip_cell(clip, 0), 0)
-        self.assertEqual(clip_cell(clip, 200), 1)
-        self.assertEqual(clip_cell(clip, 500), 2)
-        self.assertIsNone(clip_cell(clip, 720))
+class TimelineTests(unittest.TestCase):
+    """The declared options are what the renderer draws, on the shared timeline."""
 
-    def test_negative_elapsed_clamps_to_first_cell(self) -> None:
-        self.assertEqual(clip_cell(CLIPS["enter"], -50), 0)
+    def layer(self, option: str, index: int = 0):
+        return OPTIONS[option].layers[index]
 
+    def test_wondering_uses_pack_durations_and_wraps(self) -> None:
+        # The pose's own layer is the top one; the spilled coffee sits under it.
+        layer = self.layer("wondering", -1)
+        self.assertEqual(layer.durations_ms, (320, 260, 320))
+        self.assertEqual(cell_at(layer, 0), 0)
+        self.assertEqual(cell_at(layer, 319), 0)
+        self.assertEqual(cell_at(layer, 320), 1)
+        self.assertEqual(cell_at(layer, 580), 2)
+        self.assertEqual(cell_at(layer, 900), 0)
 
-class SteamTests(unittest.TestCase):
+    def test_every_event_clip_matches_the_pack_timings(self) -> None:
+        for state, durations in EVENT_DURATIONS_MS.items():
+            with self.subTest(state=state):
+                self.assertEqual(CLIPS[state].durations_ms, durations)
+                self.assertEqual(CLIPS[state].cells, (0, 1, 2))
+
+    def test_one_shots_are_the_flourish_and_the_two_transitions(self) -> None:
+        """Both sets ship the same three; nothing else plays once."""
+        one_shots = {name for name, clip in CLIPS.items() if not clip.loop}
+        bare = {"success", "enter", "exit"}
+        self.assertEqual(one_shots, bare | {TRICKCAL + name for name in bare})
+
+    def test_enter_uses_pack_durations_then_holds(self) -> None:
+        layer = self.layer("enter")
+        self.assertEqual(layer.durations_ms, (200, 300, 220))
+        self.assertEqual(cell_at(layer, 0), 0)
+        self.assertEqual(cell_at(layer, 200), 1)
+        self.assertEqual(cell_at(layer, 500), 2)
+        self.assertEqual(cell_at(layer, 720), 2)
+        self.assertTrue(finished(OPTIONS["enter"], 720))
+
+    def test_negative_elapsed_clamps_to_the_first_cell(self) -> None:
+        self.assertEqual(cell_at(self.layer("enter"), -50), 0)
+
     def test_steam_runs_a_24_frame_ten_fps_loop(self) -> None:
-        self.assertEqual(steam_cell(0), 0)
-        self.assertEqual(steam_cell(99), 0)
-        self.assertEqual(steam_cell(100), 1)
-        self.assertEqual(steam_cell(2_300), 23)
-        self.assertEqual(steam_cell(2_400), 0)
-
-    def test_negative_elapsed_clamps(self) -> None:
-        self.assertEqual(steam_cell(-500), 0)
+        steam = self.layer(IDLE_POSE, 1)
+        self.assertEqual(cell_at(steam, 0), 0)
+        self.assertEqual(cell_at(steam, 99), 0)
+        self.assertEqual(cell_at(steam, 100), 1)
+        self.assertEqual(cell_at(steam, 2_300), 23)
+        self.assertEqual(cell_at(steam, 2_400), 0)
 
 
 class BlinkTests(unittest.TestCase):
-    def test_eyes_stay_open_until_the_scheduled_blink(self) -> None:
-        blink = BlinkTimeline(rng=FixedIntervalRandom(3_000), started_ms=0)
-        self.assertEqual(blink.eye(0), "open")
-        self.assertEqual(blink.eye(2_999), "open")
+    """One definition of the blink, shared by the picker and the renderer."""
 
-    def test_blink_runs_half_closed_half_then_reopens(self) -> None:
-        blink = BlinkTimeline(rng=FixedIntervalRandom(3_000), started_ms=0)
-        self.assertEqual(blink.eye(3_000), "half")
-        self.assertEqual(blink.eye(3_049), "half")
-        self.assertEqual(blink.eye(3_050), "closed")
-        self.assertEqual(blink.eye(3_139), "closed")
-        self.assertEqual(blink.eye(3_140), "half")
-        self.assertEqual(blink.eye(3_209), "half")
-        self.assertEqual(blink.eye(3_210), "open")
+    def setUp(self) -> None:
+        self.eye = OPTIONS[IDLE_POSE].layers[0]
 
-    def test_next_blink_is_rescheduled_after_completion(self) -> None:
-        rng = FixedIntervalRandom(3_000)
-        blink = BlinkTimeline(rng=rng, started_ms=0)
-        self.assertEqual(rng.calls, 1)
-        blink.eye(3_210)
-        self.assertEqual(rng.calls, 2)
-        self.assertEqual(blink.eye(6_209), "open")
-        self.assertEqual(blink.eye(6_210), "half")
+    def eyes(self, seed: int = 0, span: int = 40_000, step: int = 10):
+        names = {value: key for key, value in EYE_CELLS.items()}
+        return [(t, names[cell_at(self.eye, t, seed)]) for t in range(0, span, step)]
 
-    def test_a_long_stall_does_not_stretch_the_blink(self) -> None:
-        blink = BlinkTimeline(rng=FixedIntervalRandom(3_000), started_ms=0)
-        # One tick arrives well past the whole blink; it must already be over.
-        self.assertEqual(blink.eye(30_000), "open")
+    def test_the_blink_is_declared_not_reimplemented(self) -> None:
+        self.assertEqual(self.eye.hold_ms, BLINK_INTERVAL_MS)
+        self.assertEqual(self.eye.durations_ms[1:], tuple(ms for _, ms in BLINK_SEQUENCE))
 
-    def test_reset_rearms_from_the_given_instant(self) -> None:
-        blink = BlinkTimeline(rng=FixedIntervalRandom(2_500), started_ms=0)
-        blink.reset(10_000)
-        self.assertEqual(blink.eye(12_499), "open")
-        self.assertEqual(blink.eye(12_500), "half")
+    def test_the_eye_runs_half_closed_half_then_reopens(self) -> None:
+        seen = [name for _, name in self.eyes()]
+        self.assertEqual(set(seen), {"open", "half", "closed"})
+        # Every closed run is bracketed by half on both sides.
+        for index in range(1, len(seen) - 1):
+            if seen[index] == "closed" and seen[index - 1] != "closed":
+                self.assertEqual(seen[index - 1], "half")
 
-    def test_default_random_source_stays_inside_the_pack_interval(self) -> None:
-        blink = BlinkTimeline(rng=random.Random(7), started_ms=0)
+    def test_the_eye_rests_open_for_most_of_the_time(self) -> None:
+        seen = [name for _, name in self.eyes()]
+        self.assertGreater(seen.count("open") / len(seen), 0.9)
+
+    def test_gaps_between_blinks_stay_inside_the_declared_range(self) -> None:
         low, high = BLINK_INTERVAL_MS
-        for _ in range(50):
-            blink.reset(0)
-            self.assertGreaterEqual(blink._next_blink_ms, low)
-            self.assertLessEqual(blink._next_blink_ms, high)
+        starts = [t for (t, name), (_, prev) in zip(self.eyes()[1:], self.eyes())
+                  if name != "open" and prev == "open"]
+        gaps = [b - a for a, b in zip(starts, starts[1:])]
+        self.assertTrue(gaps)
+        for gap in gaps:
+            with self.subTest(gap=gap):
+                self.assertGreaterEqual(gap, low)
+                self.assertLessEqual(gap, high + sum(ms for _, ms in BLINK_SEQUENCE))
+
+    def test_the_same_seed_replays_identically(self) -> None:
+        self.assertEqual(self.eyes(seed=3), self.eyes(seed=3))
+
+    def test_a_different_seed_blinks_at_different_times(self) -> None:
+        self.assertNotEqual(self.eyes(seed=0), self.eyes(seed=5))
 
 
 class ScaleTests(unittest.TestCase):
@@ -200,30 +215,27 @@ class StateMappingTests(unittest.TestCase):
 
 
 class AnimatorTests(unittest.TestCase):
-    def animator(self, *, intro: str | None = None, interval: int = 3_000) -> BolttaguAnimator:
-        return BolttaguAnimator(started_ms=0, intro=intro, rng=FixedIntervalRandom(interval))
+    def animator(self, *, intro: str | None = None, seed: int = 0) -> BolttaguAnimator:
+        return BolttaguAnimator(started_ms=0, intro=intro, seed=seed)
 
     def test_rejects_an_unknown_intro(self) -> None:
         with self.assertRaises(ValueError):
             BolttaguAnimator(intro="pirouette")
 
-    def test_idle_layers_blink_over_steam(self) -> None:
+    def test_idle_layers_the_eye_over_the_steam(self) -> None:
         animator = self.animator()
-        self.assertEqual(
-            animator.resolve(0),
-            (("idle", EYE_CELLS["open"]), ("steam", 0)),
-        )
-        self.assertEqual(
-            animator.resolve(3_050),
-            (("idle", EYE_CELLS["closed"]), ("steam", steam_cell(3_050))),
-        )
+        frames = animator.resolve(0)
+        self.assertEqual([sheet for sheet, _ in frames], ["idle", "steam"])
+        self.assertEqual(frames[0][1], EYE_CELLS["open"])
 
-    def test_steam_and_blink_advance_independently(self) -> None:
+    def test_idle_steam_advances_independently_of_the_eye(self) -> None:
         animator = self.animator()
+        steam = {animator.resolve(t)[1][1] for t in range(0, 2_400, 100)}
         eyes = {animator.resolve(t)[0][1] for t in range(0, 2_400, 100)}
-        steams = {animator.resolve(t)[1][1] for t in range(0, 2_400, 100)}
-        self.assertEqual(eyes, {EYE_CELLS["open"]})  # no blink scheduled yet
-        self.assertEqual(len(steams), STEAM_CELLS)
+        self.assertEqual(len(steam), STEAM_CELLS)
+        self.assertEqual(eyes, {EYE_CELLS["open"]})
+
+
 
     def test_intro_plays_once_then_falls_back_to_idle(self) -> None:
         animator = self.animator(intro="enter")
@@ -233,26 +245,82 @@ class AnimatorTests(unittest.TestCase):
         self.assertEqual(recipe[0][0], "idle")
         self.assertIsNone(animator.oneshot)
 
-    def test_intro_rearms_the_blink_when_it_retires(self) -> None:
-        rng = FixedIntervalRandom(3_000)
-        animator = BolttaguAnimator(started_ms=0, intro="enter", rng=rng)
-        self.assertEqual(rng.calls, 1)
-        animator.resolve(800)
-        self.assertEqual(rng.calls, 2)
+    def test_the_arrival_hands_back_to_idle(self) -> None:
+        animator = BolttaguAnimator(started_ms=0, intro="enter")
+        self.assertEqual(animator.resolve(0)[0][0], "enter")
+        self.assertEqual(animator.resolve(800)[0][0], "idle")
+        self.assertIsNone(animator.oneshot)
 
-    def test_thinking_hints_run_the_wondering_loop(self) -> None:
+    def test_thought_runs_the_wondering_loop(self) -> None:
         animator = self.animator()
         animator.apply_hint("thought", 5_000)
-        self.assertEqual(animator.resolve(5_000), (("wondering", 0),))
-        self.assertEqual(animator.resolve(5_300), (("wondering", 3),))
-        self.assertEqual(animator.resolve(5_800), (("wondering", 0),))
+        self.assertEqual(animator.resolve(5_000), (SPILL, ("wondering", 0)))
+        self.assertEqual(animator.resolve(5_320), (SPILL, ("wondering", 1)))
+        self.assertEqual(animator.resolve(5_900), (SPILL, ("wondering", 0)))
+
+    def test_each_working_hint_gets_its_own_animation(self) -> None:
+        """The pack ships a distinct set per activity; hints must not collapse onto one."""
+        expected = {
+            "search": "searching",
+            "memory": "searching",
+            "generating": "speaking",
+            "input": "listening",
+            "thought": "wondering",
+            "error": "error",
+            "provider_error": "error",
+        }
+        for hint, sheet in expected.items():
+            with self.subTest(hint=hint):
+                animator = self.animator()
+                animator.apply_hint(hint, 0)
+                self.assertEqual(animator.resolve(0)[-1], (sheet, 0))
+
+    def test_tool_category_refines_the_generating_catch_all(self) -> None:
+        """Engram collapses every non-search, non-memory tool into "generating"."""
+        for category, sheet in CATEGORY_POSES.items():
+            with self.subTest(category=category):
+                animator = self.animator()
+                animator.apply_hint("generating", 0, category)
+                self.assertEqual(animator.resolve(0), ((sheet, 0),))
+
+    def test_generating_without_a_category_streams_an_answer(self) -> None:
+        animator = self.animator()
+        animator.apply_hint("generating", 0, None)
+        self.assertEqual(animator.resolve(0), (("speaking", 0),))
+
+    def test_unknown_category_falls_back_to_the_plain_hint(self) -> None:
+        animator = self.animator()
+        animator.apply_hint("generating", 0, "teleporting")
+        self.assertEqual(animator.resolve(0), (("speaking", 0),))
+
+    def test_category_never_overrides_a_specific_hint(self) -> None:
+        for hint in ("search", "thought", "input", "error", "hover"):
+            with self.subTest(hint=hint):
+                animator = self.animator()
+                animator.apply_hint(hint, 0, "write")
+                self.assertEqual(animator.pose, STATE_POSES[hint])
+
+    def test_a_finished_tool_stops_the_activity_animation(self) -> None:
+        """tool.completed carries no category, so the write pose must not persist."""
+        animator = self.animator()
+        animator.apply_hint("generating", 0, "write")
+        self.assertEqual(animator.pose, "writing")
+        animator.apply_hint("generating", 500, None)
+        self.assertEqual(animator.pose, "speaking")
+        self.assertEqual(animator.state_started_ms, 500)
+
+    def test_working_states_are_visually_distinguishable(self) -> None:
+        poses = {pose_for(h, None) for h in ("search", "generating", "input", "thought")}
+        poses |= {pose_for("generating", c) for c in CATEGORY_POSES}
+        self.assertEqual(len(poses), 6)
 
     def test_hint_restart_is_ignored_while_unchanged(self) -> None:
         animator = self.animator()
         animator.apply_hint("search", 1_000)
         animator.apply_hint("search", 1_400)
         self.assertEqual(animator.state_started_ms, 1_000)
-        self.assertEqual(animator.resolve(1_400), (("wondering", 4),))
+        # 400 ms into searching's (650, 500, 650) is still its first frame.
+        self.assertEqual(animator.resolve(1_400), (("searching", 0),))
 
     def test_unknown_hint_falls_back_to_idle(self) -> None:
         animator = self.animator()
@@ -260,36 +328,95 @@ class AnimatorTests(unittest.TestCase):
         self.assertEqual(animator.display_hint, "idle")
         self.assertEqual(animator.pose, IDLE_POSE)
 
-    def test_returning_to_idle_rearms_the_blink(self) -> None:
-        rng = FixedIntervalRandom(3_000)
-        animator = BolttaguAnimator(started_ms=0, intro=None, rng=rng)
+    def test_returning_to_idle_restarts_the_blink_clock(self) -> None:
+        """The pose clock is the blink clock, so re-entering idle starts a fresh wait."""
+        animator = BolttaguAnimator(started_ms=0, intro=None)
         animator.apply_hint("thought", 1_000)
-        self.assertEqual(rng.calls, 1)
         animator.apply_hint("idle", 2_000)
-        self.assertEqual(rng.calls, 2)
-        self.assertEqual(animator.resolve(4_999)[0][1], EYE_CELLS["open"])
-        self.assertEqual(animator.resolve(5_000)[0][1], EYE_CELLS["half"])
+        self.assertEqual(animator.state_started_ms, 2_000)
+        low = BLINK_INTERVAL_MS[0]
+        self.assertEqual(animator.resolve(2_000 + low - 10)[0][1], EYE_CELLS["open"])
 
-    def test_moving_between_two_idle_hints_does_not_rearm_the_blink(self) -> None:
-        rng = FixedIntervalRandom(3_000)
-        animator = BolttaguAnimator(started_ms=0, intro=None, rng=rng)
+    def test_success_settles_on_the_idle_pose(self) -> None:
+        animator = BolttaguAnimator(started_ms=0, intro=None)
         animator.apply_hint("success", 1_000)
         self.assertEqual(animator.pose, IDLE_POSE)
-        self.assertEqual(rng.calls, 1)
 
-    def test_provider_error_plays_the_exit_wave_then_holds_alert(self) -> None:
+    def test_both_failure_hints_loop_the_error_animation(self) -> None:
+        for hint in ("error", "provider_error"):
+            with self.subTest(hint=hint):
+                animator = self.animator()
+                animator.apply_hint(hint, 2_000)
+                self.assertEqual(animator.resolve(2_000), (("error", 0),))
+                self.assertEqual(animator.resolve(2_260), (("error", 1),))
+                # It loops rather than retiring, so the failure stays visible.
+                self.assertEqual(animator.resolve(2_980), (("error", 0),))
+
+    def test_success_plays_once_then_settles_into_idle(self) -> None:
         animator = self.animator()
-        animator.apply_hint("provider_error", 2_000)
-        self.assertEqual(animator.resolve(2_000), (("exit", 0),))
-        self.assertEqual(animator.resolve(2_450), (("exit", 2),))
-        self.assertEqual(animator.resolve(2_700), (("alert", 0),))
+        animator.apply_hint("success", 1_000)
+        self.assertEqual(animator.resolve(1_000), (("success", 0),))
+        self.assertEqual(animator.resolve(1_280), (("success", 1),))
+        self.assertEqual(animator.resolve(1_640), (("success", 2),))
+        settled = animator.resolve(2_100)
+        self.assertEqual(settled[0][0], "idle")
+        self.assertIsNone(animator.oneshot)
+
+    def test_lifecycle_clip_outranks_a_hint_one_shot(self) -> None:
+        """A launcher collapse must win over the success flourish."""
+        animator = self.animator()
+        animator.apply_hint("success", 1_000)
+        self.assertEqual(animator.resolve(1_000), (("success", 0),))
+        self.assertEqual(animator.play_lifecycle("exit", 1_100), 700)
+        self.assertEqual(animator.resolve(1_100), (("exit", 0),))
+
+    def test_lifecycle_clip_reports_its_own_duration(self) -> None:
+        animator = self.animator()
+        self.assertEqual(animator.play_lifecycle("enter", 0), 720)
+        self.assertEqual(animator.play_lifecycle("exit", 0), 700)
+
+    def test_the_farewell_holds_its_last_frame(self) -> None:
+        """The character has left; snapping back to idle before the window closes
+        shows it returning for a single frame."""
+        animator = self.animator()
+        animator.play_lifecycle("exit", 0, hold_last=True)
+        self.assertEqual(animator.resolve(690), (("exit", 2),))
+        self.assertEqual(animator.resolve(700), (("exit", 2),))
+        self.assertEqual(animator.resolve(5_000), (("exit", 2),))
+
+    def test_the_arrival_does_not_hold(self) -> None:
+        animator = self.animator()
+        animator.play_lifecycle("enter", 0)
+        self.assertEqual(animator.resolve(800)[0][0], "idle")
+
+    def test_a_hint_release_the_held_farewell(self) -> None:
+        animator = self.animator()
+        animator.play_lifecycle("exit", 0, hold_last=True)
+        self.assertEqual(animator.resolve(5_000), (("exit", 2),))
+        animator.apply_hint("thought", 5_000)
+        self.assertFalse(animator.oneshot_holds)
+        self.assertEqual(animator.resolve(5_000)[-1][0], "wondering")
+
+    def test_lifecycle_rejects_an_unknown_clip(self) -> None:
+        with self.assertRaises(ValueError):
+            self.animator().play_lifecycle("pirouette", 0)
+
+    def test_arrival_settles_into_the_current_hint(self) -> None:
+        animator = self.animator()
+        animator.apply_hint("thought", 0)
+        animator.play_lifecycle("enter", 0)
+        self.assertEqual(animator.resolve(0), (("enter", 0),))
+        # The arrival retires after 720 ms and hands back to the hint's own loop,
+        # which has been running since the hint arrived rather than restarting.
+        self.assertEqual(animator.resolve(800)[-1][0], "wondering")
+        self.assertIsNone(animator.oneshot)
 
     def test_hover_and_click_use_the_alert_pose(self) -> None:
         animator = self.animator()
         animator.apply_hint("hover", 0)
-        self.assertEqual(animator.resolve(10), (("alert", 0),))
+        self.assertEqual(animator.resolve(10), (SPILL, ("alert", 0)))
         animator.apply_hint("click", 20)
-        self.assertEqual(animator.resolve(30), (("alert", 0),))
+        self.assertEqual(animator.resolve(30), (SPILL, ("alert", 0)))
 
 
 class AtlasTests(unittest.TestCase):
@@ -298,11 +425,13 @@ class AtlasTests(unittest.TestCase):
         self.assertEqual(cell, (270, 302))
         self.assertEqual(len(sheets["idle"]), len(EYE_CELLS))
         self.assertEqual(len(sheets["steam"]), STEAM_CELLS)
+        for state in EVENT_DURATIONS_MS:
+            with self.subTest(state=state):
+                self.assertEqual(len(sheets[state]), 3)
         self.assertEqual(len(sheets["alert"]), 1)
-        self.assertEqual(len(sheets["wondering"]), 8)
         self.assertEqual(len(sheets["enter"]), 3)
-        self.assertEqual(len(sheets["exit"]), 3)
-        self.assertEqual(len(sheets["floor"]), 2)
+        self.assertEqual(len(sheets["floor"]), 1)
+        self.assertEqual(len(sheets[SPILL_SHEET]), 1)
         for name, frames in sheets.items():
             with self.subTest(sheet=name):
                 for frame in frames:
@@ -318,26 +447,66 @@ class AtlasTests(unittest.TestCase):
 
     def test_atlas_records_the_downscale_provenance(self) -> None:
         metadata = json.loads((ASSET_DIR / "atlas.json").read_text(encoding="utf-8"))
-        self.assertEqual(metadata["source"], "sprite-pack-v8")
+        # The pack versions move with the artwork; the geometry below must not.
+        self.assertRegex(metadata["sources"]["origin"], r"^sprite-pack-v\d+$")
+        self.assertRegex(metadata["sources"]["trickcal"], r"^sprite-pack-v\d+-\S+$")
         self.assertEqual(metadata["sourceCanvas"], [1254, 1254])
         self.assertEqual(metadata["scale"], 0.25)
         self.assertEqual(metadata["crop"], [87, 13, 1167, 1219])
         self.assertEqual(metadata["feetAnchor"], [166, 267])
 
     def test_bundled_assets_stay_small(self) -> None:
+        """Guards the packing, not the artwork: each raw pack is over 30 MB."""
         total = sum(path.stat().st_size for path in ASSET_DIR.glob("*.png"))
-        self.assertLess(total, 1_500_000)
+        self.assertLess(total, 4_500_000)
+
+    def test_every_pose_and_clip_has_a_bundled_sheet(self) -> None:
+        sheets, _ = load_atlas()
+        for pose in set(STATE_POSES.values()):
+            with self.subTest(pose=pose):
+                self.assertIn(pose, sheets)
+        for name, clip in CLIPS.items():
+            with self.subTest(clip=name):
+                self.assertIn(clip.sheet, sheets)
+
+    def test_no_unused_sheet_is_shipped(self) -> None:
+        """Only what the overlay can display is packed; the pack ships more."""
+        sheets, _ = load_atlas()
+        # The floor is style-neutral, so it is packed once rather than per set.
+        used = {clip.sheet for clip in CLIPS.values()} | {"floor", SPILL_SHEET}
+        used |= {prefix + name for prefix in ("", TRICKCAL) for name in ("idle", "steam")}
+        self.assertEqual(set(sheets), used)
+
+
+# A view reads the installed mapping.json by default. Tests must not, or they
+# report on whatever the machine's user happens to have chosen.
+UNMAPPED = Path(tempfile.mkdtemp()) / "no-mapping.json"
 
 
 class ViewTests(unittest.TestCase):
     def view(self, **kwargs: object) -> bolttagu_2d.Bolttagu2dView:
-        kwargs.setdefault("rng", FixedIntervalRandom(3_000))
+        kwargs.setdefault("mapping_path", UNMAPPED)
         return bolttagu_2d.Bolttagu2dView(**kwargs)  # type: ignore[arg-type]
 
     def test_canvas_size_matches_the_atlas_cell(self) -> None:
         view = self.view()
         self.assertEqual((view.width, view.height), (270, 302))
         self.assertIsNone(view.drawn)
+
+    def test_exit_freezes_facing_draws_frame_zero_and_show_reenables_pointer(self) -> None:
+        view = self.view(launcher_managed=True)
+        view.mirrored = True
+        view._now_ms = Mock(return_value=1_000)
+        view._redraw = Mock()
+
+        self.assertEqual(view.begin_exit(), sum((220, 220, 260)))
+        view._redraw.assert_called_once_with(((("exit", 0),), True))
+        view.tick(-1_000, 0, 0, 0)
+        self.assertTrue(view.mirrored)
+
+        self.assertEqual(view.begin_enter(), 720)
+        view.tick(-1_000, 0, 0, 0)
+        self.assertFalse(view.mirrored)
 
     def test_idle_frame_composites_steam_over_the_blink_layer(self) -> None:
         view = self.view()
@@ -383,6 +552,17 @@ class ViewTests(unittest.TestCase):
         view.tick(-10_000, 0, 0, 0)
         self.assertFalse(view.mirrored)
 
+    def test_launcher_managed_view_skips_the_mount_arrival(self) -> None:
+        """With a launcher, the bow belongs to overlay.show, not to process start."""
+        managed = self.view(launcher_managed=True)
+        self.assertIsNone(managed.animator.oneshot)
+        self.assertEqual(self.view().animator.oneshot, "enter")
+
+    def test_transition_hooks_return_the_clip_durations(self) -> None:
+        view = self.view(launcher_managed=True)
+        self.assertEqual(view.begin_enter(), 720)
+        self.assertEqual(view.begin_exit(), 700)
+
     def test_face_pointer_can_be_disabled(self) -> None:
         view = self.view(face_pointer=False)
         view.tick(10_000, 0, 0, 0)
@@ -421,6 +601,125 @@ class ViewTests(unittest.TestCase):
         view.tick(0, 0, 0, 0)
         self.assertEqual(view.animator.display_hint, "memory")
         self.assertIsNone(view.drawn)
+
+
+class SpriteSetTests(unittest.TestCase):
+    """Two art styles ship side by side, and either may draw any signal."""
+
+    def test_both_resting_poses_are_selectable(self) -> None:
+        self.assertEqual(IDLE_POSES, ("idle", "trickcal-idle"))
+        for pose in IDLE_POSES:
+            with self.subTest(pose=pose):
+                self.assertIn(pose, bolttagu_2d.selectable_poses())
+                self.assertIn(pose, OPTIONS)
+
+    def test_the_retouch_mirrors_every_original_option(self) -> None:
+        """Whatever the original set can rest in, the retouch can rest in too."""
+        original = {name for name in OPTIONS if not name.startswith(TRICKCAL)}
+        retouched = {name.removeprefix(TRICKCAL) for name in OPTIONS if name.startswith(TRICKCAL)}
+        self.assertTrue(original)
+        self.assertEqual(original - retouched, set())
+
+    def test_the_retouch_adds_the_two_activities_the_original_lacked(self) -> None:
+        extra = set(TRICKCAL_EVENT_DURATIONS_MS) - set(EVENT_DURATIONS_MS)
+        self.assertEqual(extra, {"executing", "tool_use"})
+        for state in extra:
+            with self.subTest(state=state):
+                self.assertNotIn(state, OPTIONS)
+                clip = CLIPS[TRICKCAL + state]
+                self.assertTrue(clip.loop)
+                self.assertEqual(clip.durations_ms, TRICKCAL_EVENT_DURATIONS_MS[state])
+
+    def test_the_retouch_draws_its_own_sheets(self) -> None:
+        """A trickcal option must never reach into the original set's artwork."""
+        for name, option in OPTIONS.items():
+            if not name.startswith(TRICKCAL):
+                continue
+            with self.subTest(option=name):
+                # The spill is ground, shared by both sets rather than restyled.
+                own = [l for l in option.layers if l.sheet != SPILL_SHEET]
+                self.assertTrue(own)
+                for layer in own:
+                    self.assertTrue(layer.sheet.startswith(TRICKCAL))
+
+    def test_the_defaults_stay_on_the_original_set(self) -> None:
+        """Adding a set widens the choices; it must not change what ships chosen."""
+        chosen = set(STATE_POSES.values()) | set(CATEGORY_POSES.values())
+        chosen |= set(HINT_ONESHOTS.values()) | set(bolttagu_2d.LIFECYCLE_TRANSITIONS.values())
+        for pose in chosen:
+            with self.subTest(pose=pose):
+                self.assertFalse(pose.startswith(TRICKCAL))
+
+    def test_both_sets_share_one_cell_so_a_mix_cannot_shift_the_character(self) -> None:
+        sheets, cell = load_atlas()
+        for name, frames in sheets.items():
+            with self.subTest(sheet=name):
+                for frame in frames:
+                    self.assertEqual(frame.size, cell)
+
+    def test_a_mixed_mapping_draws_each_signal_from_its_own_set(self) -> None:
+        animator = BolttaguAnimator(
+            started_ms=0,
+            intro=None,
+            hints={**STATE_POSES, "generating": "trickcal-tool_use"},
+        )
+        animator.apply_hint("thought", 0)
+        self.assertEqual(animator.resolve(0), (SPILL, ("wondering", 0)))
+        animator.apply_hint("generating", 0)
+        self.assertEqual(animator.resolve(0), (("trickcal-tool_use", 0),))
+        self.assertEqual(animator.resolve(420), (("trickcal-tool_use", 1),))
+
+
+class SpillTests(unittest.TestCase):
+    """The mug has to go somewhere when both hands come up."""
+
+    def test_exactly_the_hands_up_poses_spill(self) -> None:
+        spilling = {name for name, option in OPTIONS.items()
+                    if any(layer.sheet == SPILL_SHEET for layer in option.layers)}
+        expected = {prefix + pose for prefix in ("", TRICKCAL) for pose in SPILL_POSES}
+        self.assertEqual(spilling, expected)
+        self.assertEqual(set(SPILL_POSES), {"alert", "wondering"})
+
+    def test_the_spill_is_drawn_under_the_character(self) -> None:
+        for name in (prefix + pose for prefix in ("", TRICKCAL) for pose in SPILL_POSES):
+            with self.subTest(option=name):
+                layers = OPTIONS[name].layers
+                self.assertEqual(layers[0].sheet, SPILL_SHEET)
+                self.assertEqual(len(layers), 2)
+
+    def test_the_spill_does_not_lengthen_the_pose(self) -> None:
+        """It is one held cell, so a spilling pose runs at the pack's own timing."""
+        for name in (prefix + pose for prefix in ("", TRICKCAL) for pose in SPILL_POSES):
+            with self.subTest(option=name):
+                self.assertEqual(OPTIONS[name].total_ms, CLIPS[name].total_ms)
+                self.assertEqual(OPTIONS[name].loops, CLIPS[name].loop)
+
+    def test_both_sets_share_the_one_spill(self) -> None:
+        """The packs ship it identical, so restyling it per set would be a copy."""
+        sheets, _ = load_atlas()
+        self.assertEqual(len(sheets[SPILL_SHEET]), 1)
+        self.assertNotIn(TRICKCAL + SPILL_SHEET, sheets)
+
+    def test_the_spill_actually_reaches_the_composed_frame(self) -> None:
+        view = bolttagu_2d.Bolttagu2dView(mapping_path=UNMAPPED)
+        pose_only = view.compose((("alert", 0),), False)
+        spilling = view.compose(bolttagu_2d._frames_at(OPTIONS["alert"], 0), False)
+        self.assertNotEqual(pose_only.tobytes(), spilling.tobytes())
+        # The puddle is at her feet and to one side, so it widens the drawn area.
+        self.assertLess(spilling.getchannel("A").getbbox()[0], pose_only.getchannel("A").getbbox()[0])
+
+    def test_the_floor_no_longer_bakes_the_spill_in(self) -> None:
+        """Otherwise the puddle would sit under every pose, mug in hand or not."""
+        sheets, _ = load_atlas()
+        self.assertEqual(len(sheets["floor"]), 1)
+        floored = bolttagu_2d.Bolttagu2dView(mapping_path=UNMAPPED, show_floor=True)
+        self.assertIs(floored.floor, floored.sheets["floor"][0])
+
+    def test_a_pose_holding_the_mug_does_not_spill(self) -> None:
+        for name in (IDLE_POSE, TRICKCAL + IDLE_POSE, "speaking", "trickcal-executing"):
+            with self.subTest(option=name):
+                sheets = {layer.sheet for layer in OPTIONS[name].layers}
+                self.assertNotIn(SPILL_SHEET, sheets)
 
 
 class RegistrationTests(unittest.TestCase):

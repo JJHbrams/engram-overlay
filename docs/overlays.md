@@ -1,53 +1,190 @@
 # Overlay preset 상세
 
 각 preset이 `display_hint`를 어떤 그림으로 옮기는지와, 그 그림을 만드는 방식이다.
-등록 방법은 [README](../README.md), 계약은 [Event API v1](event-api-v1.md)을 본다.
+실행 방법은 [README](../README.md), 기본 계약은 [Event API v2](event-api-v2.md)를 본다.
 
 ## bolttagu-2d
 
 ### 에셋
 
-- 원본 `sprite-pack-v8`은 1254×1254 전체 캔버스 PNG 26MB다. 그대로 담지 않는다.
-- `scripts/build-bolttagu-assets.py`가 모든 프레임의 알파 bbox 합집합으로 한 번 crop하고 0.25배로 축소해 가로 sheet로 묶는다. 결과는 270×302 셀, 총 549 KiB.
-- 한 crop을 공유하므로 모든 포즈가 같은 발 기준점에 정렬된다.
+- 원본 sprite pack은 1254×1254 전체 캔버스 PNG 27MB다. 그대로 담지 않는다.
+- 현재 반영 버전은 `atlas.json`의 `sources`에 셋별로 기록된다 (`sprite-pack-v10`, `sprite-pack-v10-trickcal-inspired`).
+- `scripts/build-bolttagu-assets.py`가 모든 프레임의 알파 bbox 합집합으로 한 번 crop하고 0.25배로 축소해 가로 sheet로 묶는다. 결과는 270×302 셀, 두 셋 합쳐 총 3.8 MiB.
+- 한 crop을 공유하므로 **두 셋의** 모든 포즈가 같은 발 기준점에 정렬된다. 신호마다 셋을 섞어도 캐릭터가 튀지 않는 근거다.
 - crop·배율·발 기준점은 `assets/bolttagu_2d/atlas.json`에 기록되고 overlay가 그 값을 읽는다. 코드에 하드코딩하지 않는다.
 
 ```powershell
-python scripts/build-bolttagu-assets.py --pack <sprite-pack-v8>
+python scripts/build-bolttagu-assets.py --pack <sprite-pack-v10> --retouch <sprite-pack-v10-trickcal-inspired>
 ```
+
+### 스프라이트 셋
+
+같은 캐릭터의 두 작화가 함께 들어있다. 어느 쪽을 쓸지는 셋 단위 스위치가 아니라 **신호별 선택**이다.
+
+| 셋 | 옵션 이름 | 원본 팩 |
+| --- | --- | --- |
+| 원본 | `idle`, `wondering`, `success` … (접두어 없음) | `sprite-pack-v10` |
+| 트릭칼풍 리터치 | `trickcal-idle`, `trickcal-wondering` … | `sprite-pack-v10-trickcal-inspired` |
+
+- 리터치 셋은 원본의 모든 상태를 다시 그리고, 원본에 없던 `trickcal-executing`(터미널)과 `trickcal-tool_use`(공구함) 두 개를 더한다. 타이밍은 각각 360/300/480ms, 420/360/500ms 반복.
+- 기본값은 전부 원본 셋이다. 셋이 늘어난 것이 이미 고른 매핑을 바꾸지 않는다.
+- 두 셋 모두 자기 idle(눈깜빡임+김)과 enter·exit·success 1회 재생을 가진다. 즉 등장·퇴장·성공 연출도 셋별로 고를 수 있다.
+- 접두어 없는 이름은 계속 원본을 가리키므로 리터치 이전에 쓴 `mapping.json`은 그대로 동작한다. 반대로 `executing`처럼 리터치만 가진 상태는 접두어 없이 쓰면 거부된다.
 
 ### 상태 매핑
 
 프레임은 아래에서 위로 합성하는 `(sheet, cell)` 레이어 recipe다. idle이 독립된 두 루프의 합성이라 단일 프레임으로 표현되지 않기 때문이다.
 
-| display hint | recipe |
-| --- | --- |
-| `idle`, `default`, `input`, `success` | idle 눈 상태 + 커피 김 |
-| `hover`, `click`, `error` | 아하 alert 정지 포즈 |
-| `generating`, `search`, `thought`, `memory` | wondering 8프레임 10fps 반복 |
-| `provider_error` | 뒷모습 퇴장 3프레임 one-shot 후 alert 유지 |
+매핑은 팩이 `event-map.json`에 밝혀둔 의도를 따른다. 타이밍도 팩의 `sprites.json` 값 그대로다.
 
+| display hint | 상태 | 프레임 · 타이밍 |
+| --- | --- | --- |
+| `idle`, `default` | idle | 눈 상태 3 + 김 24 레이어 합성 |
+| `success` | success → idle | 280/360/360ms **1회** 재생 후 idle 복귀 |
+| `hover`, `click` | alert | 아하 정지 포즈 + 쏟은 커피 |
+| `input` | listening | 420/420/420ms 반복 |
+| `generating` | speaking | 220/220/260ms 반복 |
+| `thought` | wondering | 320/260/320ms 반복 + 쏟은 커피 |
+| `search`, `memory` | searching | 650/500/650ms 반복 |
+| `error`, `provider_error` | error | 260/300/420ms 반복 |
+
+`generating`은 Engram이 search·memory가 아닌 **모든** 도구를 몰아넣는 catch-all이다. 그래서
+`tool.started`의 `payload.category`로 한 단계 더 갈라 쓴다. 이게 없으면 파일을 고치는 것과
+답변을 스트리밍하는 것이 똑같이 보인다.
+
+`search`·`memory` 범주는 여기 없다. Engram이 그 둘은 `generating`이 아니라 **각자의 display hint로** 보내므로
+(`event_api.event_for_bubble`) category 갈래에 도달하지 않는다. 위 hint 표가 그 둘을 정한다.
+
+| category | 도구 예 | 상태 |
+| --- | --- | --- |
+| `write` | write·edit·patch·delete | **writing** — 코드·문서·아티팩트 수정 |
+| `execute` | shell·exec·build·test·run | **waiting** — 기다릴 일이 있는 작업 |
+| `read` | read·open | searching (문서 열람) |
+| 그 외 / 없음 | — | speaking (응답 스트리밍) |
+
+- category는 그 메시지에만 해당한다. `tool.completed`는 category 없이 오므로 상태가 초기화되고,
+  도구가 끝난 뒤에도 writing이 남아있지 않는다.
+- category는 `generating`만 세분한다. `search`·`thought` 같은 구체적 hint를 덮지 않는다.
+- `mapping.json`에 `categories.search`/`categories.memory`를 쓰면 거부하고 hint 쪽을 쓰라고 알린다. 조용히 무시되는 설정을 남기지 않기 위해서다.
+- 서브에이전트·백그라운드 태스크 대기는 아직 정확히 잡히지 않는다. Engram의 `tool_category`가
+  Task/Agent를 어느 패턴에도 매칭하지 않아 `other`로 떨어지기 때문이다. `execute`가 그 절반을
+  덮는다.
+- 실패 상태는 **반복**한다. 한 번 재생하고 사라지면 실패가 화면에 남지 않는다.
 - 합성은 눈에 보이는 프레임이 바뀔 때만 한다. 조합을 미리 캐싱하지 않는다. 전부 캐싱하면 배율에 따라 수십 MB가 된다.
-- renderer가 열릴 때 등장 인사 3프레임(200/300/220ms)이 한 번 재생된다.
-- 종료 애니메이션은 종료 시점에 재생되지 않는다. Event API에 종료 예고가 없어 `provider_error`에 붙여둔 것이다.
+- 등장 인사 3프레임(200/300/220ms)은 아래 presentation 절 참고.
 
 ### 애니메이션
 
-- **눈깜빡임** — 반감김 50ms → 닫힘 90ms → 반감김 70ms → 열림. 다음 깜빡임은 완료 후 2.5~6초에서 무작위. 난수원은 주입 가능해 테스트에서는 고정된다. idle 재진입과 등장 인사 종료 때 재무장한다.
+- **눈깜빡임** — 열린 채 2.5~6초 무작위로 기다렸다가 반감김 50ms → 닫힘 90ms → 반감김 70ms. `Layer.hold_ms`로 **한 번만 선언**되고 미리보기와 렌더러가 같은 정의를 쓴다. 기다리는 길이는 LCG로 뽑아 시계의 순수 함수라 상태를 기억하지 않는다 — idle 재진입은 포즈 시계가 리셋되는 것으로 자연히 처리된다.
 - **커피 김** — 24프레임 10fps(2.4초) 반복. 캐릭터가 든 머그의 김이라 바닥 레이어를 꺼도 나온다. 깜빡임과 위상이 독립이다.
+- **쏟은 커피** — `alert`·`wondering`은 두 손을 다 들고 머그가 손에 없다. 그래서 이 두 포즈만 발밑에 넘어진 머그와 흘린 커피(`spill` 레이어)를 **캐릭터 아래**에 함께 그린다. 없으면 반응하는 순간 머그가 설명 없이 사라진다.
+  - 바닥(`show_floor`) 옵션과 무관하다. 바닥을 꺼도 나오고, 반대로 바닥 sheet에 커피를 구워넣지 않으므로 머그를 든 포즈 밑에 물웅덩이가 남지 않는다.
+  - 포즈 길이만큼 유지되는 1셀이라 팩의 타이밍(320/260/320ms 등)을 늘리지 않는다.
+  - 두 셋이 같은 그림을 쓴다. 두 팩이 `layers/coffee_spill.png`를 바이트 단위로 동일하게 담고 있어 셋별로 복제할 이유가 없다.
 - **포인터 방향** — 원본이 볼따구와 머그를 화면 왼쪽에 두고 그려져 이미 왼쪽을 본다. 그래서 포인터가 창 중심보다 **오른쪽**일 때만 좌우반전한다. 중심 ±24px는 deadzone이라 경계에서 깜빡이며 뒤집히지 않는다. `--no-face-pointer`로 끈다.
+
+### 매핑 고르기
+
+스프라이트 오버레이는 어떤 신호에 어떤 그림을 붙일지 공용 미리보기 페이지에서 고른다.
+각 오버레이가 `sprite_map()`으로 자기 자신을 선언하고(`overlays/spritemap.py`), 생성기와 로더는
+그 선언만 읽는다. 오버레이별 코드가 양쪽 어디에도 없다.
+
+| 오버레이 | 모델 |
+| --- | --- |
+| `bolttagu-2d` | 신호 → 애니메이션 1개 (단일 선택) |
+| `rabbit-2d` | 신호 → 정지컷 여러 장, 시간 구간마다 하나씩 무작위 (다중 선택) |
+
+런타임도 공유한다. `cell_at`(레이어 타임라인) · `frames_at`(레이어 합성) · `Rotation`(다중 후보에서
+버킷마다 하나 고르기)이 `spritemap.py`에 한 벌만 있고 두 렌더러가 그걸 쓴다. 덕분에 토끼는 애니메이션
+포즈를, 볼따구는 다중 후보를 각각 공짜로 쓸 수 있다.
+
+
+어떤 신호에 어떤 동작을 붙일지는 미리보기 페이지에서 고른다.
+
+```powershell
+python scripts/build-sprite-preview.py
+```
+
+localhost에 페이지를 띄우고 브라우저를 연다. **상단 탭으로 오버레이를 고른다.**
+registry를 순회해 `sprite_map()`을 노출하는 오버레이만 모으므로, 스프라이트 오버레이를 추가하면 탭이 저절로 생긴다.
+파일만 만들고 끝내려면 `--write-only`.
+
+- 동작을 **오버레이가 실제로 그리는 셀**로, 같은 타이밍으로 재생한다. 원본 팩이 아니다.
+- display hint 12종과 도구 범주별로 동작을 고르면 그 자리에서 미리 보인다.
+- `lifecycle`은 런처가 펼치고 접을 때(`overlay.show`/`overlay.hide`) 재생할 동작이다. display hint와 무관하며 항상 우선한다.
+- 신호마다 두 층을 고른다. **지속 동작**은 그 상태에 머무는 동안 반복되고, **1회 재생**은 진입할 때 그 위로 한 번 얹힌 뒤 지속 동작으로 가라앉는다. 기본값은 `success` 신호에 `success` 1회 재생 + `idle` 지속이다.
+- 바꾼 항목만 JSON으로 내보낸다. 기본값과 같으면 쓰지 않는다.
+
+내보낸 파일을 `%USERPROFILE%\.engram\overlays\bolttagu-2d\mapping.json`에 두고 오버레이를 재시작하면 적용된다. 코드 수정이 필요 없다.
+
+```json
+{
+  "version": 1,
+  "hints": {"input": "wondering"},
+  "categories": {"read": "waiting"},
+  "oneshots": {"click": "success", "success": null},
+  "lifecycle": {"show": "enter", "hide": "exit"}
+}
+```
+
+`oneshots`의 `null`은 그 신호의 1회 재생을 끄는 것이다.
+
+- 적지 않은 항목은 기본값을 유지한다.
+- **모든 스프라이트를 고를 수 있다.** 반복하지 않는 클립(`enter`·`exit`·`success`)을 지속 동작으로 고르면 재생 후 마지막 프레임에서 멈춘다.
+- `enter`·`exit`는 런처가 등장·퇴장에도 쓰지만, 그 전환은 1회 재생이라 지속 동작을 항상 덮으므로 신호에 붙여도 충돌하지 않는다.
+- 1회 재생에는 반복 클립을 넣을 수 없다. 끝나지 않으므로 지속 동작으로 돌아가지 못한다.
+- 파일이 깨져 있어도 renderer는 죽지 않는다. 거부한 항목은 stderr로 남긴다.
+- 페이지의 프레임 선택 로직은 renderer와 같은 값을 내도록 대조 검증한다.
+- 페이지는 **설치된 `mapping.json`을 읽어 현재 선택을 채운 채로 열린다.** 기존 매핑을 고칠 수 있다.
+- `oneshots`(신호 진입 시 1회 재생)는 파일에서는 계속 받지만 표에는 없다. 지속 동작으로 1회 재생 클립을 고를 수 있게 된 뒤로는 "재생 후 idle 복귀" 하나만 남아서 열 하나를 쓸 값이 아니다.
+
+### presentation — 런처 아이콘 연동
+
+Engram의 플로팅 런처가 캐릭터의 표시 여부를 소유한다. 2단계 상호작용이다: **런처 클릭 → 캐릭터 등장**,
+**캐릭터 클릭 → 대화 입력**. 캐릭터의 "닫기"는 **축소**일 뿐이고 프로세스 종료는 tray의 Quit만 한다.
+
+renderer를 `--presentation`으로 실행하면 활성화된다.
+
+| 플래그 | capability 광고 | 시작 상태 | 등장 인사 |
+| --- | --- | --- | --- |
+| 없음 (기본) | 안 함 | 보임 | 프로세스 시작 시 |
+| `--presentation` | `overlay.presentation` | 숨김 | `overlay.show` 수신 시 |
+
+플래그로 가른 이유는 롤아웃 안전 때문이다. 런처가 없는 Engram에 capability를 광고하고 숨어서 시작하면
+영원히 안 보인다. 반대로 보이게 시작하면 새 Engram에서 hide가 도착하기 전에 캐릭터가 번쩍인다.
+
+| 수신 | 동작 |
+| --- | --- |
+| `overlay.show` | 창 표시 → `enter` 720ms → 현재 hint 포즈. geometry와 `visibility_changed{true}` 회신 |
+| `overlay.hide` | `exit` 700ms → 창 숨김 → `visibility_changed{false}` 회신 |
+
+- **ack는 애니메이션이 끝난 뒤** 보낸다. 시작할 때 보내면 Engram이 아직 화면에 있는 창을 없는 것으로 취급한다.
+- 숨은 동안 `tick`을 돌리지 않는다. 안 보이는 창을 다시 그릴 이유가 없다.
+- 숨어 있을 때는 geometry를 보내지 않고, **표시될 때 보낸다.** 숨은 renderer는 위치를 보고한 적이 없으므로 Engram이 말풍선을 앵커할 곳이 없다.
+- 창은 host가, 전환 애니메이션은 view가 소유한다. view의 `begin_enter`/`begin_exit`는 선택 hook이라, 이를 구현하지 않은 overlay도 애니메이션 없이 즉시 전환된다.
+
+전이 규칙:
+
+| 현재 | 수신 | 결과 |
+| --- | --- | --- |
+| 보임 | `show` | no-op. 인사를 다시 재생하지 않는다 (런처 연타) |
+| 숨김 | `hide` | no-op |
+| `exit` 재생 중 | `show` | 예약된 숨김을 취소하고 창을 유지한 채 `enter` |
+| `success` one-shot 중 | `hide` | `exit`가 이긴다. lifecycle이 연출보다 우선 |
+| 숨김 | hint 변경 | 포즈만 갱신, 창을 열지 않는다 |
+| 숨김 | `set_size`/`set_position` | 적용하고 회신. 표시와 무관 |
 
 ### 크기
 
-- 시작 크기는 manifest argv의 `--scale`로 정한다. 기본 1.0이 원화 그대로의 270×302, 허용 범위는 0.2~4.0이다.
-- `replace` 모드에서는 이후 Engram이 크기를 요청할 수 있다. renderer가 handshake에서 `overlay.set_size` capability를 advertise하기 때문이다.
+- 시작 크기는 실행 인자 `--scale`로 정한다. 기본 1.0이 원화 그대로의 270×302, 허용 범위는 0.2~4.0이다.
+- `replace` 모드에서는 이후 Engram이 크기를 요청할 수 있다. renderer가 등록할 때 `overlay.set_size` capability를 advertise하기 때문이다.
 - 요청받은 높이는 종횡비를 지킨 채 위 배율 범위 안으로 clamp하고, 적용된 실제 크기를 `overlay.geometry_changed`로 회신한다. 그림을 늘리지 않는다.
 - `observer` 모드와 capability를 알리지 않은 renderer는 크기 요청을 받지 않는다.
 - 셀을 미리 확대하지 않고 완성된 프레임만 리샘플링하므로 배율을 올려도 메모리는 그대로다. 초당 12회 이하만 다시 그리므로 비용도 무시할 수준이다.
 
 ### 옵션
 
-- 불투명 타원 바닥과 쏟은 커피는 `Bolttagu2dView(show_floor=True)`로 켠다. 기본은 꺼짐이다.
+- 불투명 타원 바닥은 `Bolttagu2dView(show_floor=True)`로 켠다. 기본은 꺼짐이다. 쏟은 커피는 바닥 옵션과 무관하다 — 아래 참고.
 
 ## rabbit-2d
 
