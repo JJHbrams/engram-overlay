@@ -41,6 +41,7 @@ class TkOverlayHost:
     # rate. Coalesce to the frame rate and always send the final position on
     # release, so the host still lands exactly where the pointer left the window.
     DRAG_MIN_INTERVAL_MS = 16
+    TRANSIENT_HINT_DWELL_MS = 1200
 
     def __init__(
         self,
@@ -93,6 +94,8 @@ class TkOverlayHost:
         self._mapped = not start_hidden
         self._show_after: str | None = None
         self._dismiss_after: str | None = None
+        self._transient_after: str | None = None
+        self._transient_generation = 0
         if start_hidden:
             self.root.withdraw()
         self._bind_pointer_events()
@@ -161,7 +164,7 @@ class TkOverlayHost:
             if message is _DISCONNECTED:
                 self._on_disconnected()
                 continue
-            self.state.apply(message)
+            state_edge = self.state.apply(message)
             if self.state.mode is not None and self.state.mode != self.mode:
                 self._apply_mode(self.state.mode)
             if self.state.x is not None and self.state.y is not None:
@@ -180,10 +183,31 @@ class TkOverlayHost:
                     self._send_geometry()
                 self.state.width = self.state.height = None
             self.view.apply_state(self.state)
+            if state_edge == "transient_started":
+                self._transient_generation += 1
+                generation = self._transient_generation
+                if self._transient_after is not None:
+                    self.root.after_cancel(self._transient_after)
+                self._transient_after = self.root.after(
+                    self.TRANSIENT_HINT_DWELL_MS,
+                    lambda: self._finish_transient_hint(generation),
+                )
+            elif state_edge == "durable":
+                self._transient_generation += 1
+                if self._transient_after is not None:
+                    self.root.after_cancel(self._transient_after)
+                    self._transient_after = None
             if self.state.presentation is not None:
                 self._apply_presentation(self.state.presentation == "shown")
                 self.state.presentation = None
         self.root.after(20, self._drain_messages)
+
+    def _finish_transient_hint(self, generation: int) -> None:
+        if generation != self._transient_generation:
+            return
+        self._transient_after = None
+        if self.state.finish_transient():
+            self.view.apply_state(self.state)
 
     def _on_connected(self) -> None:
         """A fresh session knows nothing about us; re-announce what it needs."""
@@ -197,6 +221,11 @@ class TkOverlayHost:
         self.state.mode = None
         self._drag_origin = None
         self._drag_sent_ms = None
+        self._transient_generation += 1
+        if self._transient_after is not None:
+            self.root.after_cancel(self._transient_after)
+            self._transient_after = None
+        self.state.finish_transient()
 
     def _apply_mode(self, mode: str) -> None:
         """Take an assignment from the host.

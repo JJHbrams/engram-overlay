@@ -1,8 +1,13 @@
-"""Bolttagu sprite overlay driven by the bolttagu sprite pack.
+"""Bolttagu sprite overlay driven by the bolttagu sprite packs.
 
-The upstream pack is a set of full-canvas 1254x1254 PNGs.  ``scripts/build-bolttagu-assets.py``
+An upstream pack is a set of full-canvas 1254x1254 PNGs.  ``scripts/build-bolttagu-assets.py``
 crops them to a shared rectangle and packs them into the horizontal sheets bundled here, so every
 pose and frame stays aligned on the same feet anchor.
+
+Two sprite sets are bundled: the original v10 pack, which owns the unprefixed option names, and
+its trickcal-inspired retouch of the same character under ``trickcal-``.  Both are packed against
+one crop, so a signal may draw either set without the character shifting on screen -- the picker
+offers every option of both, and the retouch adds two activities the original never drew.
 
 Frames are described as recipes -- an ordered tuple of ``(sheet, cell)`` layers composited bottom
 up -- because idle is two independent loops at once: a random eye blink and the 24-frame steam
@@ -52,6 +57,27 @@ EVENT_DURATIONS_MS: dict[str, tuple[int, int, int]] = {
 }
 LOOPING_EVENTS = ("wondering", "searching", "writing", "speaking", "listening", "waiting", "error")
 
+# The trickcal retouch. It redraws every state of the original at the same timings and
+# adds two activities of its own, so it is the same table plus those two.
+TRICKCAL = "trickcal-"
+TRICKCAL_EVENT_DURATIONS_MS: dict[str, tuple[int, int, int]] = {
+    **EVENT_DURATIONS_MS,
+    "executing": (360, 300, 480),
+    "tool_use": (420, 360, 500),
+}
+TRICKCAL_LOOPING_EVENTS = LOOPING_EVENTS + ("executing", "tool_use")
+
+# Option-name prefix per bundled set, and the timings each one draws at. The original
+# set is unprefixed so every mapping written before the retouch keeps working.
+SET_DURATIONS: dict[str, dict[str, tuple[int, int, int]]] = {
+    "": EVENT_DURATIONS_MS,
+    TRICKCAL: TRICKCAL_EVENT_DURATIONS_MS,
+}
+SET_LOOPING: dict[str, tuple[str, ...]] = {
+    "": LOOPING_EVENTS,
+    TRICKCAL: TRICKCAL_LOOPING_EVENTS,
+}
+
 # idle: steam is a 24-frame 10 fps loop, blink is a fixed 210 ms sequence that
 # re-arms itself 2.5-6 s after it finishes.
 STEAM_FRAME_MS = 100
@@ -59,6 +85,14 @@ STEAM_CELLS = 24
 EYE_CELLS = {"open": 0, "half": 1, "closed": 2}
 BLINK_SEQUENCE = (("half", 50), ("closed", 90), ("half", 70))
 BLINK_INTERVAL_MS = (2500, 6000)
+
+# Poses drawn with both hands up and no mug in them. The mug has to go somewhere,
+# so these draw the tipped mug and its puddle at her feet; without it the coffee
+# simply vanishes the moment she reacts to anything. It rides on the pose rather
+# than on the floor, so it shows with the floor layer off and never appears under
+# a pose that is still holding the mug.
+SPILL_SHEET = "spill"
+SPILL_POSES = ("alert", "wondering")
 
 # The artwork is drawn with the long cheek and the mug toward the viewer's left,
 # so the sprite already looks left and is mirrored only to turn right.
@@ -89,23 +123,46 @@ class Clip:
         return sum(self.durations_ms)
 
 
-def _event_clip(state: str, *, loop: bool) -> Clip:
-    return Clip(sheet=state, cells=(0, 1, 2), durations_ms=EVENT_DURATIONS_MS[state], loop=loop)
+def _event_clip(state: str, *, loop: bool, prefix: str = "") -> Clip:
+    """One three-frame event set, drawn from the named set's own sheet and timings."""
+    return Clip(
+        sheet=prefix + state,
+        cells=(0, 1, 2),
+        durations_ms=SET_DURATIONS[prefix][state],
+        loop=loop,
+    )
+
+
+def _set_clips(prefix: str) -> dict[str, Clip]:
+    """Every clip one sprite set draws, keyed by the option name that selects it."""
+    return {
+        prefix + "alert": Clip(sheet=prefix + "alert", cells=(0,), durations_ms=(1000,), loop=True),
+        prefix + "enter": Clip(
+            sheet=prefix + "enter", cells=(0, 1, 2), durations_ms=ENTER_DURATIONS_MS, loop=False
+        ),
+        # The rear-view farewell, played when Engram's launcher collapses the character.
+        prefix + "exit": Clip(
+            sheet=prefix + "exit", cells=(0, 1, 2), durations_ms=EXIT_DURATIONS_MS, loop=False
+        ),
+        # The packs' only one-shot event: play once, then settle back to idle.
+        prefix + "success": _event_clip("success", loop=False, prefix=prefix),
+        **{
+            prefix + state: _event_clip(state, loop=True, prefix=prefix)
+            for state in SET_LOOPING[prefix]
+        },
+    }
 
 
 CLIPS: dict[str, Clip] = {
-    "alert": Clip(sheet="alert", cells=(0,), durations_ms=(1000,), loop=True),
-    "enter": Clip(sheet="enter", cells=(0, 1, 2), durations_ms=ENTER_DURATIONS_MS, loop=False),
-    # The rear-view farewell, played when Engram's launcher collapses the character.
-    "exit": Clip(sheet="exit", cells=(0, 1, 2), durations_ms=EXIT_DURATIONS_MS, loop=False),
-    # The pack's only one-shot event: play once, then settle back to idle.
-    "success": _event_clip("success", loop=False),
-    **{state: _event_clip(state, loop=True) for state in LOOPING_EVENTS},
+    name: clip for prefix in SET_DURATIONS for name, clip in _set_clips(prefix).items()
 }
 
 # "idle" is the layered blink+steam pose; the rest name a looping clip above.
 # The mapping follows the intent the pack states in its own event-map.json.
 IDLE_POSE = "idle"
+# One layered resting pose per set. They are options like any other, so a mapping
+# may rest in the retouch while a flourish plays from the original, or the reverse.
+IDLE_POSES = (IDLE_POSE, TRICKCAL + IDLE_POSE)
 STATE_POSES: dict[str, str] = {
     "default": IDLE_POSE,
     "idle": IDLE_POSE,
@@ -162,7 +219,7 @@ def selectable_poses() -> list[str]:
 
     A clip that does not loop holds its last frame for as long as the state lasts.
     """
-    return [IDLE_POSE] + sorted(CLIPS)
+    return list(IDLE_POSES) + sorted(CLIPS)
 
 
 def selectable_oneshots() -> list[str]:
@@ -194,26 +251,36 @@ CATEGORY_NOTES = {
     "communication": "mail · message · discord",
     "other": "그 외",
 }
+def _idle_option(prefix: str) -> Option:
+    """The layered resting pose of one set: a random blink under its own steam."""
+    return Option(
+        prefix + IDLE_POSE,
+        (
+            # The eye rests open for an unpredictable while, then blinks.
+            Layer(
+                prefix + "idle",
+                tuple(EYE_CELLS[name] for name in ("open", "half", "closed", "half")),
+                (0,) + tuple(ms for _, ms in BLINK_SEQUENCE),
+                hold_ms=BLINK_INTERVAL_MS,
+            ),
+            Layer(prefix + "steam", tuple(range(STEAM_CELLS)), (STEAM_FRAME_MS,) * STEAM_CELLS),
+        ),
+        note=("트릭칼풍 " if prefix else "") + "눈깜빡임 + 커피 김",
+    )
+
+
 def _options() -> dict[str, Option]:
     """Every drawable pose, described once for both the picker and the renderer."""
-    options = {
-        IDLE_POSE: Option(
-            IDLE_POSE,
-            (
-                # The eye rests open for an unpredictable while, then blinks.
-                Layer(
-                    "idle",
-                    tuple(EYE_CELLS[name] for name in ("open", "half", "closed", "half")),
-                    (0,) + tuple(ms for _, ms in BLINK_SEQUENCE),
-                    hold_ms=BLINK_INTERVAL_MS,
-                ),
-                Layer("steam", tuple(range(STEAM_CELLS)), (STEAM_FRAME_MS,) * STEAM_CELLS),
-            ),
-            note="눈깜빡임 + 커피 김",
-        )
-    }
+    options = {prefix + IDLE_POSE: _idle_option(prefix) for prefix in SET_DURATIONS}
     for name, clip in CLIPS.items():
-        options[name] = Option(name, (Layer(clip.sheet, clip.cells, clip.durations_ms, clip.loop),))
+        layers = (Layer(clip.sheet, clip.cells, clip.durations_ms, clip.loop),)
+        note = "트릭칼풍" if name.startswith(TRICKCAL) else ""
+        if name.removeprefix(TRICKCAL) in SPILL_POSES:
+            # Underneath her: the puddle is on the floor at her feet. One cell held
+            # for exactly as long as the pose, so the spill cannot lengthen it.
+            layers = (Layer(SPILL_SHEET, (0,), (clip.total_ms,)),) + layers
+            note = (note + " 쏟은 커피").strip()
+        options[name] = Option(name, layers, note=note)
     return options
 
 
@@ -240,7 +307,9 @@ def sprite_map() -> SpriteMap:
                 "hints", "display hint",
                 tuple(Row(k, HINT_NOTES.get(k, ""), (STATE_POSES[k],)) for k in HINT_ORDER),
                 poses,
-                note="그 상태에 머무는 동안 반복되는 동작. 반복하지 않는 클립은 마지막 프레임에서 멈춘다.",
+                note="그 상태에 머무는 동안 반복되는 동작. 반복하지 않는 클립은 마지막 프레임에서 멈춘다. "
+                     "trickcal- 로 시작하는 항목은 같은 캐릭터의 트릭칼풍 리터치 셋이고, "
+                     "두 셋은 같은 crop 으로 맞춰져 있어 신호마다 섞어 써도 캐릭터가 튀지 않는다.",
             ),
             Section(
                 "oneshots", "1회 재생",
@@ -466,7 +535,6 @@ class Bolttagu2dView:
         face_pointer: bool = True,
         launcher_managed: bool = False,
         show_floor: bool = False,
-        coffee: bool = True,
         seed: int = 0,
         mapping_path: Path | None = None,
         log: Callable[[str], None] | None = None,
@@ -479,7 +547,9 @@ class Bolttagu2dView:
         # Resize the finished frame rather than every cell, so memory stays flat
         # at any scale and only the <=12 redraws per second pay for it.
         self.width, self.height = scaled_cell(cell, scale)
-        self.floor = sheets["floor"][1 if coffee else 0] if show_floor else None
+        # Just the ground. The spilled coffee belongs to the poses that spill it,
+        # so a baked-in floor variant would draw it under every other pose too.
+        self.floor = sheets["floor"][0] if show_floor else None
         self.sheets = sheets
         self.face_pointer = face_pointer
         # When Engram's launcher owns presentation, the arrival bow belongs to

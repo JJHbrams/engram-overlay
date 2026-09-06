@@ -108,7 +108,7 @@ class MappingOverrideTests(unittest.TestCase):
         )
         animator.apply_hint("click", 0)
         self.assertEqual(animator.resolve(0), (("success", 0),))
-        self.assertEqual(animator.resolve(1_200), (("alert", 0),))
+        self.assertEqual(animator.resolve(1_200), (("spill", 0), ("alert", 0)))
 
     def test_a_chosen_hint_wins(self) -> None:
         hints, _, notes = self.load({"hints": {"input": "wondering"}})
@@ -196,7 +196,7 @@ class MappingOverrideTests(unittest.TestCase):
         )
         animator = BolttaguAnimator(started_ms=0, intro=None, hints=hints, categories=categories)
         animator.apply_hint("input", 0)
-        self.assertEqual(animator.resolve(0), (("wondering", 0),))
+        self.assertEqual(animator.resolve(0), (("spill", 0), ("wondering", 0)))
         animator.apply_hint("generating", 0, "write")
         self.assertEqual(animator.resolve(0), (("searching", 0),))
 
@@ -213,6 +213,44 @@ class MappingOverrideTests(unittest.TestCase):
 
     def test_pose_for_defaults_to_the_built_in_tables(self) -> None:
         self.assertEqual(pose_for("search", None), STATE_POSES["search"])
+
+    def test_a_retouch_pose_is_accepted(self) -> None:
+        """The trickcal set is a choice like any other, including its own idle."""
+        for pose in ("trickcal-idle", "trickcal-wondering", "trickcal-executing"):
+            with self.subTest(pose=pose):
+                hints, _, notes = self.load({"hints": {"thought": pose}})
+                self.assertEqual(hints["thought"], pose)
+                self.assertEqual(notes, [])
+
+    def test_a_retouch_clip_can_take_a_transition_or_a_flourish(self) -> None:
+        self.load({
+            "lifecycle": {"show": "trickcal-enter", "hide": "trickcal-exit"},
+            "oneshots": {"success": "trickcal-success"},
+        })
+        self.assertEqual(self.lifecycle, {"show": "trickcal-enter", "hide": "trickcal-exit"})
+        self.assertEqual(self.oneshots["success"], "trickcal-success")
+
+    def test_the_retouch_resting_pose_is_no_more_a_transition_than_the_original(self) -> None:
+        """Both idles are layered rather than clips, so neither can be a transition."""
+        _, _, notes = self.load({"lifecycle": {"show": "trickcal-idle"}})
+        self.assertEqual(self.lifecycle, LIFECYCLE_TRANSITIONS)
+        self.assertTrue(notes)
+
+    def test_a_state_only_the_retouch_draws_needs_its_prefix(self) -> None:
+        """The original set has no executing sheet, so the bare name cannot draw."""
+        hints, _, notes = self.load({"hints": {"generating": "executing"}})
+        self.assertEqual(hints, STATE_POSES)
+        self.assertTrue(notes)
+
+    def test_a_mixed_mapping_loads_whole(self) -> None:
+        hints, categories, notes = self.load({
+            "hints": {"generating": "trickcal-tool_use"},
+            "categories": {"execute": "trickcal-executing"},
+        })
+        self.assertEqual(hints["generating"], "trickcal-tool_use")
+        self.assertEqual(hints["thought"], STATE_POSES["thought"])
+        self.assertEqual(categories["execute"], "trickcal-executing")
+        self.assertEqual(notes, [])
 
 
 if __name__ == "__main__":

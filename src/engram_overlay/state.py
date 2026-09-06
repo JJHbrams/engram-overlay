@@ -35,7 +35,11 @@ _TRANSIENT_HINT_TYPES = frozenset({
     "conversation.input_submitted",
     "pointer.left_clicked",
     "pointer.right_clicked",
+    "generation.completed",
+    "provider.failed",
+    "tool.failed",
 })
+_TERMINAL_WORK_TYPES = frozenset({"generation.completed", "provider.failed"})
 _CONTROL_HINT_TYPES = frozenset({
     "engram.welcome",
     "renderer.assignment",
@@ -63,6 +67,7 @@ class OverlayState:
     _work_display_hint: str = field(default="idle", init=False, repr=False)
     _pointer_hovered: bool = field(default=False, init=False, repr=False)
     _input_active: bool = field(default=False, init=False, repr=False)
+    _transient_active: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.display_hint in DISPLAY_HINTS:
@@ -76,36 +81,60 @@ class OverlayState:
         else:
             self.display_hint = self._work_display_hint
 
-    def apply(self, message: dict[str, Any]) -> None:
+    def apply(self, message: dict[str, Any]) -> str:
+        """Apply one envelope and report its lifecycle edge to the UI host.
+
+        ``transient_started`` arms a finite presentation timer, ``durable``
+        cancels an older transient, and ``unchanged`` leaves its deadline alone.
+        """
         message_type = message.get("type")
         payload = message.get("payload", {})
         hint = message.get("display_hint")
+        edge = "unchanged"
         if isinstance(hint, str):
             resolved_hint = hint if hint in DISPLAY_HINTS else "idle"
+            if message_type in _TERMINAL_WORK_TYPES:
+                self._work_display_hint = "idle"
+                self.tool_category = None
+                self.display_hint = resolved_hint
+                self._transient_active = True
+                edge = "transient_started"
             # display_hint collapses every non-search, non-memory tool into
             # "generating"; payload.category is the only thing that says which
             # kind of work it is. It describes the message that carried it, so a
             # semantic event without one clears it rather than leaving it stale.
-            if message_type not in _TRANSIENT_HINT_TYPES and message_type not in _CONTROL_HINT_TYPES:
+            elif message_type not in _TRANSIENT_HINT_TYPES and message_type not in _CONTROL_HINT_TYPES:
+                self._transient_active = False
+                edge = "durable"
                 self._work_display_hint = resolved_hint
                 category_key = "tool_category" if message_type == "state.snapshot" else "category"
                 category = payload.get(category_key) if isinstance(payload, dict) else None
                 self.tool_category = category if category in TOOL_CATEGORIES else None
                 self._restore_active_hint()
             elif message_type == _INPUT_ACTIVE:
+                self._transient_active = False
                 self._input_active = True
                 self._restore_active_hint()
+                edge = "durable"
             elif message_type == _INPUT_IDLE:
+                self._transient_active = False
                 self._input_active = False
                 self._restore_active_hint()
+                edge = "durable"
             elif message_type == _POINTER_ENTERED:
+                self._transient_active = False
                 self._pointer_hovered = True
                 self._restore_active_hint()
+                edge = "durable"
             elif message_type == _POINTER_LEFT:
+                self._transient_active = False
                 self._pointer_hovered = False
                 self._restore_active_hint()
+                edge = "durable"
             elif message_type not in _CONTROL_HINT_TYPES:
                 self.display_hint = resolved_hint
+                self._transient_active = True
+                edge = "transient_started"
         if message_type in ("engram.welcome", "renderer.assignment") and isinstance(payload, dict):
             mode = payload.get("mode")
             if mode in MODES:
@@ -129,6 +158,18 @@ class OverlayState:
                 and math.isfinite(width) and math.isfinite(height) and width > 0 and height > 0
             ):
                 self.width, self.height = int(width), int(height)
+        return edge
+
+    @property
+    def transient_active(self) -> bool:
+        return self._transient_active
+
+    def finish_transient(self) -> bool:
+        if not self._transient_active:
+            return False
+        self._transient_active = False
+        self._restore_active_hint()
+        return True
 
     @property
     def appearance(self) -> tuple[str, str]:

@@ -17,6 +17,42 @@ from engram_overlay.state import OverlayState
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_completion_is_finite_success_then_restores_idle_work(self) -> None:
+        state = OverlayState()
+        state.apply({"schema_version": 2, "type": "generation.started", "display_hint": "generating", "payload": {}})
+        state.apply({"schema_version": 2, "type": "generation.completed", "display_hint": "success", "payload": {}})
+        self.assertEqual(state.display_hint, "success")
+        self.assertTrue(state.transient_active)
+        self.assertTrue(state.finish_transient())
+        self.assertEqual(state.display_hint, "idle")
+
+    def test_tool_failure_returns_to_active_work_but_provider_failure_returns_idle(self) -> None:
+        state = OverlayState()
+        state.apply({"schema_version": 2, "type": "generation.started", "display_hint": "generating", "payload": {}})
+        state.apply({"schema_version": 2, "type": "tool.failed", "display_hint": "error", "payload": {}})
+        state.finish_transient()
+        self.assertEqual(state.display_hint, "generating")
+        state.apply({"schema_version": 2, "type": "provider.failed", "display_hint": "provider_error", "payload": {}})
+        state.finish_transient()
+        self.assertEqual(state.display_hint, "idle")
+
+    def test_lifecycle_edges_distinguish_controls_from_new_durable_work(self) -> None:
+        state = OverlayState()
+        self.assertEqual(
+            state.apply({"type": "generation.completed", "display_hint": "success", "payload": {}}),
+            "transient_started",
+        )
+        self.assertEqual(
+            state.apply({"type": "overlay.set_position", "display_hint": "idle", "payload": {"x": 1, "y": 2}}),
+            "unchanged",
+        )
+        self.assertTrue(state.transient_active)
+        self.assertEqual(
+            state.apply({"type": "generation.started", "display_hint": "generating", "payload": {}}),
+            "durable",
+        )
+        self.assertFalse(state.transient_active)
+
     def test_hello_contract(self) -> None:
         self.assertEqual(
             hello_message(),

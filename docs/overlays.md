@@ -8,14 +8,28 @@
 ### 에셋
 
 - 원본 sprite pack은 1254×1254 전체 캔버스 PNG 27MB다. 그대로 담지 않는다.
-- 현재 반영 버전은 `atlas.json`의 `source`에 기록된다 (`sprite-pack-v9`).
-- `scripts/build-bolttagu-assets.py`가 모든 프레임의 알파 bbox 합집합으로 한 번 crop하고 0.25배로 축소해 가로 sheet로 묶는다. 결과는 270×302 셀, 총 549 KiB.
-- 한 crop을 공유하므로 모든 포즈가 같은 발 기준점에 정렬된다.
+- 현재 반영 버전은 `atlas.json`의 `sources`에 셋별로 기록된다 (`sprite-pack-v10`, `sprite-pack-v10-trickcal-inspired`).
+- `scripts/build-bolttagu-assets.py`가 모든 프레임의 알파 bbox 합집합으로 한 번 crop하고 0.25배로 축소해 가로 sheet로 묶는다. 결과는 270×302 셀, 두 셋 합쳐 총 3.8 MiB.
+- 한 crop을 공유하므로 **두 셋의** 모든 포즈가 같은 발 기준점에 정렬된다. 신호마다 셋을 섞어도 캐릭터가 튀지 않는 근거다.
 - crop·배율·발 기준점은 `assets/bolttagu_2d/atlas.json`에 기록되고 overlay가 그 값을 읽는다. 코드에 하드코딩하지 않는다.
 
 ```powershell
-python scripts/build-bolttagu-assets.py --pack <sprite-pack-vN>
+python scripts/build-bolttagu-assets.py --pack <sprite-pack-v10> --retouch <sprite-pack-v10-trickcal-inspired>
 ```
+
+### 스프라이트 셋
+
+같은 캐릭터의 두 작화가 함께 들어있다. 어느 쪽을 쓸지는 셋 단위 스위치가 아니라 **신호별 선택**이다.
+
+| 셋 | 옵션 이름 | 원본 팩 |
+| --- | --- | --- |
+| 원본 | `idle`, `wondering`, `success` … (접두어 없음) | `sprite-pack-v10` |
+| 트릭칼풍 리터치 | `trickcal-idle`, `trickcal-wondering` … | `sprite-pack-v10-trickcal-inspired` |
+
+- 리터치 셋은 원본의 모든 상태를 다시 그리고, 원본에 없던 `trickcal-executing`(터미널)과 `trickcal-tool_use`(공구함) 두 개를 더한다. 타이밍은 각각 360/300/480ms, 420/360/500ms 반복.
+- 기본값은 전부 원본 셋이다. 셋이 늘어난 것이 이미 고른 매핑을 바꾸지 않는다.
+- 두 셋 모두 자기 idle(눈깜빡임+김)과 enter·exit·success 1회 재생을 가진다. 즉 등장·퇴장·성공 연출도 셋별로 고를 수 있다.
+- 접두어 없는 이름은 계속 원본을 가리키므로 리터치 이전에 쓴 `mapping.json`은 그대로 동작한다. 반대로 `executing`처럼 리터치만 가진 상태는 접두어 없이 쓰면 거부된다.
 
 ### 상태 매핑
 
@@ -27,10 +41,10 @@ python scripts/build-bolttagu-assets.py --pack <sprite-pack-vN>
 | --- | --- | --- |
 | `idle`, `default` | idle | 눈 상태 3 + 김 24 레이어 합성 |
 | `success` | success → idle | 280/360/360ms **1회** 재생 후 idle 복귀 |
-| `hover`, `click` | alert | 아하 정지 포즈 |
+| `hover`, `click` | alert | 아하 정지 포즈 + 쏟은 커피 |
 | `input` | listening | 420/420/420ms 반복 |
 | `generating` | speaking | 220/220/260ms 반복 |
-| `thought` | wondering | 320/260/320ms 반복 |
+| `thought` | wondering | 320/260/320ms 반복 + 쏟은 커피 |
 | `search`, `memory` | searching | 650/500/650ms 반복 |
 | `error`, `provider_error` | error | 260/300/420ms 반복 |
 
@@ -63,6 +77,10 @@ python scripts/build-bolttagu-assets.py --pack <sprite-pack-vN>
 
 - **눈깜빡임** — 열린 채 2.5~6초 무작위로 기다렸다가 반감김 50ms → 닫힘 90ms → 반감김 70ms. `Layer.hold_ms`로 **한 번만 선언**되고 미리보기와 렌더러가 같은 정의를 쓴다. 기다리는 길이는 LCG로 뽑아 시계의 순수 함수라 상태를 기억하지 않는다 — idle 재진입은 포즈 시계가 리셋되는 것으로 자연히 처리된다.
 - **커피 김** — 24프레임 10fps(2.4초) 반복. 캐릭터가 든 머그의 김이라 바닥 레이어를 꺼도 나온다. 깜빡임과 위상이 독립이다.
+- **쏟은 커피** — `alert`·`wondering`은 두 손을 다 들고 머그가 손에 없다. 그래서 이 두 포즈만 발밑에 넘어진 머그와 흘린 커피(`spill` 레이어)를 **캐릭터 아래**에 함께 그린다. 없으면 반응하는 순간 머그가 설명 없이 사라진다.
+  - 바닥(`show_floor`) 옵션과 무관하다. 바닥을 꺼도 나오고, 반대로 바닥 sheet에 커피를 구워넣지 않으므로 머그를 든 포즈 밑에 물웅덩이가 남지 않는다.
+  - 포즈 길이만큼 유지되는 1셀이라 팩의 타이밍(320/260/320ms 등)을 늘리지 않는다.
+  - 두 셋이 같은 그림을 쓴다. 두 팩이 `layers/coffee_spill.png`를 바이트 단위로 동일하게 담고 있어 셋별로 복제할 이유가 없다.
 - **포인터 방향** — 원본이 볼따구와 머그를 화면 왼쪽에 두고 그려져 이미 왼쪽을 본다. 그래서 포인터가 창 중심보다 **오른쪽**일 때만 좌우반전한다. 중심 ±24px는 deadzone이라 경계에서 깜빡이며 뒤집히지 않는다. `--no-face-pointer`로 끈다.
 
 ### 매핑 고르기
@@ -166,7 +184,7 @@ renderer를 `--presentation`으로 실행하면 활성화된다.
 
 ### 옵션
 
-- 불투명 타원 바닥과 쏟은 커피는 `Bolttagu2dView(show_floor=True)`로 켠다. 기본은 꺼짐이다.
+- 불투명 타원 바닥은 `Bolttagu2dView(show_floor=True)`로 켠다. 기본은 꺼짐이다. 쏟은 커피는 바닥 옵션과 무관하다 — 아래 참고.
 
 ## rabbit-2d
 

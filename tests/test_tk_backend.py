@@ -100,6 +100,87 @@ class TkOverlayHostObserverTests(unittest.TestCase):
         actions = [call.args[0]["payload"]["action"] for call in host.transport.send.call_args_list]
         self.assertEqual(actions, ["menu_dismiss", "right_click", "menu_dismiss", "left_click"])
 
+    def test_generic_view_receives_idle_after_finite_success_dwell(self):
+        host = self._host()
+        host.state = OverlayState()
+        host.view = Mock()
+        host.state.apply({
+            "schema_version": 2,
+            "type": "generation.completed",
+            "display_hint": "success",
+            "payload": {},
+        })
+        host._transient_after = "after#success"
+        host._transient_generation = 1
+
+        host._finish_transient_hint(1)
+
+        self.assertEqual(host.state.display_hint, "idle")
+        self.assertIsNone(host._transient_after)
+        host.view.apply_state.assert_called_once_with(host.state)
+
+    def test_position_and_control_traffic_does_not_extend_success_deadline(self):
+        host = self._host(mode="replace")
+        host.state = OverlayState()
+        host.view = Mock()
+        host.inbox = queue.Queue()
+        host._transient_after = None
+        host._transient_generation = 0
+        host.inbox.put({
+            "schema_version": 2, "type": "generation.completed",
+            "display_hint": "success", "payload": {},
+        })
+        host.inbox.put({
+            "schema_version": 2, "type": "overlay.set_position",
+            "display_hint": "idle", "payload": {"x": 120, "y": 220},
+        })
+        host.inbox.put({
+            "schema_version": 2, "type": "renderer.assignment",
+            "display_hint": "idle", "payload": {"mode": "replace", "selected": True},
+        })
+
+        host._drain_messages()
+
+        dwell_calls = [call for call in host.root.after.call_args_list if call.args[0] == host.TRANSIENT_HINT_DWELL_MS]
+        self.assertEqual(len(dwell_calls), 1)
+        host.root.after_cancel.assert_not_called()
+
+    def test_cancelled_stale_callback_cannot_finish_newer_transient(self):
+        host = self._host()
+        host.state = OverlayState()
+        host.view = Mock()
+        host.inbox = queue.Queue()
+        host._transient_after = None
+        host._transient_generation = 0
+        callbacks = []
+        host.root.after.side_effect = lambda delay, callback: callbacks.append((delay, callback)) or f"after#{len(callbacks)}"
+        host.inbox.put({"type": "generation.completed", "display_hint": "success", "payload": {}})
+        host._drain_messages()
+        first_callback = next(callback for delay, callback in callbacks if delay == host.TRANSIENT_HINT_DWELL_MS)
+
+        host.inbox.put({"type": "tool.failed", "display_hint": "error", "payload": {}})
+        host._drain_messages()
+        self.assertEqual(host.state.display_hint, "error")
+        first_callback()
+
+        self.assertEqual(host.state.display_hint, "error")
+        self.assertTrue(host.state.transient_active)
+
+    def test_disconnect_invalidates_pending_transient_callback(self):
+        host = self._host()
+        host.state = OverlayState()
+        host.view = Mock()
+        host._transient_generation = 2
+        host._transient_after = "after#old"
+        host.state.apply({"type": "generation.completed", "display_hint": "success", "payload": {}})
+
+        host._on_disconnected()
+
+        self.assertEqual(host._transient_generation, 3)
+        self.assertIsNone(host._transient_after)
+        self.assertFalse(host.state.transient_active)
+        host.root.after_cancel.assert_called_once_with("after#old")
+
 class TkOverlayHostPresentationTests(unittest.TestCase):
     """Engram's launcher owns whether the character is on screen.
 
