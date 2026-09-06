@@ -17,9 +17,14 @@ from engram_overlay.overlays.bolttagu_2d import (
     EYE_CELLS,
     HINT_ONESHOTS,
     IDLE_POSE,
+    IDLE_POSES,
     STATE_POSES,
     SCALE_RANGE,
+    SPILL_POSES,
+    SPILL_SHEET,
     STEAM_CELLS,
+    TRICKCAL,
+    TRICKCAL_EVENT_DURATIONS_MS,
     BolttaguAnimator,
     Clip,
     facing_mirrored,
@@ -31,6 +36,9 @@ from engram_overlay.overlays.spritemap import cell_at, finished
 from engram_overlay.protocol import DISPLAY_HINTS
 from engram_overlay.registry import OVERLAYS, create_overlay, overlay_ids
 from engram_overlay.state import OverlayState
+
+# The layer every spilling pose draws beneath itself, held for the pose's length.
+SPILL = (SPILL_SHEET, 0)
 
 
 class ClipTests(unittest.TestCase):
@@ -63,7 +71,8 @@ class TimelineTests(unittest.TestCase):
         return OPTIONS[option].layers[index]
 
     def test_wondering_uses_pack_durations_and_wraps(self) -> None:
-        layer = self.layer("wondering")
+        # The pose's own layer is the top one; the spilled coffee sits under it.
+        layer = self.layer("wondering", -1)
         self.assertEqual(layer.durations_ms, (320, 260, 320))
         self.assertEqual(cell_at(layer, 0), 0)
         self.assertEqual(cell_at(layer, 319), 0)
@@ -78,8 +87,10 @@ class TimelineTests(unittest.TestCase):
                 self.assertEqual(CLIPS[state].cells, (0, 1, 2))
 
     def test_one_shots_are_the_flourish_and_the_two_transitions(self) -> None:
+        """Both sets ship the same three; nothing else plays once."""
         one_shots = {name for name, clip in CLIPS.items() if not clip.loop}
-        self.assertEqual(one_shots, {"success", "enter", "exit"})
+        bare = {"success", "enter", "exit"}
+        self.assertEqual(one_shots, bare | {TRICKCAL + name for name in bare})
 
     def test_enter_uses_pack_durations_then_holds(self) -> None:
         layer = self.layer("enter")
@@ -243,9 +254,9 @@ class AnimatorTests(unittest.TestCase):
     def test_thought_runs_the_wondering_loop(self) -> None:
         animator = self.animator()
         animator.apply_hint("thought", 5_000)
-        self.assertEqual(animator.resolve(5_000), (("wondering", 0),))
-        self.assertEqual(animator.resolve(5_320), (("wondering", 1),))
-        self.assertEqual(animator.resolve(5_900), (("wondering", 0),))
+        self.assertEqual(animator.resolve(5_000), (SPILL, ("wondering", 0)))
+        self.assertEqual(animator.resolve(5_320), (SPILL, ("wondering", 1)))
+        self.assertEqual(animator.resolve(5_900), (SPILL, ("wondering", 0)))
 
     def test_each_working_hint_gets_its_own_animation(self) -> None:
         """The pack ships a distinct set per activity; hints must not collapse onto one."""
@@ -262,7 +273,7 @@ class AnimatorTests(unittest.TestCase):
             with self.subTest(hint=hint):
                 animator = self.animator()
                 animator.apply_hint(hint, 0)
-                self.assertEqual(animator.resolve(0), ((sheet, 0),))
+                self.assertEqual(animator.resolve(0)[-1], (sheet, 0))
 
     def test_tool_category_refines_the_generating_catch_all(self) -> None:
         """Engram collapses every non-search, non-memory tool into "generating"."""
@@ -384,7 +395,7 @@ class AnimatorTests(unittest.TestCase):
         self.assertEqual(animator.resolve(5_000), (("exit", 2),))
         animator.apply_hint("thought", 5_000)
         self.assertFalse(animator.oneshot_holds)
-        self.assertEqual(animator.resolve(5_000)[0][0], "wondering")
+        self.assertEqual(animator.resolve(5_000)[-1][0], "wondering")
 
     def test_lifecycle_rejects_an_unknown_clip(self) -> None:
         with self.assertRaises(ValueError):
@@ -397,15 +408,15 @@ class AnimatorTests(unittest.TestCase):
         self.assertEqual(animator.resolve(0), (("enter", 0),))
         # The arrival retires after 720 ms and hands back to the hint's own loop,
         # which has been running since the hint arrived rather than restarting.
-        self.assertEqual(animator.resolve(800)[0][0], "wondering")
+        self.assertEqual(animator.resolve(800)[-1][0], "wondering")
         self.assertIsNone(animator.oneshot)
 
     def test_hover_and_click_use_the_alert_pose(self) -> None:
         animator = self.animator()
         animator.apply_hint("hover", 0)
-        self.assertEqual(animator.resolve(10), (("alert", 0),))
+        self.assertEqual(animator.resolve(10), (SPILL, ("alert", 0)))
         animator.apply_hint("click", 20)
-        self.assertEqual(animator.resolve(30), (("alert", 0),))
+        self.assertEqual(animator.resolve(30), (SPILL, ("alert", 0)))
 
 
 class AtlasTests(unittest.TestCase):
@@ -419,7 +430,8 @@ class AtlasTests(unittest.TestCase):
                 self.assertEqual(len(sheets[state]), 3)
         self.assertEqual(len(sheets["alert"]), 1)
         self.assertEqual(len(sheets["enter"]), 3)
-        self.assertEqual(len(sheets["floor"]), 2)
+        self.assertEqual(len(sheets["floor"]), 1)
+        self.assertEqual(len(sheets[SPILL_SHEET]), 1)
         for name, frames in sheets.items():
             with self.subTest(sheet=name):
                 for frame in frames:
@@ -435,17 +447,18 @@ class AtlasTests(unittest.TestCase):
 
     def test_atlas_records_the_downscale_provenance(self) -> None:
         metadata = json.loads((ASSET_DIR / "atlas.json").read_text(encoding="utf-8"))
-        # The pack version moves with the artwork; the geometry below must not.
-        self.assertRegex(metadata["source"], r"^sprite-pack-v\d+$")
+        # The pack versions move with the artwork; the geometry below must not.
+        self.assertRegex(metadata["sources"]["origin"], r"^sprite-pack-v\d+$")
+        self.assertRegex(metadata["sources"]["trickcal"], r"^sprite-pack-v\d+-\S+$")
         self.assertEqual(metadata["sourceCanvas"], [1254, 1254])
         self.assertEqual(metadata["scale"], 0.25)
         self.assertEqual(metadata["crop"], [87, 13, 1167, 1219])
         self.assertEqual(metadata["feetAnchor"], [166, 267])
 
     def test_bundled_assets_stay_small(self) -> None:
-        """Guards the packing, not the artwork: the raw pack is over 30 MB."""
+        """Guards the packing, not the artwork: each raw pack is over 30 MB."""
         total = sum(path.stat().st_size for path in ASSET_DIR.glob("*.png"))
-        self.assertLess(total, 2_000_000)
+        self.assertLess(total, 4_500_000)
 
     def test_every_pose_and_clip_has_a_bundled_sheet(self) -> None:
         sheets, _ = load_atlas()
@@ -459,7 +472,9 @@ class AtlasTests(unittest.TestCase):
     def test_no_unused_sheet_is_shipped(self) -> None:
         """Only what the overlay can display is packed; the pack ships more."""
         sheets, _ = load_atlas()
-        used = {clip.sheet for clip in CLIPS.values()} | {"idle", "steam", "floor"}
+        # The floor is style-neutral, so it is packed once rather than per set.
+        used = {clip.sheet for clip in CLIPS.values()} | {"floor", SPILL_SHEET}
+        used |= {prefix + name for prefix in ("", TRICKCAL) for name in ("idle", "steam")}
         self.assertEqual(set(sheets), used)
 
 
@@ -586,6 +601,125 @@ class ViewTests(unittest.TestCase):
         view.tick(0, 0, 0, 0)
         self.assertEqual(view.animator.display_hint, "memory")
         self.assertIsNone(view.drawn)
+
+
+class SpriteSetTests(unittest.TestCase):
+    """Two art styles ship side by side, and either may draw any signal."""
+
+    def test_both_resting_poses_are_selectable(self) -> None:
+        self.assertEqual(IDLE_POSES, ("idle", "trickcal-idle"))
+        for pose in IDLE_POSES:
+            with self.subTest(pose=pose):
+                self.assertIn(pose, bolttagu_2d.selectable_poses())
+                self.assertIn(pose, OPTIONS)
+
+    def test_the_retouch_mirrors_every_original_option(self) -> None:
+        """Whatever the original set can rest in, the retouch can rest in too."""
+        original = {name for name in OPTIONS if not name.startswith(TRICKCAL)}
+        retouched = {name.removeprefix(TRICKCAL) for name in OPTIONS if name.startswith(TRICKCAL)}
+        self.assertTrue(original)
+        self.assertEqual(original - retouched, set())
+
+    def test_the_retouch_adds_the_two_activities_the_original_lacked(self) -> None:
+        extra = set(TRICKCAL_EVENT_DURATIONS_MS) - set(EVENT_DURATIONS_MS)
+        self.assertEqual(extra, {"executing", "tool_use"})
+        for state in extra:
+            with self.subTest(state=state):
+                self.assertNotIn(state, OPTIONS)
+                clip = CLIPS[TRICKCAL + state]
+                self.assertTrue(clip.loop)
+                self.assertEqual(clip.durations_ms, TRICKCAL_EVENT_DURATIONS_MS[state])
+
+    def test_the_retouch_draws_its_own_sheets(self) -> None:
+        """A trickcal option must never reach into the original set's artwork."""
+        for name, option in OPTIONS.items():
+            if not name.startswith(TRICKCAL):
+                continue
+            with self.subTest(option=name):
+                # The spill is ground, shared by both sets rather than restyled.
+                own = [l for l in option.layers if l.sheet != SPILL_SHEET]
+                self.assertTrue(own)
+                for layer in own:
+                    self.assertTrue(layer.sheet.startswith(TRICKCAL))
+
+    def test_the_defaults_stay_on_the_original_set(self) -> None:
+        """Adding a set widens the choices; it must not change what ships chosen."""
+        chosen = set(STATE_POSES.values()) | set(CATEGORY_POSES.values())
+        chosen |= set(HINT_ONESHOTS.values()) | set(bolttagu_2d.LIFECYCLE_TRANSITIONS.values())
+        for pose in chosen:
+            with self.subTest(pose=pose):
+                self.assertFalse(pose.startswith(TRICKCAL))
+
+    def test_both_sets_share_one_cell_so_a_mix_cannot_shift_the_character(self) -> None:
+        sheets, cell = load_atlas()
+        for name, frames in sheets.items():
+            with self.subTest(sheet=name):
+                for frame in frames:
+                    self.assertEqual(frame.size, cell)
+
+    def test_a_mixed_mapping_draws_each_signal_from_its_own_set(self) -> None:
+        animator = BolttaguAnimator(
+            started_ms=0,
+            intro=None,
+            hints={**STATE_POSES, "generating": "trickcal-tool_use"},
+        )
+        animator.apply_hint("thought", 0)
+        self.assertEqual(animator.resolve(0), (SPILL, ("wondering", 0)))
+        animator.apply_hint("generating", 0)
+        self.assertEqual(animator.resolve(0), (("trickcal-tool_use", 0),))
+        self.assertEqual(animator.resolve(420), (("trickcal-tool_use", 1),))
+
+
+class SpillTests(unittest.TestCase):
+    """The mug has to go somewhere when both hands come up."""
+
+    def test_exactly_the_hands_up_poses_spill(self) -> None:
+        spilling = {name for name, option in OPTIONS.items()
+                    if any(layer.sheet == SPILL_SHEET for layer in option.layers)}
+        expected = {prefix + pose for prefix in ("", TRICKCAL) for pose in SPILL_POSES}
+        self.assertEqual(spilling, expected)
+        self.assertEqual(set(SPILL_POSES), {"alert", "wondering"})
+
+    def test_the_spill_is_drawn_under_the_character(self) -> None:
+        for name in (prefix + pose for prefix in ("", TRICKCAL) for pose in SPILL_POSES):
+            with self.subTest(option=name):
+                layers = OPTIONS[name].layers
+                self.assertEqual(layers[0].sheet, SPILL_SHEET)
+                self.assertEqual(len(layers), 2)
+
+    def test_the_spill_does_not_lengthen_the_pose(self) -> None:
+        """It is one held cell, so a spilling pose runs at the pack's own timing."""
+        for name in (prefix + pose for prefix in ("", TRICKCAL) for pose in SPILL_POSES):
+            with self.subTest(option=name):
+                self.assertEqual(OPTIONS[name].total_ms, CLIPS[name].total_ms)
+                self.assertEqual(OPTIONS[name].loops, CLIPS[name].loop)
+
+    def test_both_sets_share_the_one_spill(self) -> None:
+        """The packs ship it identical, so restyling it per set would be a copy."""
+        sheets, _ = load_atlas()
+        self.assertEqual(len(sheets[SPILL_SHEET]), 1)
+        self.assertNotIn(TRICKCAL + SPILL_SHEET, sheets)
+
+    def test_the_spill_actually_reaches_the_composed_frame(self) -> None:
+        view = bolttagu_2d.Bolttagu2dView(mapping_path=UNMAPPED)
+        pose_only = view.compose((("alert", 0),), False)
+        spilling = view.compose(bolttagu_2d._frames_at(OPTIONS["alert"], 0), False)
+        self.assertNotEqual(pose_only.tobytes(), spilling.tobytes())
+        # The puddle is at her feet and to one side, so it widens the drawn area.
+        self.assertLess(spilling.getchannel("A").getbbox()[0], pose_only.getchannel("A").getbbox()[0])
+
+    def test_the_floor_no_longer_bakes_the_spill_in(self) -> None:
+        """Otherwise the puddle would sit under every pose, mug in hand or not."""
+        sheets, _ = load_atlas()
+        self.assertEqual(len(sheets["floor"]), 1)
+        floored = bolttagu_2d.Bolttagu2dView(mapping_path=UNMAPPED, show_floor=True)
+        self.assertIs(floored.floor, floored.sheets["floor"][0])
+
+    def test_a_pose_holding_the_mug_does_not_spill(self) -> None:
+        for name in (IDLE_POSE, TRICKCAL + IDLE_POSE, "speaking", "trickcal-executing"):
+            with self.subTest(option=name):
+                sheets = {layer.sheet for layer in OPTIONS[name].layers}
+                self.assertNotIn(SPILL_SHEET, sheets)
 
 
 class RegistrationTests(unittest.TestCase):
