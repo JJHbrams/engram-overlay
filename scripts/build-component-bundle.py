@@ -43,7 +43,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, default=ROOT / "dist" / "components")
     parser.add_argument("--build", type=int, default=None)
     args = parser.parse_args(argv)
-    build = args.build or int(subprocess.check_output(("git", "-C", str(ROOT), "rev-list", "--count", "HEAD"), text=True))
+    build = args.build
+    if build is None:
+        build = int(os.environ.get("SEMVER4_BUILD") or subprocess.check_output(("git", "-C", str(ROOT), "rev-list", "--count", "HEAD"), text=True))
     output = args.output.resolve()
     if output.exists() and any(output.iterdir()):
         raise ValueError(f"refusing to overwrite non-empty output directory: {output}")
