@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Callable, Protocol, cast
 
 from .protocol import JsonlTransport
+from .components import available_overlay_ids, require_installed
 
 
 class OverlayRunner(Protocol):
@@ -92,13 +93,20 @@ def provider_catalog() -> tuple[dict[str, object], ...]:
 
 
 def overlay_catalog() -> tuple[OverlaySpec, ...]:
-    """Every bundled preset, ordered by id."""
-    return tuple(OVERLAYS[overlay_id] for overlay_id in overlay_ids())
+    """Installed presets, ordered by stable ID.
+
+    A legacy full wheel/source checkout has no marker and therefore retains the
+    historical complete catalog. A core-only component wheel has neither a
+    valid marker nor all modules, so it advertises nothing rather than lying.
+    """
+    return tuple(OVERLAYS[overlay_id] for overlay_id in available_overlay_ids())
 
 
 def format_catalog() -> str:
     """Human-readable preset roster for ``--list-overlays``."""
     specs = overlay_catalog()
+    if not specs:
+        return "No overlay components are installed in this runtime."
     width = max(len(spec.id) for spec in specs)
     lines = [f"Bundled overlay presets ({len(specs)})", ""]
     for spec in specs:
@@ -119,6 +127,7 @@ def create_overlay(
     scale: float = 1.0,
     launcher_managed: bool = False,
 ) -> OverlayRunner:
+    require_installed(overlay_id)
     try:
         spec = OVERLAYS[overlay_id]
     except KeyError as exc:

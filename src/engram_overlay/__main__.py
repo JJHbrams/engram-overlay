@@ -10,13 +10,14 @@ from .client import Registration, sessions
 from .discovery import SCHEMA_VERSION as V2_SCHEMA_VERSION
 from .protocol import PRESENTATION_CAPABILITY, JsonlTransport, hello_message
 from .provider import run_catalog_provider
-from .registry import OVERLAYS, create_overlay, format_catalog, overlay_ids, renderer_id
+from .registry import OVERLAYS, create_overlay, format_catalog, renderer_id
+from .components import available_overlay_ids, require_installed
 from .state import OverlayState
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Engram custom overlay renderer")
-    parser.add_argument("--overlay", choices=overlay_ids(), default="xeyes")
+    parser.add_argument("--overlay", choices=available_overlay_ids(), default="xeyes")
     parser.add_argument(
         "--provider",
         action="store_true",
@@ -126,6 +127,7 @@ def run_v2(args: argparse.Namespace, capabilities: tuple[str, ...]) -> int:
     The window is created before any host exists and outlives every socket: a
     renderer starts with the session, waits for Engram, and survives its restarts.
     """
+    require_installed(args.overlay)
     spec = OVERLAYS[args.overlay]
     registration = Registration(
         renderer_id=renderer_id(args.overlay),
