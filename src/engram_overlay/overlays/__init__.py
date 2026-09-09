@@ -1,6 +1,4 @@
-"""Concrete overlay implementations."""
+"""Concrete overlay implementations are loaded lazily by the registry."""
 
-from .xeyes import XEyesView, create_xeyes
-
-__all__ = ["XEyesView", "create_xeyes"]
+__all__: list[str] = []
 
