@@ -41,4 +41,4 @@ class ComponentMarkerTests(unittest.TestCase):
             with zipfile.ZipFile(archive, "w") as stream:
                 stream.writestr("../outside.py", b"bad")
             with self.assertRaises(ValueError):
-                components._extract_payload(archive, Path(temporary) / "target", [{"path": "../outside.py", "sha256": hashlib.sha256(b"bad").hexdigest(), "size": 3}])
+                components._extract_payload("overlay.xeyes", archive, Path(temporary) / "target", [{"path": "../outside.py", "sha256": hashlib.sha256(b"bad").hexdigest(), "size": 3}])
