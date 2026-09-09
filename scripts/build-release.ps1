@@ -6,9 +6,13 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 if ($Build -le 0) {
-    $Build = [int](& git -C $repoRoot rev-list --count HEAD)
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not derive Build from Git history"
+    if ($env:SEMVER4_BUILD) {
+        $Build = [int]$env:SEMVER4_BUILD
+    } else {
+        $Build = [int](& git -C $repoRoot rev-list --count HEAD)
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not derive Build from Git history"
+        }
     }
 }
 

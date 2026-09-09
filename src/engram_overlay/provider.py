@@ -17,7 +17,8 @@ from typing import Any, Protocol, TextIO
 
 from .client import Registration, Session, messages, sessions
 from .protocol import ProtocolError, parse_message
-from .registry import OVERLAYS, provider_catalog, renderer_id
+from .registry import provider_catalog, renderer_id
+from .components import available_overlay_ids
 
 PROVIDER_ID = "engram.catalog-provider"
 PROVIDER_NAME = "Engram Overlay Catalog"
@@ -141,7 +142,7 @@ class CatalogProvider:
         self._snapshot: dict[str, Any] | None = None
         self._lock = threading.RLock()
         self._generation = 0
-        self._logical_to_overlay = {renderer_id(overlay_id): overlay_id for overlay_id in OVERLAYS}
+        self._logical_to_overlay = {renderer_id(overlay_id): overlay_id for overlay_id in available_overlay_ids()}
 
     def attach(self, session: Session) -> None:
         with self._lock:

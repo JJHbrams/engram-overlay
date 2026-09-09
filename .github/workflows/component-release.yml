@@ -1,0 +1,58 @@
+name: Component build artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Exact commit, tag, or branch to build (blank builds the dispatch commit)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      SEMVER4_BUILD: ${{ github.run_number }}
+      RELEASE_ROOT: release-artifact
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install build and test dependencies
+        run: python -m pip install --disable-pip-version-check ".[tools]"
+      - name: Run test suite
+        run: python -m unittest discover -s tests
+      - name: Build full compatibility wheel with CI build number
+        shell: pwsh
+        run: ./scripts/build-release.ps1
+      - name: Build selectable component bundle with CI build number
+        shell: pwsh
+        run: python scripts/build-component-bundle.py --output "$env:RELEASE_ROOT/components"
+      - name: Assemble full wheel and provenance
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:RELEASE_ROOT/full-wheel" | Out-Null
+          $wheels = @(Get-ChildItem -LiteralPath dist -Filter '*.whl' -File)
+          if ($wheels.Count -ne 1) { throw "Expected exactly one full wheel, found $($wheels.Count)" }
+          if ($wheels[0].Name -notlike "*.$env:SEMVER4_BUILD-py3-none-any.whl") { throw "Full wheel did not use CI build number" }
+          Copy-Item -LiteralPath $wheels[0].FullName -Destination "$env:RELEASE_ROOT/full-wheel/"
+          $manifest = Get-Content -LiteralPath "$env:RELEASE_ROOT/components/engram-overlay-components.json" -Raw | ConvertFrom-Json
+          if ($manifest.package_version -notlike "*.$env:SEMVER4_BUILD") { throw "Component bundle did not use CI build number" }
+          $provenance = [ordered]@{ commit_sha = (git rev-parse HEAD).Trim(); run_id = $env:GITHUB_RUN_ID; run_number = [int]$env:GITHUB_RUN_NUMBER; version = $manifest.package_version; component_manifest_sha256 = (Get-FileHash -LiteralPath "$env:RELEASE_ROOT/components/engram-overlay-components.json" -Algorithm SHA256).Hash.ToLowerInvariant() }
+          $provenance | ConvertTo-Json | Set-Content -LiteralPath "$env:RELEASE_ROOT/provenance.json" -Encoding utf8NoBOM
+      - name: Verify payload hashes and core-wheel separation
+        shell: pwsh
+        run: |
+          python -c "import json,hashlib,pathlib,sys,zipfile; root=pathlib.Path(sys.argv[1]); m=json.loads((root/'components'/'engram-overlay-components.json').read_text(encoding='utf-8')); h=lambda p:hashlib.sha256(p.read_bytes()).hexdigest(); assert h(root/'components'/m['common']['file'])==m['common']['sha256']; [(_ for _ in ()).throw(AssertionError(p['id'])) if h(root/'components'/p['file']) != p['sha256'] else None for p in m['payloads']]; w=next((root/'components').glob('*.whl')); bad=[n for n in zipfile.ZipFile(w).namelist() if n.startswith('overlays/') or n.startswith('engram_overlay/overlays/assets/')]; assert not bad, bad" "$env:RELEASE_ROOT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engram-overlay-${{ github.run_number }}
+          path: ${{ env.RELEASE_ROOT }}
+          if-no-files-found: error
