@@ -171,7 +171,7 @@ def install_components(manifest_path: Path, payload_root: Path, component_ids: I
         zip_path = (payload_root / payload["file"]).resolve()
         if payload_root.resolve() not in zip_path.parents or _sha256(zip_path) != payload.get("sha256"):
             raise ValueError("payload archive hash")
-        _extract_payload(zip_path, Path(__file__).parent.parent, payload.get("files", []))
+        _extract_payload(zip_path, Path(__file__).parent, payload.get("files", []))
     marker = {"schema": SCHEMA_VERSION, "package_version": package_version(), "registry_revision": REGISTRY_REVISION, "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(), "ownership": {"owner": "engram", "layout": "generation-venv"}, "installed_components": list(requested), "installed_payloads": sorted(selected_payloads)}
     installed_marker.write_text(json.dumps(marker, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
 
