@@ -22,7 +22,7 @@ PAYLOADS = {
     "overlay.robot-arm-3d-v3": (["overlays/robot_arm_3d_v3.py", "overlays/assets/robot_arm_3d_v3"], ["resource.robot-arm-3d-v2"]),
     "overlay.xeyes": (["overlays/xeyes.py"], []),
 }
-COMPONENTS = (("bolttagu-2d", "Bolttagu", "2D", "overlay.bolttagu-2d"), ("rabbit-2d", "Rabbit", "2D", "overlay.rabbit-2d"), ("robot-arm", "Engram 3-Link Robot Arm", "3D", "resource.robot-arm-base"), ("xeyes", "Engram XEyes", "2D", "overlay.xeyes"), ("robot-arm-3d", "Engram 3D Robot Arm", "3D", "resource.robot-arm-3d-base"), ("robot-arm-3d-v2", "Engram Textured 3D Robot Arm V2", "3D", "resource.robot-arm-3d-v2"), ("robot-arm-3d-v3", "CCTV", "3D", "overlay.robot-arm-3d-v3"))
+COMPONENTS = (("bolttagu-2d", "Bolttagu", "2D", "overlay.bolttagu-2d"), ("rabbit-2d", "Rabbit", "2D", "overlay.rabbit-2d"), ("robot-arm", "Engram 3-Link Robot Arm", "2D", "resource.robot-arm-base"), ("xeyes", "Engram XEyes", "2D", "overlay.xeyes"), ("robot-arm-3d", "Engram 3D Robot Arm", "3D", "resource.robot-arm-3d-base"), ("robot-arm-3d-v2", "Engram Textured 3D Robot Arm V2", "3D", "resource.robot-arm-3d-v2"), ("robot-arm-3d-v3", "CCTV", "3D", "overlay.robot-arm-3d-v3"))
 
 def digest(path: Path) -> str:
     hasher = hashlib.sha256()
@@ -45,11 +45,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     build = args.build or int(subprocess.check_output(("git", "-C", str(ROOT), "rev-list", "--count", "HEAD"), text=True))
     output = args.output.resolve()
-    if output.exists(): shutil.rmtree(output)
-    output.mkdir(parents=True)
+    if output.exists() and any(output.iterdir()):
+        raise ValueError(f"refusing to overwrite non-empty output directory: {output}")
+    output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="engram-overlay-core-") as temporary:
         stage = Path(temporary) / "package"
-        shutil.copytree(ROOT, stage, ignore=shutil.ignore_patterns(".git", "build", "dist", "*.egg-info", "__pycache__"))
+        stage.mkdir()
+        for name in ("pyproject.toml", "VERSION", "README.md"):
+            shutil.copy2(ROOT / name, stage / name)
+        shutil.copytree(SOURCE, stage / "src" / "engram_overlay", ignore=shutil.ignore_patterns("__pycache__"))
         stage_source = stage / "src" / "engram_overlay"
         for item_list, _ in PAYLOADS.values():
             for item in item_list:
@@ -73,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
         payload_records.append({"id": identifier, "file": relative.as_posix(), "sha256": digest(archive), "requires": requires, "files": records})
     sdk = output / f"engram-overlay-sdk-{version}.zip"
     with zipfile.ZipFile(sdk, "w", compression=zipfile.ZIP_DEFLATED) as zip_file:
-        for name in ("docs/llm-overlay-authoring.md", "docs/event-api-v2.md", "docs/architecture.md", "README.md"):
+        for name in ("docs/llm-overlay-authoring.md", "docs/event-api-v2.md", "docs/architecture.md", "README.md", "examples/minimal-v2-client.py"):
             zip_file.write(ROOT / name, name)
     manifest = {"schema": 1, "package_version": version, "registry_revision": "external-overlay-components-v1", "common": {"file": wheel.name, "sha256": digest(wheel)}, "sdk": {"file": sdk.name, "sha256": digest(sdk)}, "components": [{"id": identifier, "display_name": name, "group": group, "payloads": [payload], "requires": []} for identifier, name, group, payload in COMPONENTS], "payloads": payload_records}
     path = output / "engram-overlay-components.json"

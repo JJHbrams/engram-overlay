@@ -35,6 +35,9 @@ PAYLOAD_REQUIRES = {
     "resource.robot-arm-3d-v2": ("resource.robot-arm-3d-base",),
     "overlay.robot-arm-3d-v3": ("resource.robot-arm-3d-v2",), "overlay.xeyes": (),
 }
+PAYLOAD_PATHS = {
+    "overlay.bolttagu-2d": ("overlays/bolttagu_2d.py", "overlays/assets/bolttagu_2d/"), "overlay.rabbit-2d": ("overlays/rabbit_2d.py", "overlays/assets/rabbit_2d/"), "resource.robot-arm-base": ("overlays/robot_arm.py",), "resource.robot-arm-3d-base": ("overlays/robot_arm_3d.py",), "resource.robot-arm-3d-v2": ("overlays/robot_arm_3d_v2.py", "overlays/assets/robot_arm_3d_v2/"), "overlay.robot-arm-3d-v3": ("overlays/robot_arm_3d_v3.py", "overlays/assets/robot_arm_3d_v3/"), "overlay.xeyes": ("overlays/xeyes.py",),
+}
 
 
 def marker_path() -> Path:
@@ -73,7 +76,7 @@ def _closure(payloads: Iterable[str]) -> set[str]:
 
 def _full_package_present() -> bool:
     base = Path(__file__).parent / "overlays"
-    required = [base / "xeyes.py", base / "bolttagu_2d.py", base / "rabbit_2d.py", base / "robot_arm.py", base / "robot_arm_3d.py", base / "robot_arm_3d_v2.py", base / "robot_arm_3d_v3.py"]
+    required = [base / "xeyes.py", base / "bolttagu_2d.py", base / "rabbit_2d.py", base / "robot_arm.py", base / "robot_arm_3d.py", base / "robot_arm_3d_v2.py", base / "robot_arm_3d_v3.py", base / "assets/bolttagu_2d/atlas.json", base / "assets/rabbit_2d/rabbit-states.png", base / "assets/robot_arm_3d_v2/robot-uv-atlas-v2.png", base / "assets/robot_arm_3d_v3/terrain-cover-atlas.png", base / "assets/robot_arm_3d_v3/terrain-ridge.png", base / "assets/robot_arm_3d_v3/traveler-walk-atlas.png"]
     return all(path.is_file() for path in required)
 
 
@@ -120,16 +123,27 @@ def require_installed(overlay_id: str) -> None:
 
 def _safe_member(name: str) -> PurePosixPath | None:
     path = PurePosixPath(name)
-    if not name or path.is_absolute() or ".." in path.parts or "\\" in name:
+    if not name or path.is_absolute() or ".." in path.parts or "\\" in name or ":" in name:
         return None
     return path
 
 
-def _extract_payload(zip_path: Path, destination: Path, files: list[dict[str, Any]]) -> None:
+def _is_reparse(path: Path) -> bool:
+    return path.is_symlink() or bool(getattr(path.stat(), "st_file_attributes", 0) & 0x400)
+
+
+def _extract_payload(payload_id: str, zip_path: Path, destination: Path, files: list[dict[str, Any]]) -> None:
     expected = {item["path"]: item for item in files}
+    allowed = PAYLOAD_PATHS[payload_id]
+    if not expected or any(not isinstance(name, str) or not name.startswith("overlays/") or not any(name == prefix or name.startswith(prefix) for prefix in allowed) for name in expected):
+        raise ValueError("payload destination is outside its declared package scope")
+    package_root = destination.resolve()
     with zipfile.ZipFile(zip_path) as archive:
         infos = archive.infolist()
-        names = {info.filename for info in infos if not info.is_dir()}
+        raw_names = [info.filename for info in infos]
+        if len(raw_names) != len(set(raw_names)) or len(raw_names) != len({name.casefold() for name in raw_names}) or any(info.is_dir() for info in infos):
+            raise ValueError("unsafe duplicate, case-colliding, or directory payload member")
+        names = set(raw_names)
         if names != set(expected):
             raise ValueError(f"payload file set mismatch: {zip_path.name}")
         for info in infos:
@@ -143,7 +157,15 @@ def _extract_payload(zip_path: Path, destination: Path, files: list[dict[str, An
                 raise ValueError("payload size mismatch")
             target = destination.joinpath(*relative.parts)
             target.parent.mkdir(parents=True, exist_ok=True)
-            with archive.open(info) as source, target.open("wb") as output:
+            if any(_is_reparse(parent) for parent in (target.parent, *target.parent.parents) if parent != package_root.parent):
+                raise ValueError("payload destination crosses a reparse point")
+            if package_root not in target.resolve(strict=False).parents:
+                raise ValueError("payload destination escapes package root")
+            if target.exists():
+                if _is_reparse(target) or _sha256(target) != metadata["sha256"]:
+                    raise ValueError("payload would overwrite an unexpected file")
+                continue
+            with archive.open(info) as source, target.open("xb") as output:
                 shutil.copyfileobj(source, output)
             if _sha256(target) != metadata["sha256"]:
                 raise ValueError("payload hash mismatch")
@@ -171,7 +193,7 @@ def install_components(manifest_path: Path, payload_root: Path, component_ids: I
         zip_path = (payload_root / payload["file"]).resolve()
         if payload_root.resolve() not in zip_path.parents or _sha256(zip_path) != payload.get("sha256"):
             raise ValueError("payload archive hash")
-        _extract_payload(zip_path, Path(__file__).parent, payload.get("files", []))
+        _extract_payload(payload_id, zip_path, Path(__file__).parent, payload.get("files", []))
     marker = {"schema": SCHEMA_VERSION, "package_version": package_version(), "registry_revision": REGISTRY_REVISION, "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(), "ownership": {"owner": "engram", "layout": "generation-venv"}, "installed_components": list(requested), "installed_payloads": sorted(selected_payloads)}
     installed_marker.write_text(json.dumps(marker, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
 
